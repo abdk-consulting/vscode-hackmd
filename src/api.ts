@@ -39,7 +39,7 @@ export async function forceRefreshAPIClient(context: vscode.ExtensionContext) {
 
 vscode.workspace.onDidChangeConfiguration(async (e) => {
   if (e.affectsConfiguration('Hackmd')) {
-    const extension = vscode.extensions.getExtension<{ context: vscode.ExtensionContext }>('HackMD.hackmd-vscode');
+    const extension = vscode.extensions.getExtension<{ context: vscode.ExtensionContext }>('HackMD.vscode-hackmd');
     await initializeAPIClient(extension.exports.context);
   }
 });

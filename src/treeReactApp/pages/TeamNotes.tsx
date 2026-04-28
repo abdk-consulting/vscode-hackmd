@@ -13,6 +13,11 @@ import { NoteTreeItem } from '../components/NoteTreeItem';
 import { refreshTeamNotesEvent, useEventEmitter } from '../events';
 import { recordUsage, useTeamNotesStore } from '../store';
 
+
+
+import { FolderWithNotes } from '../components/FolderWithNotes';
+import { organizeNotesIntoFolders } from '../utils/folderUtils';
+
 const TeamTreeItem = ({ team }: { team: Team }) => {
   const { data: notes = [], mutate } = useSWR(
     () => (team ? `/teams/${team.id}/notes` : null),
@@ -41,11 +46,19 @@ const TeamTreeItem = ({ team }: { team: Team }) => {
     mutate();
   });
 
+  const { rootFolders, rootNotes } = organizeNotesIntoFolders(notes);
+
   return (
     <TreeItem label={team.name} expanded iconPath={iconPath} description={team.path}>
-      {notes.map((note) => {
-        return <NoteTreeItem key={note.id} note={note} />;
-      })}
+      {/* Render folders first */}
+      {rootFolders.map((folder) => (
+        <FolderWithNotes key={folder.id} folder={folder} />
+      ))}
+
+      {/* Then render notes without folders */}
+      {rootNotes.map((note) => (
+        <NoteTreeItem key={note.id} note={note} />
+      ))}
 
       {notes.length === 0 && <TreeItem label="No notes" />}
     </TreeItem>

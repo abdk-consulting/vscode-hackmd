@@ -19,6 +19,8 @@ export interface FolderNode {
   icon?: string;
   color?: string;
   parentId?: string;
+  clientId?: string;
+  teamPath?: string | null;
   children: FolderNode[];
   notes: NoteWithFolders[];
 }
@@ -47,6 +49,8 @@ export function organizeNotesIntoFolders(notes: NoteWithFolders[]): {
             icon: folderPath.icon,
             color: folderPath.color,
             parentId: folderPath.parentId,
+            clientId: folderPath.clientId,
+            teamPath: note.teamPath,
             children: [],
             notes: [],
           });

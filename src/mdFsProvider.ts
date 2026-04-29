@@ -90,12 +90,21 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const contentString = Buffer.from(content).toString();
-      await recordUsage(API.updateNoteContent(noteId, contentString, { unwrapData: false }));
+
+      // Get note information to determine if it's a team note
+      const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
+
+      // Use appropriate API method based on whether it's a team note
+      if (note.teamPath) {
+        await API.updateTeamNoteContent(note.teamPath, noteId, contentString);
+      } else {
+        await API.updateNoteContent(noteId, contentString);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Error saving note:', e);
 
       throw vscode.FileSystemError.Unavailable(
-        'Try to save again when the internet connection is back. You can save a local copy on your computer for restoration.'
+        `Failed to save: ${e.message || 'Unknown error'}. Try to save again when the internet connection is back. You can save a local copy on your computer for restoration.`
       );
     }
   }

@@ -91,7 +91,7 @@
       },
       {
         "command": "treeView.refreshMyNotes",
-        "title": "Refresh My Notes",
+        "title": "Refresh",
         "category": "HackMD",
         "icon": {
           "light": "images/icon/light/sync.svg",
@@ -100,7 +100,7 @@
       },
       {
         "command": "treeView.createMyNotes",
-        "title": "Create My Note",
+        "title": "Create Note",
         "category": "HackMD",
         "icon": {
           "light": "images/icon/light/new-file.svg",
@@ -109,7 +109,7 @@
       },
       {
         "command": "treeView.refreshHistory",
-        "title": "Refresh History",
+        "title": "Refresh",
         "category": "HackMD",
         "icon": {
           "light": "images/icon/light/sync.svg",
@@ -118,12 +118,35 @@
       },
       {
         "command": "treeView.refreshTeamNotes",
-        "title": "Refresh Team Notes",
+        "title": "Refresh",
         "category": "HackMD",
         "icon": {
           "light": "images/icon/light/sync.svg",
           "dark": "images/icon/dark/sync.svg"
         }
+      },
+      {
+        "command": "HackMD.folder.createNote",
+        "title": "Create Note in Folder",
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/new-file.svg",
+          "dark": "images/icon/dark/new-file.svg"
+        }
+      },
+      {
+        "command": "HackMD.team.createNote",
+        "title": "Create Team Note",
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/new-file.svg",
+          "dark": "images/icon/dark/new-file.svg"
+        }
+      },
+      {
+        "command": "HackMD.folder.openOnWeb",
+        "title": "Open Folder on HackMD",
+        "category": "HackMD"
       },
       {
         "command": "HackMD.showPreview",
@@ -207,11 +230,6 @@
           "command": "treeView.createMyNotes",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation"
-        },
-        {
-          "command": "HackMD.selectTeam",
-          "when": "view =~ /hackmd.tree.team-notes/",
-          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -235,11 +253,11 @@
         },
         {
           "command": "HackMD.editNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file"
+          "when": "view =~ /hackmd.tree/ && viewItem =~ /file/"
         },
         {
           "command": "HackMD.editNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "view =~ /hackmd.tree/ && viewItem =~ /file/",
           "group": "inline@2"
         },
         {
@@ -253,7 +271,29 @@
         },
         {
           "command": "HackMD.deleteMyNote",
-          "when": "view =~ /hackmd.tree.my-notes/ && viewItem =~ /file/"
+          "when": "view =~ /hackmd.tree/ && viewItem == file-owned"
+        },
+        {
+          "command": "HackMD.folder.createNote",
+          "when": "view =~ /hackmd.tree/ && viewItem == folder",
+          "group": "inline@1"
+        },
+        {
+          "command": "HackMD.folder.createNote",
+          "when": "view =~ /hackmd.tree/ && viewItem == folder"
+        },
+        {
+          "command": "HackMD.folder.openOnWeb",
+          "when": "view =~ /hackmd.tree/ && viewItem == folder"
+        },
+        {
+          "command": "HackMD.team.createNote",
+          "when": "view == hackmd.tree.team-notes && viewItem == team",
+          "group": "inline@1"
+        },
+        {
+          "command": "HackMD.team.createNote",
+          "when": "view == hackmd.tree.team-notes && viewItem == team"
         }
       ]
     },
@@ -338,7 +378,7 @@
     "websocket": "^1.0.34"
   },
   "dependencies": {
-    "@hackmd/api": "2.4.0",
+    "@hackmd/api": "^2.5.0",
     "@types/mermaid": "^9.1.0",
     "bootstrap3": "^3.3.5",
     "markdown-it-abbr": "^1.0.4",

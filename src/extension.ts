@@ -2,7 +2,6 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-import ReactTreeView from '@hackmd/react-vsc-treeview';
 import hljs from 'highlight.js/lib/core';
 import { solidity } from 'highlightjs-solidity';
 import * as markdownitContainer from 'markdown-it-container';
@@ -10,11 +9,42 @@ import * as S from 'string';
 
 import { initializeAPIClient } from './api';
 import { registerCommands } from './commands';
+import { HistoryProvider } from './historyProvider';
 import { activate as activateFSProvider } from './mdFsProvider';
-import { createWithContainer } from './treeReactApp/AppContainer';
-import { History, MyNotes, TeamNotes } from './treeReactApp/pages';
+import { MyNotesProvider } from './myNotesProvider';
+import { TeamNotesProvider } from './teamNotesProvider';
 
 let Prism;
+let teamNotesProvider: TeamNotesProvider | undefined;
+let myNotesProvider: MyNotesProvider | undefined;
+let historyProvider: HistoryProvider | undefined;
+let teamNotesTreeView: vscode.TreeView<any> | undefined;
+let myNotesTreeView: vscode.TreeView<any> | undefined;
+let historyTreeView: vscode.TreeView<any> | undefined;
+
+export function getTeamNotesProvider(): TeamNotesProvider | undefined {
+  return teamNotesProvider;
+}
+
+export function getMyNotesProvider(): MyNotesProvider | undefined {
+  return myNotesProvider;
+}
+
+export function getHistoryProvider(): HistoryProvider | undefined {
+  return historyProvider;
+}
+
+export function getTeamNotesTreeView(): vscode.TreeView<any> | undefined {
+  return teamNotesTreeView;
+}
+
+export function getMyNotesTreeView(): vscode.TreeView<any> | undefined {
+  return myNotesTreeView;
+}
+
+export function getHistoryTreeView(): vscode.TreeView<any> | undefined {
+  return historyTreeView;
+}
 
 if (process.env.RUNTIME !== 'browser') {
   Prism = require('prismjs');
@@ -239,21 +269,24 @@ export async function activate(context: vscode.ExtensionContext) {
 
   registerCommands(context);
 
-  context.subscriptions.push(
-    ReactTreeView.render(createWithContainer(MyNotes, { extensionPath: context.extensionPath }), 'hackmd.tree.my-notes')
-  );
-  context.subscriptions.push(
-    ReactTreeView.render(
-      createWithContainer(History, { extensionPath: context.extensionPath }),
-      'hackmd.tree.recent-notes'
-    )
-  );
-  context.subscriptions.push(
-    ReactTreeView.render(
-      createWithContainer(TeamNotes, { extensionPath: context.extensionPath }),
-      'hackmd.tree.team-notes'
-    )
-  );
+  // Use TreeDataProvider for all views for consistency
+  myNotesProvider = new MyNotesProvider(context.extensionPath);
+  myNotesTreeView = vscode.window.createTreeView('hackmd.tree.my-notes', {
+    treeDataProvider: myNotesProvider,
+  });
+  context.subscriptions.push(myNotesTreeView);
+
+  historyProvider = new HistoryProvider(context.extensionPath);
+  historyTreeView = vscode.window.createTreeView('hackmd.tree.recent-notes', {
+    treeDataProvider: historyProvider,
+  });
+  context.subscriptions.push(historyTreeView);
+
+  teamNotesProvider = new TeamNotesProvider(context.extensionPath);
+  teamNotesTreeView = vscode.window.createTreeView('hackmd.tree.team-notes', {
+    treeDataProvider: teamNotesProvider,
+  });
+  context.subscriptions.push(teamNotesTreeView);
 
   activateFSProvider(context);
 

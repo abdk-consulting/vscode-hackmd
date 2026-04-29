@@ -11,6 +11,8 @@ export interface FolderData {
   icon?: string;
   color?: string;
   parentId?: string;
+  clientId?: string;
+  teamPath?: string | null;
 }
 
 export const FolderTreeItem = ({ folder, children }: { folder: FolderData; children?: React.ReactNode }) => {
@@ -32,6 +34,13 @@ export const FolderTreeItem = ({ folder, children }: { folder: FolderData; child
       label={folder.name}
       iconPath={iconPath}
       contextValue="folder"
+      context={{
+        folderId: folder.id,
+        folderName: folder.name,
+        parentId: folder.parentId,
+        folderClientId: folder.clientId,
+        teamPath: folder.teamPath,
+      }}
     >
       {children}
     </TreeItem>

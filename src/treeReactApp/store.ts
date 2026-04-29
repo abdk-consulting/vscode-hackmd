@@ -43,7 +43,12 @@ export const meStore = createStore<UserState>()((set) => ({
     set({ user: currentUser });
   },
   checkIsOwner: (note: Note) => {
-    return note.userPath === meStore.getState().user.userPath;
+    const user = meStore.getState().user;
+    // Check if user owns the note via userPath or has owner write permissions
+    return (
+      (user && note.userPath === user.userPath) ||
+      note.writePermission === 'owner'
+    );
   },
 }));
 

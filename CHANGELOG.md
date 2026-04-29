@@ -31,6 +31,10 @@
 - Updated `@hackmd/api` from 2.4.0 to 2.5.0
 - Changed note insertion order: newer notes now appear first (at top of list) instead of last
 - Optimized note creation in uncached teams to execute API calls in parallel instead of sequentially
+- Replaced activity bar icon with official VS Code file icon (codicon)
+  - Now uses outlined file icon with rounded corners (matches note icons in tree)
+  - Properly dims when not hovered or selected (consistent with other activity bar icons)
+  - Uses `fill="currentColor"` for proper theme integration
 
 ### Fixed
 
@@ -44,11 +48,11 @@
 - Fixed folder note creation to properly distinguish between team and personal notes
 - Fixed team note editing and saving (now uses correct API endpoints: `updateTeamNoteContent` for team notes, `updateNoteContent` for personal notes)
 - Fixed team note deletion (now uses `deleteTeamNote` API for team notes)
-- Fixed note deletion menu to only show on notes owned by the user (using `file-owned` context value)
-- Fixed ownership checking to properly use `checkIsOwner` method (considers both `userPath` match and `writePermission === 'owner'`)
-- Fixed welcome views showing "Enter HackMD API token" buttons inappropriately on startup
-  - Added explicit `hackmd.noApiKey` context flag that is only set when API key absence is confirmed
-- Removed redundant "Enter HackMD API token" welcome messages from all tree views
+  - Welcome views now only display when this flag is explicitly true, not on undefined state
+  - Prevents buttons from flashing during extension initialization
+- Removed redundant viewsWelcome configuration entirely
+  - Extension already shows automatic API key input dialog when needed
+  - Eliminates three duplicate "Enter HackMD API token" button instances for cleaner UI all tree views
   - Extension already shows automatic API key input dialog when needed
   - Eliminates three duplicate button instances for cleaner UI
   - Welcome views now only display when this flag is explicitly true, not on undefined state

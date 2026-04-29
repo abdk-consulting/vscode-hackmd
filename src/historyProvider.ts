@@ -1,8 +1,12 @@
 import { Note } from '@hackmd/api/dist/type';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { API } from './api';
-import { meStore, recordUsage } from './treeReactApp/store';
+import { meStore, recordUsage } from './store';
+
+// Cache ThemeIcon instances to prevent layout shifts during updates
+const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
+const ICON_FILE = new vscode.ThemeIcon('file');
+const ICON_LOCK = new vscode.ThemeIcon('lock');
 
 type TreeNode = NoteNode | PlaceholderNode;
 
@@ -20,6 +24,8 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private notesCache: Note[] | null = null;
+  // Track pending operations
+  private pendingNotes = new Set<string>(); // Note IDs being opened/deleted/saved
 
   constructor(private extensionPath: string) { }
 
@@ -37,6 +43,27 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
         this._onDidChangeTreeData.fire(undefined);
       }
     }
+  }
+
+  // Find a note in cache and return it
+  findNoteInCache(noteId: string): Note | undefined {
+    if (!this.notesCache) {
+      return undefined;
+    }
+    return this.notesCache.find(n => n.id === noteId);
+  }
+
+  // Pending operation management
+  setPendingNote(noteId: string, noteObject?: Note): void {
+    this.pendingNotes.add(noteId);
+    // Fire event on root to trigger refresh (all history notes are at root level)
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  clearPendingNote(noteId: string, noteObject?: Note): void {
+    this.pendingNotes.delete(noteId);
+    // Fire event on root to trigger refresh (all history notes are at root level)
+    this._onDidChangeTreeData.fire(undefined);
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
@@ -79,29 +106,35 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.id = `note-${note.id}`; // Stable ID for VS Code to track this item
 
-    item.command = {
-      command: 'clickTreeItem',
-      title: 'Open Note',
-      arguments: [label, note.id],
-    };
+    const isPending = this.pendingNotes.has(note.id);
+
+    if (!isPending) {
+      item.command = {
+        command: 'clickTreeItem',
+        title: 'Open Note',
+        arguments: [note], // Pass the note object directly
+      };
+    }
 
     // Store note ID for commands
     (item as any).noteId = note.id;
 
     // Set icon and context based on ownership
     const isOwner = meStore.getState().checkIsOwner(note);
-    if (isOwner) {
-      item.contextValue = 'file-owned';
-      item.iconPath = {
-        light: path.join(this.extensionPath, 'images/icon/light/file-text.svg'),
-        dark: path.join(this.extensionPath, 'images/icon/dark/file-text.svg'),
-      };
+
+    if (isPending) {
+      item.contextValue = isOwner ? 'file-owned-pending' : 'file-pending';
     } else {
-      item.contextValue = 'file';
-      item.iconPath = {
-        light: path.join(this.extensionPath, 'images/icon/light/gist-secret.svg'),
-        dark: path.join(this.extensionPath, 'images/icon/dark/gist-secret.svg'),
-      };
+      item.contextValue = isOwner ? 'file-owned' : 'file';
+    }
+
+    // Set icon - spinner when pending, otherwise file icon
+    if (isPending) {
+      item.iconPath = ICON_SPINNER;
+    } else if (isOwner) {
+      item.iconPath = ICON_FILE;
+    } else {
+      item.iconPath = ICON_LOCK;
     }
 
     return item;

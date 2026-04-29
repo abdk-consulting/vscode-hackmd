@@ -2,11 +2,9 @@ import * as vscode from 'vscode';
 
 import { Note } from '@hackmd/api/dist/type';
 import type { AxiosResponse } from 'axios';
-import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 
-import { API } from '../api';
-
+import { API } from './api';
 import {
   hideStatusbarItem,
   sendLimitAlmostReachedNotification,
@@ -23,12 +21,6 @@ export const teamNotesStore = createStore<TeamNoteState>()((set) => ({
   selectedTeamId: null,
   setSelectedTeamId: (selectedTeamId: string) => set({ selectedTeamId }),
 }));
-
-export function useTeamNotesStore(): TeamNoteState;
-export function useTeamNotesStore<T>(selector: (state: TeamNoteState) => T, equals?: (a: T, b: T) => boolean): T;
-export function useTeamNotesStore<T>(selector?: (state: TeamNoteState) => T, equals?: (a: T, b: T) => boolean) {
-  return useStore(teamNotesStore, selector!, equals);
-}
 
 type UserState = {
   user: Awaited<ReturnType<typeof API.getMe>>;
@@ -52,12 +44,6 @@ export const meStore = createStore<UserState>()((set) => ({
   },
 }));
 
-export function useMeStore(): UserState;
-export function useMeStore<T>(selector: (state: UserState) => T, equals?: (a: T, b: T) => boolean): T;
-export function useMeStore<T>(selector?: (state: UserState) => T, equals?: (a: T, b: T) => boolean) {
-  return useStore(meStore, selector!, equals);
-}
-
 type UsageLimitRecord = {
   limit: number;
   remaining: number;
@@ -74,6 +60,7 @@ type APIUsageState = {
   teamRecordsById: Record<string, UsageLimitRecord>;
   updateTeamUsageLimitRecord: (teamId: string, limit: number, remaining: number) => void;
 };
+
 export const apiStore = createStore<APIUsageState>()((set) => ({
   userRecord: {
     limit: null,
@@ -174,12 +161,6 @@ export const apiStore = createStore<APIUsageState>()((set) => ({
     }
   },
 }));
-
-export function useApiStore(): APIUsageState;
-export function useApiStore<T>(selector: (state: APIUsageState) => T, equals?: (a: T, b: T) => boolean): T;
-export function useApiStore<T>(selector?: (state: APIUsageState) => T, equals?: (a: T, b: T) => boolean) {
-  return useStore(apiStore, selector!, equals);
-}
 
 const updateUsageLimit = (response: AxiosResponse) => {
   const limit = parseInt(response.headers['x-ratelimit-userlimit'] as string, 10);

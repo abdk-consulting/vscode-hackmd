@@ -4,9 +4,8 @@ import { Team } from '@hackmd/api/dist/type';
 
 import { getHistoryProvider, getMyNotesProvider, getMyNotesTreeView, getTeamNotesProvider, getTeamNotesTreeView } from '../extension';
 import { generateResourceUri } from '../mdFsProvider';
-import { recordUsage, teamNotesStore } from '../treeReactApp/store';
+import { recordUsage, teamNotesStore } from '../store';
 import { API } from './../api';
-import { ReactVSCTreeNode } from './../tree/nodes';
 
 // Helper function to reveal and select a note after creation
 async function revealNote(treeView: vscode.TreeView<any> | undefined, noteNode: any) {
@@ -52,16 +51,25 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.createMyNotes', async () => {
-      const note = await recordUsage(API.createNote({}, { unwrapData: false }));
-
-      const uri = generateResourceUri(note.title, note.id);
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: false });
-
       const provider = getMyNotesProvider();
-      if (provider) {
-        const noteNode = await provider.addNoteToCache(note);
-        await revealNote(getMyNotesTreeView(), noteNode);
+
+      // Set pending on "My Notes" root
+      provider?.setPendingContainer('root');
+
+      try {
+        const note = await recordUsage(API.createNote({}, { unwrapData: false }));
+
+        const uri = generateResourceUri(note.title, note.id, note.teamPath);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc, { preview: false });
+
+        if (provider) {
+          const noteNode = await provider.addNoteToCache(note);
+          await revealNote(getMyNotesTreeView(), noteNode);
+        }
+      } finally {
+        // Clear pending state
+        provider?.clearPendingContainer('root');
       }
     })
   );
@@ -89,50 +97,106 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           return;
         }
 
-        // Check if it's a team note and use the appropriate API
-        const teamPath = node.note?.teamPath;
-        if (teamPath) {
-          await recordUsage(API.deleteTeamNote(teamPath, noteId, { unwrapData: false }));
-        } else {
-          await recordUsage(API.deleteNote(noteId, { unwrapData: false }));
-        }
-
-        // Synchronously remove from all caches
+        // Set pending state only in providers that contain this note
         const myNotesProvider = getMyNotesProvider();
-        if (myNotesProvider) {
-          myNotesProvider.removeNoteFromCache(noteId);
-        }
-
-        const historyProvider = getHistoryProvider();
-        if (historyProvider) {
-          historyProvider.removeNoteFromCache(noteId);
-        }
-
         const teamNotesProvider = getTeamNotesProvider();
-        if (teamNotesProvider) {
-          teamNotesProvider.removeNoteFromCache(noteId, teamPath);
+        const historyProvider = getHistoryProvider();
+        const teamPath = node.note?.teamPath;
+
+        // Personal notes appear in My Notes + History
+        // Team notes appear in Team Notes + History
+        if (teamPath) {
+          teamNotesProvider?.setPendingNote(noteId, node.note);
+        } else {
+          myNotesProvider?.setPendingNote(noteId, node.note);
+        }
+        historyProvider?.setPendingNote(noteId, node.note);
+
+        try {
+          // Check if it's a team note and use the appropriate API
+          if (teamPath) {
+            await recordUsage(API.deleteTeamNote(teamPath, noteId, { unwrapData: false }));
+          } else {
+            await recordUsage(API.deleteNote(noteId, { unwrapData: false }));
+          }
+
+          // Close the editor if it's open
+          const label = node.note.title || node.note.shortId || 'Unnamed';
+          const uri = generateResourceUri(label, noteId, teamPath);
+
+          // Find and close the tab
+          for (const tabGroup of vscode.window.tabGroups.all) {
+            for (const tab of tabGroup.tabs) {
+              if (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString()) {
+                await vscode.window.tabGroups.close(tab);
+                break;
+              }
+            }
+          }
+
+          // After successful deletion, remove from caches
+          // (removeNoteFromCache will also fire tree change events)
+          if (teamPath) {
+            teamNotesProvider?.removeNoteFromCache(noteId, teamPath);
+          } else {
+            myNotesProvider?.removeNoteFromCache(noteId);
+          }
+          historyProvider?.removeNoteFromCache(noteId);
+        } catch (error) {
+          // On error, clear pending state to restore note
+          if (teamPath) {
+            teamNotesProvider?.clearPendingNote(noteId, node.note);
+          } else {
+            myNotesProvider?.clearPendingNote(noteId, node.note);
+          }
+          historyProvider?.clearPendingNote(noteId, node.note);
+          throw error;
+        }
+        // No need to clear pending - note was removed from cache
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('clickTreeItem', async (note: any) => {
+      if (note) {
+        const myNotesProvider = getMyNotesProvider();
+        const teamNotesProvider = getTeamNotesProvider();
+        const historyProvider = getHistoryProvider();
+
+        const noteId = note.id;
+        const label = note.title || note.shortId || 'Unnamed';
+
+        // Set pending state BEFORE opening - use note object for immediate granular update
+        if (note.teamPath) {
+          teamNotesProvider?.setPendingNote(noteId, note);
+        } else {
+          myNotesProvider?.setPendingNote(noteId, note);
+        }
+        historyProvider?.setPendingNote(noteId, note);
+
+        try {
+          const uri = generateResourceUri(label, noteId, note.teamPath);
+          const doc = await vscode.workspace.openTextDocument(uri);
+          await vscode.window.showTextDocument(doc, { preview: false });
+        } finally {
+          // Clear pending state
+          if (note.teamPath) {
+            teamNotesProvider?.clearPendingNote(noteId, note);
+          } else {
+            myNotesProvider?.clearPendingNote(noteId, note);
+          }
+          historyProvider?.clearPendingNote(noteId, note);
         }
       }
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('clickTreeItem', async (label, noteId) => {
-      if (noteId) {
-        const uri = generateResourceUri(label || 'Unnamed', noteId);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preview: false });
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('HackMD.editNote', async (noteNode: ReactVSCTreeNode) => {
-      if (noteNode) {
-        const { noteId } = noteNode.value.context;
-        const { label } = noteNode.value;
-
-        const uri = generateResourceUri(label.toString(), noteId);
+    vscode.commands.registerCommand('HackMD.editNote', async (noteNode: any) => {
+      if (noteNode && noteNode.type === 'note') {
+        const note = noteNode.note;
+        const uri = generateResourceUri(note.title, note.id, note.teamPath);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: false });
       }
@@ -159,12 +223,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('HackMD.showPreview', async (noteNode: ReactVSCTreeNode) => {
-      if (noteNode) {
-        const { noteId } = noteNode.value.context;
-        const { label } = noteNode.value;
-
-        const uri = generateResourceUri(label.toString(), noteId);
+    vscode.commands.registerCommand('HackMD.showPreview', async (noteNode: any) => {
+      if (noteNode && noteNode.type === 'note') {
+        const note = noteNode.note;
+        const uri = generateResourceUri(note.title, note.id, note.teamPath);
         vscode.commands.executeCommand('markdown.showPreview', uri);
       } else {
         const editor = vscode.window.activeTextEditor;
@@ -186,12 +248,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('HackMD.showPreviewAndEditor', async (noteNode: ReactVSCTreeNode) => {
-      if (noteNode) {
-        const { noteId } = noteNode.value.context;
-        const { label } = noteNode.value;
-
-        const uri = generateResourceUri(label.toString(), noteId);
+    vscode.commands.registerCommand('HackMD.showPreviewAndEditor', async (noteNode: any) => {
+      if (noteNode && noteNode.type === 'note') {
+        const note = noteNode.note;
+        const uri = generateResourceUri(note.title, note.id, note.teamPath);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: false });
         vscode.commands.executeCommand('markdown.showPreviewToSide', uri);
@@ -222,10 +282,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('HacKMD.openNoteOnHackMD', async (noteNode: ReactVSCTreeNode) => {
-      if (noteNode) {
-        const publishLink = noteNode.value.context.publishLink;
-        vscode.env.openExternal(vscode.Uri.parse(publishLink));
+    vscode.commands.registerCommand('HacKMD.openNoteOnHackMD', async (noteNode: any) => {
+      if (noteNode && noteNode.type === 'note') {
+        const note = noteNode.note;
+        vscode.env.openExternal(vscode.Uri.parse(note.publishLink));
       } else {
         const noteId = vscode.window.activeTextEditor.document.uri.fragment;
 
@@ -255,63 +315,75 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         }
         const payload = folderId ? { parentFolderId: folderId } : {};
 
-        let note: any;
-        if (teamPath) {
-          // Team note in folder
-          const provider = getTeamNotesProvider();
-          const teamId = provider?.getTeamIdFromPath(teamPath);
-          const areNotesLoaded = teamId && provider?.isTeamNotesCached(teamId);
+        // Determine container ID for pending state
+        const containerId = folderId ? `folder-${folderId}` : 'root';
 
-          if (!areNotesLoaded && provider) {
-            // Team notes not loaded - execute both API calls in parallel
-            const [createdNote, loadedNotes] = await Promise.all([
-              recordUsage(API.createTeamNote(teamPath, payload as any, { unwrapData: false })),
-              recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }))
-            ]);
-            note = createdNote;
-            // Cache the loaded notes manually
-            if (teamId && loadedNotes) {
-              provider.cacheTeamNotes(teamId, loadedNotes);
+        // Set pending state on appropriate provider
+        const myNotesProvider = getMyNotesProvider();
+        const teamNotesProvider = getTeamNotesProvider();
+        const provider = teamPath ? teamNotesProvider : myNotesProvider;
+
+        provider?.setPendingContainer(containerId);
+
+        try {
+          let note: any;
+          if (teamPath) {
+            // Team note in folder
+            const teamId = teamNotesProvider?.getTeamIdFromPath(teamPath);
+            const areNotesLoaded = teamId && teamNotesProvider?.isTeamNotesCached(teamId);
+
+            if (!areNotesLoaded && teamNotesProvider) {
+              // Team notes not loaded - execute both API calls in parallel
+              const [createdNote, loadedNotes] = await Promise.all([
+                recordUsage(API.createTeamNote(teamPath, payload as any, { unwrapData: false })),
+                recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }))
+              ]);
+              note = createdNote;
+              // Cache the loaded notes manually
+              if (teamId && loadedNotes) {
+                teamNotesProvider.cacheTeamNotes(teamId, loadedNotes);
+              }
+            } else {
+              // Team notes already loaded - just create the note
+              note = await recordUsage(
+                API.createTeamNote(teamPath, payload as any, { unwrapData: false })
+              );
             }
           } else {
-            // Team notes already loaded - just create the note
+            // Personal note
             note = await recordUsage(
-              API.createTeamNote(teamPath, payload as any, { unwrapData: false })
+              API.createNote(payload as any, { unwrapData: false })
             );
           }
-        } else {
-          // Personal note
-          note = await recordUsage(
-            API.createNote(payload as any, { unwrapData: false })
-          );
-        }
 
-        // Add to cache first, then open editor
-        let noteNode: any;
-        if (teamPath) {
-          const provider = getTeamNotesProvider();
-          if (provider) {
-            noteNode = await provider.addNoteToCache(note, teamPath);
-          }
-        } else {
-          const provider = getMyNotesProvider();
-          if (provider) {
-            noteNode = await provider.addNoteToCache(note);
-          }
-        }
-
-        // Open in editor after cache is updated
-        const uri = generateResourceUri(note.title, note.id);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preview: false });
-
-        // Reveal and select the note
-        if (noteNode) {
+          // Add to cache first, then open editor
+          let noteNode: any;
           if (teamPath) {
-            await revealNote(getTeamNotesTreeView(), noteNode);
+            if (teamNotesProvider) {
+              noteNode = await teamNotesProvider.addNoteToCache(note, teamPath);
+            }
           } else {
-            await revealNote(getMyNotesTreeView(), noteNode);
+            if (myNotesProvider) {
+              noteNode = await myNotesProvider.addNoteToCache(note);
+            }
           }
+
+          // Open in editor after cache is updated
+          const uri = generateResourceUri(note.title, note.id, note.teamPath);
+          const doc = await vscode.workspace.openTextDocument(uri);
+          await vscode.window.showTextDocument(doc, { preview: false });
+
+          // Reveal and select the note
+          if (noteNode) {
+            if (teamPath) {
+              await revealNote(getTeamNotesTreeView(), noteNode);
+            } else {
+              await revealNote(getMyNotesTreeView(), noteNode);
+            }
+          }
+        } finally {
+          // Clear pending state
+          provider?.clearPendingContainer(containerId);
         }
       }
     })
@@ -340,9 +412,14 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const teamPath = node.team?.path;
 
         if (teamPath) {
+          const provider = getTeamNotesProvider();
+          const teamId = provider?.getTeamIdFromPath(teamPath);
+          const containerId = `team-${teamId}`;
+
+          // Set pending state on the team
+          provider?.setPendingContainer(containerId);
+
           try {
-            const provider = getTeamNotesProvider();
-            const teamId = provider?.getTeamIdFromPath(teamPath);
             const areNotesLoaded = teamId && provider?.isTeamNotesCached(teamId);
 
             let note: any;
@@ -371,7 +448,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             }
 
             // Open in editor only after cache is updated
-            const uri = generateResourceUri(note.title, note.id);
+            const uri = generateResourceUri(note.title, note.id, note.teamPath);
             const doc = await vscode.workspace.openTextDocument(uri);
             await vscode.window.showTextDocument(doc, { preview: false });
 
@@ -381,6 +458,9 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             }
           } catch (error) {
             vscode.window.showErrorMessage(`Failed to create team note: ${error.message}`);
+          } finally {
+            // Clear pending state
+            provider?.clearPendingContainer(containerId);
           }
         } else {
           vscode.window.showErrorMessage('Team path not found');

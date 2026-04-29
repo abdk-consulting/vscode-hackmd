@@ -1,8 +1,14 @@
 import { Note, Team } from '@hackmd/api/dist/type';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { API } from './api';
-import { meStore, recordUsage } from './treeReactApp/store';
+import { meStore, recordUsage } from './store';
+
+// Cache ThemeIcon instances to prevent layout shifts during updates
+const ICON_FOLDER = new vscode.ThemeIcon('folder');
+const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
+const ICON_FILE = new vscode.ThemeIcon('file');
+const ICON_LOCK = new vscode.ThemeIcon('lock');
+const ICON_ORGANIZATION = new vscode.ThemeIcon('organization');
 
 type TreeNode = TeamNode | FolderNode | NoteNode | PlaceholderNode;
 
@@ -44,6 +50,9 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private teamFoldersCache = new Map<string, Map<string, FolderNode>>();
   // Cache team node objects to maintain stable references for change events
   private teamNodesCache = new Map<string, TeamNode>();
+  // Track pending operations
+  private pendingNotes = new Set<string>(); // Note IDs being opened/deleted/saved
+  private pendingContainers = new Set<string>(); // Folder/team IDs where notes are being created
 
   constructor(private extensionPath: string) { }
 
@@ -100,8 +109,10 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         this.teamNotesCache.set(teamId, notes);
       }
     } else {
-      // Team notes already loaded - add the new note at the beginning
-      notes.unshift(note);
+      // Team notes already loaded - add the new note at the beginning (if not already present)
+      if (!notes.find(n => n.id === note.id)) {
+        notes.unshift(note);
+      }
     }
 
     // Ensure the note has teamPath set (API might not return it)
@@ -133,24 +144,23 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     const noteNode = findNoteInTree(children);
 
-    // Fire onChange on the specific parent node (folder or team)
+    // Manually determine where to fire event based on the note's location
     if (note.folderPaths && note.folderPaths.length > 0) {
       // Note is in a folder - fire onChange on the deepest folder
       const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
       const folderCache = this.teamFoldersCache.get(teamId);
       const folderNode = folderCache?.get(deepestFolder.id);
       if (folderNode) {
-        // Fire onChange on the cached folder object (stable reference)
         this._onDidChangeTreeData.fire(folderNode);
       } else {
-        // Fallback to team if folder not found in cache
+        // Fallback to team if folder not found
         const teamNode = this.teamNodesCache.get(teamId);
         if (teamNode) {
           this._onDidChangeTreeData.fire(teamNode);
         }
       }
     } else {
-      // Note is at root level - fire onChange on the team
+      // Note is at team root level - fire onChange on team
       const teamNode = this.teamNodesCache.get(teamId);
       if (teamNode) {
         this._onDidChangeTreeData.fire(teamNode);
@@ -175,23 +185,23 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
             // Rebuild tree to update folder objects
             this.organizeNotesIntoFolders(notes, teamId);
 
-            // Fire onChange on the specific parent node (folder or team)
+            // Manually determine where to fire event based on the note's location
             if (note.folderPaths && note.folderPaths.length > 0) {
+              // Note was in a folder - fire onChange on the deepest folder
               const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
               const folderCache = this.teamFoldersCache.get(teamId);
               const folderNode = folderCache?.get(deepestFolder.id);
               if (folderNode) {
-                // Fire onChange on the cached folder object (stable reference)
                 this._onDidChangeTreeData.fire(folderNode);
               } else {
                 // Folder might have been deleted - refresh team
-                const team = this.teams.find(t => t.id === teamId);
-                if (team) {
-                  this._onDidChangeTreeData.fire({ type: 'team', team });
+                const teamNode = this.teamNodesCache.get(teamId);
+                if (teamNode) {
+                  this._onDidChangeTreeData.fire(teamNode);
                 }
               }
             } else {
-              // Note was at root level - fire onChange on the team
+              // Note was at team root level - fire onChange on team
               const teamNode = this.teamNodesCache.get(teamId);
               if (teamNode) {
                 this._onDidChangeTreeData.fire(teamNode);
@@ -212,13 +222,13 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           // Rebuild tree to update folder objects
           this.organizeNotesIntoFolders(notes, teamId);
 
-          // Fire onChange on the specific parent node (folder or team)
+          // Manually determine where to fire event based on the note's location
           if (note.folderPaths && note.folderPaths.length > 0) {
+            // Note was in a folder - fire onChange on the deepest folder
             const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
             const folderCache = this.teamFoldersCache.get(teamId);
             const folderNode = folderCache?.get(deepestFolder.id);
             if (folderNode) {
-              // Fire onChange on the cached folder object (stable reference)
               this._onDidChangeTreeData.fire(folderNode);
             } else {
               // Folder might have been deleted - refresh team
@@ -228,7 +238,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
               }
             }
           } else {
-            // Note was at root level - fire onChange on the team
+            // Note was at team root level - fire onChange on team
             const teamNode = this.teamNodesCache.get(teamId);
             if (teamNode) {
               this._onDidChangeTreeData.fire(teamNode);
@@ -251,6 +261,108 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
   cacheTeamNotes(teamId: string, notes: Note[]): void {
     this.teamNotesCache.set(teamId, notes);
+  }
+
+  // Find a note in cache and return it
+  findNoteInCache(noteId: string): Note | undefined {
+    for (const notes of this.teamNotesCache.values()) {
+      const note = notes.find(n => n.id === noteId);
+      if (note) {
+        return note;
+      }
+    }
+    return undefined;
+  }
+
+  // Pending operation management
+  setPendingNote(noteId: string, noteObject?: Note): void {
+    this.pendingNotes.add(noteId);
+    // Try to find the note
+    let note = noteObject;
+    if (!note) {
+      // Search all team caches
+      for (const notes of this.teamNotesCache.values()) {
+        note = notes.find(n => n.id === noteId);
+        if (note) break;
+      }
+    }
+    if (note && note.teamPath) {
+      // Fire event on the PARENT (team node) to trigger refresh
+      const teamId = this.getTeamIdFromPath(note.teamPath);
+      if (teamId) {
+        const teamNode = this.teamNodesCache.get(teamId);
+        if (teamNode) {
+          this._onDidChangeTreeData.fire(teamNode);
+        }
+      }
+    }
+  }
+
+  clearPendingNote(noteId: string, noteObject?: Note): void {
+    this.pendingNotes.delete(noteId);
+    // Try to find the note
+    let note = noteObject;
+    if (!note) {
+      // Search all team caches
+      for (const notes of this.teamNotesCache.values()) {
+        note = notes.find(n => n.id === noteId);
+        if (note) break;
+      }
+    }
+    if (note && note.teamPath) {
+      // Fire event on the PARENT (team node) to trigger refresh
+      const teamId = this.getTeamIdFromPath(note.teamPath);
+      if (teamId) {
+        const teamNode = this.teamNodesCache.get(teamId);
+        if (teamNode) {
+          this._onDidChangeTreeData.fire(teamNode);
+        }
+      }
+    }
+  }
+
+  setPendingContainer(containerId: string): void {
+    this.pendingContainers.add(containerId);
+    // Fire granular event based on container type
+    if (containerId.startsWith('team-')) {
+      const teamId = containerId.substring('team-'.length);
+      const teamNode = this.teamNodesCache.get(teamId);
+      if (teamNode) {
+        this._onDidChangeTreeData.fire(teamNode);
+      }
+    } else if (containerId.startsWith('folder-')) {
+      const folderId = containerId.substring('folder-'.length);
+      // Search all team folder caches
+      for (const folderCache of this.teamFoldersCache.values()) {
+        const folder = folderCache.get(folderId);
+        if (folder) {
+          this._onDidChangeTreeData.fire(folder);
+          break;
+        }
+      }
+    }
+  }
+
+  clearPendingContainer(containerId: string): void {
+    this.pendingContainers.delete(containerId);
+    // Fire granular event based on container type
+    if (containerId.startsWith('team-')) {
+      const teamId = containerId.substring('team-'.length);
+      const teamNode = this.teamNodesCache.get(teamId);
+      if (teamNode) {
+        this._onDidChangeTreeData.fire(teamNode);
+      }
+    } else if (containerId.startsWith('folder-')) {
+      const folderId = containerId.substring('folder-'.length);
+      // Search all team folder caches
+      for (const folderCache of this.teamFoldersCache.values()) {
+        const folder = folderCache.get(folderId);
+        if (folder) {
+          this._onDidChangeTreeData.fire(folder);
+          break;
+        }
+      }
+    }
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
@@ -384,12 +496,18 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private getTeamTreeItem(teamNode: TeamNode): vscode.TreeItem {
     const item = new vscode.TreeItem(teamNode.team.name, vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `team-${teamNode.team.id}`; // Stable ID for VS Code to track this item
+    const isPending = this.pendingContainers.has(`team-${teamNode.team.id}`);
+    item.contextValue = isPending ? 'team-pending' : 'team';
+
+    // Set icon - spinner when pending, otherwise team icon
+    if (isPending) {
+      item.iconPath = ICON_SPINNER;
+    } else {
+      item.iconPath = ICON_ORGANIZATION;
+    }
+
+    // Show team path in description
     item.description = teamNode.team.path;
-    item.contextValue = 'team';
-    item.iconPath = {
-      light: path.join(this.extensionPath, 'images/icon/light/users.svg'),
-      dark: path.join(this.extensionPath, 'images/icon/dark/users.svg'),
-    };
 
     // Store team path for command handlers
     (item as any).teamPath = teamNode.team.path;
@@ -400,7 +518,8 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private getFolderTreeItem(folderNode: FolderNode): vscode.TreeItem {
     const item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `folder-${folderNode.id}`; // Stable ID for VS Code to track this item
-    item.contextValue = 'folder';
+    const isPending = this.pendingContainers.has(`folder-${folderNode.id}`);
+    item.contextValue = isPending ? 'folder-pending' : 'folder';
     item.tooltip = folderNode.name;
 
     // Store context on the item for command handlers
@@ -410,9 +529,13 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     (item as any).folderClientId = folderNode.clientId;
     (item as any).teamPath = folderNode.teamPath;
 
-    // Set icon if available
-    if (folderNode.icon) {
+    // Set icon - spinner when pending, otherwise folder icon
+    if (isPending) {
+      item.iconPath = ICON_SPINNER;
+    } else if (folderNode.icon) {
       item.iconPath = new vscode.ThemeIcon(folderNode.icon);
+    } else {
+      item.iconPath = ICON_FOLDER;
     }
 
     return item;
@@ -424,29 +547,35 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.id = `note-${note.id}`; // Stable ID for VS Code to track this item
 
-    item.command = {
-      command: 'clickTreeItem',
-      title: 'Open Note',
-      arguments: [label, note.id],
-    };
+    const isPending = this.pendingNotes.has(note.id);
+
+    if (!isPending) {
+      item.command = {
+        command: 'clickTreeItem',
+        title: 'Open Note',
+        arguments: [note], // Pass the note object directly
+      };
+    }
 
     // Store note ID for commands
     (item as any).noteId = note.id;
 
     // Set icon and context based on ownership
     const isOwner = meStore.getState().checkIsOwner(note);
-    if (isOwner) {
-      item.contextValue = 'file-owned';
-      item.iconPath = {
-        light: path.join(this.extensionPath, 'images/icon/light/file-text.svg'),
-        dark: path.join(this.extensionPath, 'images/icon/dark/file-text.svg'),
-      };
+
+    if (isPending) {
+      item.contextValue = isOwner ? 'file-owned-pending' : 'file-pending';
     } else {
-      item.contextValue = 'file';
-      item.iconPath = {
-        light: path.join(this.extensionPath, 'images/icon/light/gist-secret.svg'),
-        dark: path.join(this.extensionPath, 'images/icon/dark/gist-secret.svg'),
-      };
+      item.contextValue = isOwner ? 'file-owned' : 'file';
+    }
+
+    // Set icon - spinner when pending, otherwise file icon
+    if (isPending) {
+      item.iconPath = ICON_SPINNER;
+    } else if (isOwner) {
+      item.iconPath = ICON_FILE;
+    } else {
+      item.iconPath = ICON_LOCK;
     }
 
     return item;
@@ -457,7 +586,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return item;
   }
 
-  private organizeNotesIntoFolders(notes: Note[], teamId: string): { rootFolders: FolderNode[]; rootNotes: Note[] } {
+  private organizeNotesIntoFolders(notes: Note[], teamId: string): { rootFolders: FolderNode[]; rootNotes: Note[]; changedFolders: Set<FolderNode>; teamRootChanged: boolean } {
     // Get or create folder cache for this team
     let folderCache = this.teamFoldersCache.get(teamId);
     if (!folderCache) {
@@ -466,6 +595,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     const rootNotes: Note[] = [];
+    const changedFolders = new Set<FolderNode>();
 
     // Collect all unique folders from notes, reusing cached folder objects
     for (const note of notes) {
@@ -489,6 +619,26 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       }
     }
+
+    // Snapshot current state before clearing
+    const oldState = new Map<string, { childIds: Set<string>; noteIds: Set<string> }>();
+    const oldNotesInFolders = new Set<string>();
+    for (const [folderId, folder] of folderCache.entries()) {
+      const noteIds = new Set(folder.notes.map(n => n.id));
+      oldState.set(folderId, {
+        childIds: new Set(folder.children.map(c => c.id)),
+        noteIds,
+      });
+      // Track which notes were in folders
+      for (const noteId of noteIds) {
+        oldNotesInFolders.add(noteId);
+      }
+    }
+    // Old root notes are notes that weren't in any folder
+    const oldRootNoteIds = new Set(notes.filter(n => !oldNotesInFolders.has(n.id)).map(n => n.id));
+
+    // Count old root folders
+    const oldRootFoldersCount = [...folderCache.values()].filter(f => !f.parentId).length;
 
     // Clear children and notes arrays in all cached folders
     for (const folder of folderCache.values()) {
@@ -526,6 +676,34 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       }
     }
 
-    return { rootFolders, rootNotes };
+    // Detect which folders changed by comparing with old state
+    for (const [folderId, folder] of folderCache.entries()) {
+      const old = oldState.get(folderId);
+      const newChildIds = new Set(folder.children.map(c => c.id));
+      const newNoteIds = new Set(folder.notes.map(n => n.id));
+
+      // Check if children or notes changed
+      const childrenChanged = !old ||
+        old.childIds.size !== newChildIds.size ||
+        ![...old.childIds].every(id => newChildIds.has(id));
+
+      const notesChanged = !old ||
+        old.noteIds.size !== newNoteIds.size ||
+        ![...old.noteIds].every(id => newNoteIds.has(id));
+
+      if (childrenChanged || notesChanged) {
+        changedFolders.add(folder);
+      }
+    }
+
+    // Check if team root notes changed
+    const newRootNoteIds = new Set(rootNotes.map(n => n.id));
+    const teamRootChanged =
+      oldRootNoteIds.size !== newRootNoteIds.size ||
+      ![...oldRootNoteIds].every(id => newRootNoteIds.has(id)) ||
+      // Also check if root folders changed (this happens when folders are added/removed)
+      rootFolders.length !== oldRootFoldersCount;
+
+    return { rootFolders, rootNotes, changedFolders, teamRootChanged };
   }
 }

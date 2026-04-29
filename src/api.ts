@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import ApiClient from '@hackmd/api';
 
 import { ACCESS_TOKEN_KEY } from './constants';
-import { meStore } from './treeReactApp/store';
+import { meStore } from './store';
 
 let API: ApiClient;
 

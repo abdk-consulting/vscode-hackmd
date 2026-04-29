@@ -1,8 +1,13 @@
 import { Note } from '@hackmd/api/dist/type';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { API } from './api';
-import { meStore, recordUsage } from './treeReactApp/store';
+import { meStore, recordUsage } from './store';
+
+// Cache ThemeIcon instances to prevent layout shifts during updates
+const ICON_FOLDER = new vscode.ThemeIcon('folder');
+const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
+const ICON_FILE = new vscode.ThemeIcon('file');
+const ICON_LOCK = new vscode.ThemeIcon('lock');
 
 type TreeNode = FolderNode | NoteNode | PlaceholderNode;
 
@@ -35,6 +40,9 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private notesCache: Note[] | null = null;
   // Cache folder objects to maintain stable references for change events
   private foldersCache = new Map<string, FolderNode>();
+  // Track pending operations
+  private pendingNotes = new Set<string>(); // Note IDs being opened/deleted/saved
+  private pendingContainers = new Set<string>(); // Folder IDs or 'root' where notes are being created
 
   constructor(private extensionPath: string) { }
 
@@ -49,6 +57,97 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this.notesCache = null;
     this.foldersCache.clear();
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  // Find a note in cache and return it
+  findNoteInCache(noteId: string): Note | undefined {
+    if (!this.notesCache) {
+      return undefined;
+    }
+    return this.notesCache.find(n => n.id === noteId);
+  }
+
+  // Pending operation management
+  setPendingNote(noteId: string, noteObject?: Note): void {
+    this.pendingNotes.add(noteId);
+
+    // Find the note to determine its parent
+    let note = noteObject;
+    if (!note && this.notesCache) {
+      note = this.notesCache.find(n => n.id === noteId);
+    }
+
+    if (note) {
+      // Fire event on the PARENT (folder or root) to trigger refresh
+      if (note.folderPaths && note.folderPaths.length > 0) {
+        const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
+        const folderNode = this.foldersCache.get(deepestFolder.id);
+        if (folderNode) {
+          this._onDidChangeTreeData.fire(folderNode);
+        } else {
+          this._onDidChangeTreeData.fire(undefined);
+        }
+      } else {
+        // Note is at root level
+        this._onDidChangeTreeData.fire(undefined);
+      }
+    }
+  }
+
+  clearPendingNote(noteId: string, noteObject?: Note): void {
+    this.pendingNotes.delete(noteId);
+
+    // Find the note to determine its parent
+    let note = noteObject;
+    if (!note && this.notesCache) {
+      note = this.notesCache.find(n => n.id === noteId);
+    }
+
+    if (note) {
+      // Fire event on the PARENT (folder or root) to trigger refresh
+      if (note.folderPaths && note.folderPaths.length > 0) {
+        const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
+        const folderNode = this.foldersCache.get(deepestFolder.id);
+        if (folderNode) {
+          this._onDidChangeTreeData.fire(folderNode);
+        } else {
+          this._onDidChangeTreeData.fire(undefined);
+        }
+      } else {
+        // Note is at root level
+        this._onDidChangeTreeData.fire(undefined);
+      }
+    }
+  }
+
+  setPendingContainer(containerId: string): void {
+    this.pendingContainers.add(containerId);
+    // For containers, fire granular event if we can find the folder
+    if (containerId === 'root') {
+      // For root, refresh whole tree
+      this._onDidChangeTreeData.fire(undefined);
+    } else if (containerId.startsWith('folder-')) {
+      const folderId = containerId.substring('folder-'.length);
+      const folder = this.foldersCache.get(folderId);
+      if (folder) {
+        this._onDidChangeTreeData.fire(folder);
+      }
+    }
+  }
+
+  clearPendingContainer(containerId: string): void {
+    this.pendingContainers.delete(containerId);
+    // For containers, fire granular event if we can find the folder
+    if (containerId === 'root') {
+      // For root, refresh whole tree
+      this._onDidChangeTreeData.fire(undefined);
+    } else if (containerId.startsWith('folder-')) {
+      const folderId = containerId.substring('folder-'.length);
+      const folder = this.foldersCache.get(folderId);
+      if (folder) {
+        this._onDidChangeTreeData.fire(folder);
+      }
+    }
   }
 
   async addNoteToCache(note: Note): Promise<NoteNode> {
@@ -97,16 +196,15 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     const noteNode = findNoteInTree(children);
 
-    // Fire onChange on the specific parent node (folder or root)
+    // Manually determine where to fire event based on the note's location
     if (note.folderPaths && note.folderPaths.length > 0) {
       // Note is in a folder - fire onChange on the deepest folder
       const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
       const folderNode = this.foldersCache.get(deepestFolder.id);
       if (folderNode) {
-        // Fire onChange on the cached folder object (stable reference)
         this._onDidChangeTreeData.fire(folderNode);
       } else {
-        // Fallback to root if folder not found in cache
+        // Fallback to root if folder not found
         this._onDidChangeTreeData.fire(undefined);
       }
     } else {
@@ -128,12 +226,12 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         // Rebuild tree to update folder objects
         this.organizeNotesIntoFolders(this.notesCache);
 
-        // Fire onChange on the specific parent node (folder or root)
+        // Manually determine where to fire event based on the note's location
         if (note.folderPaths && note.folderPaths.length > 0) {
+          // Note was in a folder - fire onChange on the deepest folder
           const deepestFolder = note.folderPaths[note.folderPaths.length - 1];
           const folderNode = this.foldersCache.get(deepestFolder.id);
           if (folderNode) {
-            // Fire onChange on the cached folder object (stable reference)
             this._onDidChangeTreeData.fire(folderNode);
           } else {
             // Folder might have been deleted - refresh root
@@ -234,7 +332,8 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private getFolderTreeItem(folderNode: FolderNode): vscode.TreeItem {
     const item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `folder-${folderNode.id}`; // Stable ID for VS Code to track this item
-    item.contextValue = 'folder';
+    const isPending = this.pendingContainers.has(`folder-${folderNode.id}`);
+    item.contextValue = isPending ? 'folder-pending' : 'folder';
     item.tooltip = folderNode.name;
 
     // Store context on the item for command handlers
@@ -244,9 +343,13 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     (item as any).folderClientId = folderNode.clientId;
     (item as any).teamPath = folderNode.teamPath;
 
-    // Set icon if available
-    if (folderNode.icon) {
+    // Set icon - spinner when pending, otherwise folder icon
+    if (isPending) {
+      item.iconPath = ICON_SPINNER;
+    } else if (folderNode.icon) {
       item.iconPath = new vscode.ThemeIcon(folderNode.icon);
+    } else {
+      item.iconPath = ICON_FOLDER;
     }
 
     return item;
@@ -258,29 +361,35 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.id = `note-${note.id}`; // Stable ID for VS Code to track this item
 
-    item.command = {
-      command: 'clickTreeItem',
-      title: 'Open Note',
-      arguments: [label, note.id],
-    };
+    const isPending = this.pendingNotes.has(note.id);
+
+    if (!isPending) {
+      item.command = {
+        command: 'clickTreeItem',
+        title: 'Open Note',
+        arguments: [note], // Pass the note object directly
+      };
+    }
 
     // Store note ID for commands
     (item as any).noteId = note.id;
 
     // Set icon and context based on ownership
     const isOwner = meStore.getState().checkIsOwner(note);
-    if (isOwner) {
-      item.contextValue = 'file-owned';
-      item.iconPath = {
-        light: path.join(this.extensionPath, 'images/icon/light/file-text.svg'),
-        dark: path.join(this.extensionPath, 'images/icon/dark/file-text.svg'),
-      };
+
+    if (isPending) {
+      item.contextValue = isOwner ? 'file-owned-pending' : 'file-pending';
     } else {
-      item.contextValue = 'file';
-      item.iconPath = {
-        light: path.join(this.extensionPath, 'images/icon/light/gist-secret.svg'),
-        dark: path.join(this.extensionPath, 'images/icon/dark/gist-secret.svg'),
-      };
+      item.contextValue = isOwner ? 'file-owned' : 'file';
+    }
+
+    // Set icon - spinner when pending, otherwise file icon
+    if (isPending) {
+      item.iconPath = ICON_SPINNER;
+    } else if (isOwner) {
+      item.iconPath = ICON_FILE;
+    } else {
+      item.iconPath = ICON_LOCK;
     }
 
     return item;
@@ -291,8 +400,9 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return item;
   }
 
-  private organizeNotesIntoFolders(notes: Note[]): { rootFolders: FolderNode[]; rootNotes: Note[] } {
+  private organizeNotesIntoFolders(notes: Note[]): { rootFolders: FolderNode[]; rootNotes: Note[]; changedFolders: Set<FolderNode>; rootChanged: boolean } {
     const rootNotes: Note[] = [];
+    const changedFolders = new Set<FolderNode>();
 
     // Collect all unique folders from notes, reusing cached folder objects
     for (const note of notes) {
@@ -316,6 +426,32 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       }
     }
+
+    // Snapshot current state before clearing
+    const oldState = new Map<string, { childIds: Set<string>; noteIds: Set<string> }>();
+    const oldNotesInFolders = new Set<string>();
+    const oldNoteIds = new Set<string>(); // All notes that existed in old state
+    for (const [folderId, folder] of this.foldersCache.entries()) {
+      const noteIds = new Set(folder.notes.map(n => n.id));
+      oldState.set(folderId, {
+        childIds: new Set(folder.children.map(c => c.id)),
+        noteIds,
+      });
+      // Track which notes were in folders and which notes existed
+      for (const noteId of noteIds) {
+        oldNotesInFolders.add(noteId);
+        oldNoteIds.add(noteId);
+      }
+    }
+    // Old root notes are notes that:
+    // 1. Existed in the old state (in oldNoteIds OR weren't in any folder but existed)
+    // 2. Weren't in any folder
+    // We need to exclude NEW notes that weren't in the old state
+    const oldRootNoteIds = new Set(
+      notes
+        .filter(n => !oldNotesInFolders.has(n.id) && oldNoteIds.has(n.id))
+        .map(n => n.id)
+    );
 
     // Clear children and notes arrays in all cached folders
     for (const folder of this.foldersCache.values()) {
@@ -353,6 +489,34 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       }
     }
 
-    return { rootFolders, rootNotes };
+    // Detect which folders changed by comparing with old state
+    for (const [folderId, folder] of this.foldersCache.entries()) {
+      const old = oldState.get(folderId);
+      const newChildIds = new Set(folder.children.map(c => c.id));
+      const newNoteIds = new Set(folder.notes.map(n => n.id));
+
+      // Check if children or notes changed
+      const childrenChanged = !old ||
+        old.childIds.size !== newChildIds.size ||
+        ![...old.childIds].every(id => newChildIds.has(id));
+
+      const notesChanged = !old ||
+        old.noteIds.size !== newNoteIds.size ||
+        ![...old.noteIds].every(id => newNoteIds.has(id));
+
+      if (childrenChanged || notesChanged) {
+        changedFolders.add(folder);
+      }
+    }
+
+    // Check if root notes changed
+    const newRootNoteIds = new Set(rootNotes.map(n => n.id));
+    const rootChanged =
+      oldRootNoteIds.size !== newRootNoteIds.size ||
+      ![...oldRootNoteIds].every(id => newRootNoteIds.has(id)) ||
+      // Also check if root folders changed (this happens when folders are added/removed)
+      rootFolders.length !== oldRootFoldersCount;
+
+    return { rootFolders, rootNotes, changedFolders, rootChanged };
   }
 }

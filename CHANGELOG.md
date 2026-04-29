@@ -48,6 +48,19 @@
   - Fixed folders not expanding automatically when notes created inside them
   - Implemented synchronous cache updates with immediate tree refresh (no arbitrary timeouts)
   - Fixed root-level team notes not being removed from tree after deletion
+- **Visual Feedback for Async Operations**:
+  - Added spinner indicators during note opening, deletion, creation, and saving operations
+  - Notes show spinner icon and are non-interactive while pending operations are in progress
+  - Folders and teams show spinners during note creation
+  - Pending states use granular tree updates firing on parent nodes for optimal performance
+- Fixed 403 error when saving team notes by using correct API method (`updateTeamNote` instead of non-existent `updateTeamNoteContent`)
+- Fixed team note save operations to properly handle `teamPath` parameter
+- **Codebase Cleanup**:
+  - Removed all React tree implementation remnants (`treeReactApp/` and `tree/` directories)
+  - Consolidated state management into single `store.ts` file
+  - Removed unused React hooks and event emitters
+  - Reduced extension bundle size from 1.16 MiB to 1.05 MiB (~9.5% reduction)
+  - Eliminated duplicate identifier names between old React tree and new native tree implementations
 
 ### Contributors
 

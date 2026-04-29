@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { recordUsage } from '../treeReactApp/store';
+import { recordUsage } from '../store';
 
 import { API } from './../api';
 import { checkLogin } from './../utils';

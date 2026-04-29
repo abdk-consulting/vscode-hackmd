@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 
 import { API } from './api';
-import { meStore, recordUsage } from './treeReactApp/store';
+import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
+import { meStore, recordUsage } from './store';
 
 export class File implements vscode.FileStat {
   type: vscode.FileType;
@@ -88,20 +89,67 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
       throw vscode.FileSystemError.FileNotFound();
     }
 
+    const myNotesProvider = getMyNotesProvider();
+    const teamNotesProvider = getTeamNotesProvider();
+    const historyProvider = getHistoryProvider();
+
+    // Extract teamPath from URI query string (encoded when note was opened)
+    const teamPath = uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
+
+    // Set pending state BEFORE any API calls
+    if (teamPath) {
+      teamNotesProvider?.setPendingNote(noteId);
+    } else {
+      myNotesProvider?.setPendingNote(noteId);
+    }
+    historyProvider?.setPendingNote(noteId);
+
     try {
       const contentString = Buffer.from(content).toString();
 
-      // Get note information to determine if it's a team note
-      const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
-
-      // Use appropriate API method based on whether it's a team note
-      if (note.teamPath) {
-        await API.updateTeamNoteContent(note.teamPath, noteId, contentString);
+      // Use appropriate API method based on teamPath
+      if (teamPath) {
+        // Team note update - use updateTeamNote with content in payload
+        await recordUsage(API.updateTeamNote(teamPath, noteId, { content: contentString }));
       } else {
-        await API.updateNoteContent(noteId, contentString);
+        await recordUsage(API.updateNoteContent(noteId, contentString, { unwrapData: false }));
       }
+
+      // Don't block here - set up async listener to clear pending state after dirty flag clears
+      // This must happen AFTER writeFile returns so VS Code can clear the dirty flag
+      setImmediate(() => {
+        const timeout = setTimeout(() => {
+          disposable.dispose();
+          // Clear pending state on timeout
+          if (teamPath) {
+            teamNotesProvider?.clearPendingNote(noteId);
+          } else {
+            myNotesProvider?.clearPendingNote(noteId);
+          }
+          historyProvider?.clearPendingNote(noteId);
+        }, 5000);
+
+        const disposable = vscode.workspace.onDidChangeTextDocument((event) => {
+          if (event.document.uri.toString() === uri.toString() && !event.document.isDirty) {
+            clearTimeout(timeout);
+            disposable.dispose();
+            // Clear pending state when dirty flag clears
+            if (teamPath) {
+              teamNotesProvider?.clearPendingNote(noteId);
+            } else {
+              myNotesProvider?.clearPendingNote(noteId);
+            }
+            historyProvider?.clearPendingNote(noteId);
+          }
+        });
+      });
     } catch (e) {
       console.error('Error saving note:', e);
+
+      // Try to clear pending state on error (best effort)
+      myNotesProvider?.clearPendingNote(noteId);
+      teamNotesProvider?.clearPendingNote(noteId);
+      historyProvider?.clearPendingNote(noteId);
 
       throw vscode.FileSystemError.Unavailable(
         `Failed to save: ${e.message || 'Unknown error'}. Try to save again when the internet connection is back. You can save a local copy on your computer for restoration.`
@@ -158,6 +206,10 @@ export function getProvider() {
   return provider;
 }
 
-export function generateResourceUri(label: string, noteId: string) {
-  return vscode.Uri.parse(`hackmd:/${encodeURIComponent(label)}.md#${noteId}`);
+export function generateResourceUri(label: string, noteId: string, teamPath?: string) {
+  const base = `hackmd:/${encodeURIComponent(label)}.md#${noteId}`;
+  if (teamPath) {
+    return vscode.Uri.parse(`${base}?teamPath=${encodeURIComponent(teamPath)}`);
+  }
+  return vscode.Uri.parse(base);
 }

@@ -47,6 +47,10 @@ export class Directory implements vscode.FileStat {
 
 export type Entry = File | Directory;
 
+function getTeamPathFromUri(uri: vscode.Uri): string | null {
+  return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
+}
+
 function getNoteIdFromFragment(fragment: string): string {
   if (!fragment) {
     return '';
@@ -67,8 +71,32 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     throw new Error('createDirectory Method not implemented.');
   }
 
-  rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { readonly overwrite: boolean }): void | Thenable<void> {
-    throw new Error('rename Method not implemented.');
+  async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { readonly overwrite: boolean }): Promise<void> {
+    const oldNoteId = getNoteIdFromFragment(oldUri.fragment);
+    const newNoteId = getNoteIdFromFragment(newUri.fragment);
+    const oldTeamPath = getTeamPathFromUri(oldUri);
+    const newTeamPath = getTeamPathFromUri(newUri);
+
+    if (!oldNoteId || !newNoteId) {
+      throw vscode.FileSystemError.FileNotFound();
+    }
+
+    if (oldUri.toString() === newUri.toString()) {
+      return;
+    }
+
+    // A HackMD note's identity is the note id (+ team path for team notes).
+    // Renaming changes only the URI path/title, not the underlying note.
+    if (oldNoteId !== newNoteId || oldTeamPath !== newTeamPath) {
+      throw vscode.FileSystemError.NoPermissions('HackMD notes can only be renamed to another URI for the same note.');
+    }
+
+    await recordUsage(API.getNote(oldNoteId, { unwrapData: false }));
+
+    this._emitter.fire([
+      { type: vscode.FileChangeType.Deleted, uri: oldUri },
+      { type: vscode.FileChangeType.Created, uri: newUri }
+    ]);
   }
 
   stat(uri: vscode.Uri): vscode.FileStat | Thenable<vscode.FileStat> {
@@ -84,13 +112,20 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
+      const teamPath = getTeamPathFromUri(uri);
       const content = note.content;
 
-      // Update properties provider with the fetched note
-      const teamPath = uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
-      const propertiesProvider = getPropertiesProvider();
-      if (propertiesProvider) {
-        propertiesProvider.updateNote(note, noteId, teamPath);
+      // Only update the properties provider if this note is currently active in the editor.
+      // Use updateNotePreservingChanges to avoid clearing any pending property edits.
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document.uri.scheme === 'hackmd') {
+        const activeNoteId = getNoteIdFromFragment(activeEditor.document.uri.fragment);
+        if (activeNoteId === noteId) {
+          const propertiesProvider = getPropertiesProvider();
+          if (propertiesProvider) {
+            propertiesProvider.updateNotePreservingChanges(note, noteId, teamPath);
+          }
+        }
       }
 
       return Buffer.from(content);
@@ -116,7 +151,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     const historyProvider = getHistoryProvider();
 
     // Extract teamPath from URI query string (encoded when note was opened)
-    const teamPath = uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
+    const teamPath = getTeamPathFromUri(uri);
 
     // Set pending state BEFORE any API calls
     if (teamPath) {
@@ -127,7 +162,8 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     historyProvider?.setPendingNote(noteId);
 
     try {
-      const contentString = Buffer.from(content).toString();
+      // Strip the zero-width space sentinel that _makeEditorDirty inserts to mark the doc dirty
+      const contentString = Buffer.from(content).toString().replace(/\u200B/g, '');
 
       // Check if there are pending property changes to save
       const propertiesProvider = getPropertiesProvider();
@@ -173,7 +209,6 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
         // If we found the note, create an updated version with the changed properties
         if (note) {
           const updatedNote = { ...note };
-          const oldTitle = note.title;
 
           // Apply the pending changes to the cached note
           Object.keys(pendingChanges).forEach((key) => {
@@ -192,29 +227,6 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
           // Update the properties provider with the new note
           propertiesProvider?.updateNote(updatedNote, noteId, teamPath);
-
-          // If title changed, close and reopen editor with new URI (breadcrumb path changes)
-          if (pendingChanges.title && pendingChanges.title !== oldTitle) {
-            const oldUri = uri;
-            const newUri = generateResourceUri(updatedNote.title, noteId, teamPath, (updatedNote as any).folderPaths);
-
-            // Close the old document and open with new URI
-            setImmediate(async () => {
-              // Find and close the old editor
-              const editors = vscode.window.visibleTextEditors;
-              for (const editor of editors) {
-                if (editor.document.uri.toString() === oldUri.toString()) {
-                  await vscode.window.showTextDocument(editor.document, editor.viewColumn);
-                  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-                  break;
-                }
-              }
-
-              // Open with new URI
-              const doc = await vscode.workspace.openTextDocument(newUri);
-              await vscode.window.showTextDocument(doc, { preview: false });
-            });
-          }
         }
 
         // Clear pending property changes after successful save
@@ -274,13 +286,6 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
-
-      // Update properties provider with the fetched note
-      const teamPath = uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
-      const propertiesProvider = getPropertiesProvider();
-      if (propertiesProvider) {
-        propertiesProvider.updateNote(note, noteId, teamPath);
-      }
 
       const isOwner = meStore.getState().checkIsOwner(note);
       const file = new File(note.title || note.shortId || 'Untitled', isOwner);

@@ -1,8 +1,9 @@
 import { Note, NotePublishType } from '@hackmd/api/dist/type';
 import * as vscode from 'vscode';
+import { API } from './api';
+import { recordUsage } from './store';
 
 interface NoteProperties {
-  title?: string;
   publishType?: NotePublishType;
   permalink: string | null;
   readPermission: string;
@@ -17,6 +18,21 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   private _currentNoteId?: string;
   private _currentTeamPath?: string | null;
   private _pendingChanges: Partial<NoteProperties> = {};
+
+  private _getNoteIdFromFragment(fragment: string): string {
+    if (!fragment) {
+      return '';
+    }
+    const questionIndex = fragment.indexOf('?');
+    if (questionIndex >= 0) {
+      return fragment.slice(0, questionIndex);
+    }
+    const encodedQuestionIndex = fragment.toLowerCase().indexOf('%3f');
+    if (encodedQuestionIndex >= 0) {
+      return fragment.slice(0, encodedQuestionIndex);
+    }
+    return fragment;
+  }
 
   constructor(private readonly _extensionUri: vscode.Uri) { }
 
@@ -56,19 +72,21 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       // Check if there's an active editor with a HackMD note and fetch it
       const editor = vscode.window.activeTextEditor;
       if (editor && editor.document.uri.scheme === 'hackmd') {
-        const noteId = editor.document.uri.fragment;
+        const noteId = this._getNoteIdFromFragment(editor.document.uri.fragment);
         const teamPath = editor.document.uri.query
           ? new URLSearchParams(editor.document.uri.query).get('teamPath')
           : null;
 
-        // Fetch the note and update the webview
-        recordUsage(API.getNote(noteId, { unwrapData: false }))
-          .then(note => {
-            this.updateNote(note, noteId, teamPath);
-          })
-          .catch(err => {
-            console.error('Failed to fetch note for properties view:', err);
-          });
+        if (noteId) {
+          // Fetch the note and update the webview
+          recordUsage(API.getNote(noteId, { unwrapData: false }))
+            .then(note => {
+              this.updateNote(note, noteId, teamPath);
+            })
+            .catch(err => {
+              console.error('Failed to fetch note for properties view:', err);
+            });
+        }
       }
     }
   }
@@ -79,6 +97,23 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     this._currentTeamPath = teamPath;
     this._pendingChanges = {};
     this._fullRenderWebview();
+  }
+
+  /**
+   * Updates the current note data without clearing pending property changes or
+   * re-rendering the inputs. Used by readFile to refresh note metadata while
+   * the user may be actively editing properties.
+   */
+  public updateNotePreservingChanges(note: Note, noteId: string, teamPath?: string | null) {
+    if (this._currentNoteId !== noteId) {
+      // Different note — do a full update
+      this.updateNote(note, noteId, teamPath);
+      return;
+    }
+    // Same note: refresh cached data but keep pending edits intact
+    this._currentNote = note;
+    this._currentTeamPath = teamPath;
+    // Do NOT clear _pendingChanges or call _fullRenderWebview
   }
 
   public getPendingChanges(): Partial<NoteProperties> {
@@ -110,30 +145,15 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
   private async _makeEditorDirty() {
     const editor = vscode.window.activeTextEditor;
-    if (editor && editor.document.uri.scheme === 'hackmd') {
-      // Make a minimal edit to mark the document as dirty
-      // We add a newline at the end and immediately remove it
-      // Use await to ensure both operations complete synchronously
+    if (editor && editor.document.uri.scheme === 'hackmd' && !editor.document.isDirty) {
+      // Insert an invisible zero-width space to mark the document as dirty.
+      // writeFile strips this character before saving to the API.
       const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
-      const endPosition = lastLine.range.end;
-
+      const endPos = lastLine.range.end;
       await editor.edit((editBuilder) => {
-        editBuilder.insert(endPosition, '\n');
-      });
-
-      // Immediately remove the newline
-      const newLastLine = editor.document.lineAt(editor.document.lineCount - 1);
-      const newEndPosition = newLastLine.range.end;
-      const startPosition = newEndPosition.translate(-1, 0);
-
-      await editor.edit((editBuilder) => {
-        editBuilder.delete(new vscode.Range(startPosition, newEndPosition));
+        editBuilder.insert(endPos, '\u200B');
       });
     }
-  }
-
-  public getTitleChange(): string | undefined {
-    return this._pendingChanges.title;
   }
 
   public getCurrentNoteId(): string | undefined {
@@ -291,7 +311,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       }
       
       // Update each property's modified state
-      ['title', 'publishType', 'permalink', 'readPermission', 'writePermission'].forEach(property => {
+      ['publishType', 'permalink', 'readPermission', 'writePermission'].forEach(property => {
         const element = document.getElementById(property);
         const label = element?.parentElement?.querySelector('label');
         
@@ -333,7 +353,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       }
 
       const hasPending = Object.keys(pendingChanges).length > 0;
-      const titleValue = pendingChanges.title !== undefined ? pendingChanges.title : (currentNote.title || '');
       const publishTypeValue = pendingChanges.publishType !== undefined ? pendingChanges.publishType : currentNote.publishType;
       const permalinkValue = pendingChanges.permalink !== undefined ? pendingChanges.permalink : (currentNote.permalink || '');
       const readPermValue = pendingChanges.readPermission !== undefined ? pendingChanges.readPermission : currentNote.readPermission;
@@ -342,19 +361,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       content.innerHTML = \`
         <div class="note-info">
           Editing note: \${escapeHtml(currentNote.shortId)}
-        </div>
-
-        <div class="property-group">
-          <label>
-            Title
-          </label>
-          <input 
-            type="text" 
-            id="title"
-            value="\${escapeHtml(titleValue)}"
-            placeholder="Untitled"
-          />
-          <div class="info">The title of your note</div>
         </div>
 
         <div class="property-group">
@@ -415,10 +421,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       \`;
 
       // Attach event listeners
-      document.getElementById('title').addEventListener('input', (e) => {
-        onPropertyChange('title', e.target.value);
-      });
-
       document.getElementById('publishType').addEventListener('change', (e) => {
         onPropertyChange('publishType', e.target.value);
       });
@@ -437,15 +439,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       
       // Update modified indicators after initial render
       updateModifiedIndicators();
-    }
-
-      document.getElementById('readPermission').addEventListener('change', (e) => {
-        onPropertyChange('readPermission', e.target.value);
-      });
-
-      document.getElementById('writePermission').addEventListener('change', (e) => {
-        onPropertyChange('writePermission', e.target.value);
-      });
     }
 
     function escapeHtml(text) {

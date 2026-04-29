@@ -22,6 +22,19 @@ function getNoteIdFromFragment(fragment: string): string {
   return fragment;
 }
 
+function getTeamPathFromUri(uri: vscode.Uri): string | null {
+  return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
+}
+
+function isSameNoteUri(uri: vscode.Uri, noteId: string, teamPath?: string | null): boolean {
+  if (uri.scheme !== 'hackmd') {
+    return false;
+  }
+  const uriNoteId = getNoteIdFromFragment(uri.fragment);
+  const uriTeamPath = getTeamPathFromUri(uri);
+  return uriNoteId === noteId && (uriTeamPath || null) === (teamPath || null);
+}
+
 /**
  * Check if a note is already open in an editor. If so, switch to it instead of opening a new one.
  * @param note The note object to ensure properties provider is updated
@@ -137,7 +150,25 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const noteId = note.id;
         const currentTitle = note.title || note.shortId || 'Unnamed';
 
-        // Show input box to get new name
+        const matchingEditors = vscode.window.visibleTextEditors.filter((editor) =>
+          isSameNoteUri(editor.document.uri, noteId, note.teamPath)
+        );
+
+        const oldUriForRename = matchingEditors[0]?.document.uri || generateResourceUri(currentTitle, noteId, note.teamPath, (note as any).folderPaths);
+
+        // Close all visible editors for this note first. If user cancels close, abort rename.
+        for (const editor of matchingEditors) {
+          await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
+          await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+          const stillVisible = vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === editor.document.uri.toString());
+          if (stillVisible) {
+            // User likely selected "Cancel" on save/discard/cancel prompt.
+            return;
+          }
+        }
+
+        // Ask for the new name only after open editors are successfully closed.
         const newTitle = await vscode.window.showInputBox({
           prompt: 'Enter new note name',
           value: currentTitle,
@@ -149,7 +180,8 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           }
         });
 
-        if (!newTitle || newTitle === currentTitle) {
+        const trimmedNewTitle = newTitle?.trim();
+        if (!trimmedNewTitle || trimmedNewTitle === currentTitle) {
           return; // User cancelled or no change
         }
 
@@ -170,17 +202,17 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           // Note: TypeScript types are restrictive but API accepts more fields
           if (note.teamPath) {
             await recordUsage(
-              API.updateTeamNote(note.teamPath, noteId, { title: newTitle } as any)
+              API.updateTeamNote(note.teamPath, noteId, { title: trimmedNewTitle } as any)
             );
           } else {
             await recordUsage(
-              API.updateNote(noteId, { title: newTitle } as any, { unwrapData: false })
+              API.updateNote(noteId, { title: trimmedNewTitle } as any, { unwrapData: false })
             );
           }
 
           // Update the title in the cached note object directly
           // API response might not include the updated note, so we update locally
-          const updatedNote = { ...note, title: newTitle };
+          const updatedNote = { ...note, title: trimmedNewTitle };
 
           if (note.teamPath) {
             teamNotesProvider?.updateNoteInCache(noteId, updatedNote, note.teamPath);
@@ -188,6 +220,12 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             myNotesProvider?.updateNoteInCache(noteId, updatedNote);
           }
           historyProvider?.updateNoteInCache(noteId, updatedNote);
+
+          // Perform virtual FS rename to move URI identity to the new title path.
+          const newUri = generateResourceUri(trimmedNewTitle, noteId, note.teamPath, (note as any).folderPaths);
+          const edit = new vscode.WorkspaceEdit();
+          edit.renameFile(oldUriForRename, newUri, { overwrite: true });
+          await vscode.workspace.applyEdit(edit);
         } catch (error: any) {
           vscode.window.showErrorMessage(`Failed to rename note: ${error.message}`);
         } finally {

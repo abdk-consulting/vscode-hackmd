@@ -7,7 +7,7 @@
 ### Added
 
 - Added Note Properties sidebar panel (`hackmd.properties`) for currently open notes.
-  - Editable fields: title, publish type, permalink, read permission, write permission.
+  - Editable fields: publish type, permalink, read permission, write permission.
   - Property edits mark the editor dirty and are saved with normal note save.
   - Shows pending-change indicators in the panel.
 - Added duplicate-editor prevention when opening notes from tree commands.
@@ -21,6 +21,10 @@
   - Team notes: `Teams/{teamPath}/{folders}/{title}`
 - Switched URI construction to `vscode.Uri.from(...)` with correct query/fragment ordering.
 - Replaced activity bar icon with a codicon-based SVG using `currentColor` for better theme integration.
+- Updated note renaming workflow to use the context-menu rename command as the single title-change path.
+  - If the note is open, the editor is closed first so users get normal Save/Don't Save/Cancel behavior.
+  - Rename is cancelled if editor close is cancelled.
+  - Virtual FS rename is applied after successful API title update.
 
 ### Removed
 
@@ -33,7 +37,7 @@
 - Fixed duplicate/incorrect breadcrumb behavior while preserving folder hierarchy.
 - Fixed Note Properties panel initialization and active-note synchronization.
 - Fixed focus loss in properties inputs by avoiding full re-render on every keystroke.
-- Fixed title update flow so cached note metadata and breadcrumbs stay in sync after save.
+- Fixed title/rename regressions by removing title edits from Note Properties save flow.
 - Fixed extension activation regression caused by automatic workspace settings mutation (removed).
 
 ### Contributors

@@ -9,6 +9,7 @@ import * as S from 'string';
 
 import { initializeAPIClient } from './api';
 import { registerCommands } from './commands';
+import { ACCESS_TOKEN_KEY } from './constants';
 import { HistoryProvider } from './historyProvider';
 import { activate as activateFSProvider } from './mdFsProvider';
 import { MyNotesProvider } from './myNotesProvider';
@@ -261,13 +262,22 @@ function highlightRender(code, lang) {
 let highlight;
 
 export async function activate(context: vscode.ExtensionContext) {
+  // Check if API key exists FIRST before doing anything else
+  const hasApiKey = !!(await context.secrets.get(ACCESS_TOKEN_KEY));
+
+  // Only set the 'noApiKey' flag when we're absolutely certain there's no key
+  // This prevents welcome views from showing until we've confirmed absence
+  if (!hasApiKey) {
+    await vscode.commands.executeCommand('setContext', 'hackmd.noApiKey', true);
+  }
+
+  registerCommands(context);
+
   try {
     await initializeAPIClient(context);
   } catch (error) {
     vscode.window.showErrorMessage('Failed to initialize HackMD API client. Please check your configuration.');
   }
-
-  registerCommands(context);
 
   // Use TreeDataProvider for all views for consistency
   myNotesProvider = new MyNotesProvider(context.extensionPath);

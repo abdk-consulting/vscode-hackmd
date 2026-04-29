@@ -18,6 +18,7 @@
     "onView:hackmd.tree.recent-notes",
     "onView:hackmd.tree.team-notes",
     "onCommand:HackMD.apiKey",
+    "onCommand:HackMD.clearApiKey",
     "onCommand:HackMD.createActiveEditorContentToHackMD",
     "onCommand:HacKMD.openNoteOnHackMD",
     "onFileSystem:hackmd"
@@ -87,6 +88,11 @@
       {
         "command": "HackMD.apiKey",
         "title": "API Key",
+        "category": "HackMD"
+      },
+      {
+        "command": "HackMD.clearApiKey",
+        "title": "Clear API Key (for testing)",
         "category": "HackMD"
       },
       {
@@ -305,21 +311,7 @@
           "when": "view == hackmd.tree.team-notes && viewItem == team"
         }
       ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "hackmd.tree.my-notes",
-        "contents": "To view your HackMD notes within VSCode, you need to enter your HackMD API token. \n[Enter HackMD API token](command:HackMD.apiKey) \nFor more information on HackMD API details, [please refer to our documentation.](https://hackmd.io/@hackmd-api/developer-portal/?utm_source=vscode-welcome&utm_medium=inline-cta)"
-      },
-      {
-        "view": "hackmd.tree.recent-notes",
-        "contents": "To view your HackMD notes within VSCode, you need to enter your HackMD API token. \n[Enter HackMD API token](command:HackMD.apiKey) \nFor more information on HackMD API details, [please refer to our documentation.](https://hackmd.io/@hackmd-api/developer-portal/?utm_source=vscode-welcome&utm_medium=inline-cta)"
-      },
-      {
-        "view": "hackmd.tree.team-notes",
-        "contents": "To view your HackMD notes within VSCode, you need to enter your HackMD API token. \n[Enter HackMD API token](command:HackMD.apiKey) \nFor more information on HackMD API details, [please refer to our documentation.](https://hackmd.io/@hackmd-api/developer-portal/?utm_source=vscode-welcome&utm_medium=inline-cta)"
-      }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "webpack --mode production",

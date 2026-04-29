@@ -31,6 +31,9 @@ export async function initializeAPIClient(context: vscode.ExtensionContext, forc
 
   API = new ApiClient(accessToken, apiEndPoint, { wrapResponseErrors: false });
   await meStore.getState().refreshLogin();
+
+  // Clear the 'no API key' flag to hide welcome views
+  await vscode.commands.executeCommand('setContext', 'hackmd.noApiKey', false);
 }
 
 export async function forceRefreshAPIClient(context: vscode.ExtensionContext) {

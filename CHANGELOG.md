@@ -10,6 +10,7 @@
   - Shows input box with current title pre-filled
   - Updates note title via API for both personal and team notes
   - Displays spinner during rename operation with immediate tree update on completion
+- Added "Clear API Key" command for testing welcome view behavior
 - Added folder context menu with commands: Create Note in Folder, and Open Folder on HackMD
 - Added inline toolbar buttons on folders and teams for quick note creation
 - Added team-level "Create Team Note" command and context menu
@@ -45,6 +46,13 @@
 - Fixed team note deletion (now uses `deleteTeamNote` API for team notes)
 - Fixed note deletion menu to only show on notes owned by the user (using `file-owned` context value)
 - Fixed ownership checking to properly use `checkIsOwner` method (considers both `userPath` match and `writePermission === 'owner'`)
+- Fixed welcome views showing "Enter HackMD API token" buttons inappropriately on startup
+  - Added explicit `hackmd.noApiKey` context flag that is only set when API key absence is confirmed
+- Removed redundant "Enter HackMD API token" welcome messages from all tree views
+  - Extension already shows automatic API key input dialog when needed
+  - Eliminates three duplicate button instances for cleaner UI
+  - Welcome views now only display when this flag is explicitly true, not on undefined state
+  - Prevents buttons from flashing during extension initialization
 - **Tree Update Improvements**:
   - Implemented granular change events: only affected folder/team refreshes instead of entire tree
   - Fixed tree updates by maintaining stable object references for folders and teams (required by VS Code TreeDataProvider)

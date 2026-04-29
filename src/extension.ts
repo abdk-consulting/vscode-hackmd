@@ -13,6 +13,7 @@ import { ACCESS_TOKEN_KEY } from './constants';
 import { HistoryProvider } from './historyProvider';
 import { activate as activateFSProvider } from './mdFsProvider';
 import { MyNotesProvider } from './myNotesProvider';
+import { NotePropertiesProvider } from './propertiesProvider';
 import { TeamNotesProvider } from './teamNotesProvider';
 
 let Prism;
@@ -22,6 +23,7 @@ let historyProvider: HistoryProvider | undefined;
 let teamNotesTreeView: vscode.TreeView<any> | undefined;
 let myNotesTreeView: vscode.TreeView<any> | undefined;
 let historyTreeView: vscode.TreeView<any> | undefined;
+let propertiesProvider: NotePropertiesProvider | undefined;
 
 export function getTeamNotesProvider(): TeamNotesProvider | undefined {
   return teamNotesProvider;
@@ -45,6 +47,10 @@ export function getMyNotesTreeView(): vscode.TreeView<any> | undefined {
 
 export function getHistoryTreeView(): vscode.TreeView<any> | undefined {
   return historyTreeView;
+}
+
+export function getPropertiesProvider(): NotePropertiesProvider | undefined {
+  return propertiesProvider;
 }
 
 if (process.env.RUNTIME !== 'browser') {
@@ -297,6 +303,55 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: teamNotesProvider,
   });
   context.subscriptions.push(teamNotesTreeView);
+
+  // Register properties webview provider
+  propertiesProvider = new NotePropertiesProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      NotePropertiesProvider.viewType,
+      propertiesProvider
+    )
+  );
+
+  // Track active editor changes to update properties view
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+      if (editor && editor.document.uri.scheme === 'hackmd') {
+        const noteId = editor.document.uri.fragment.split('?')[0].split('%3F')[0].split('%3f')[0];
+        const teamPath = editor.document.uri.query
+          ? new URLSearchParams(editor.document.uri.query).get('teamPath')
+          : null;
+
+        // Find the note in our providers
+        let note;
+        if (teamPath && teamNotesProvider) {
+          note = teamNotesProvider.findNoteInCache(noteId, teamPath);
+        } else if (myNotesProvider) {
+          note = myNotesProvider.findNoteInCache(noteId);
+        }
+
+        if (!note && historyProvider) {
+          note = historyProvider.findNoteInCache(noteId);
+        }
+
+        // If note not in cache, fetch it from API
+        if (!note) {
+          try {
+            note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
+          } catch (e) {
+            console.error('Failed to fetch note for properties:', e);
+          }
+        }
+
+        if (note) {
+          propertiesProvider?.updateNote(note, noteId, teamPath);
+        }
+      } else {
+        // No HackMD note open
+        propertiesProvider?.updateNote(undefined);
+      }
+    })
+  );
 
   activateFSProvider(context);
 

@@ -264,7 +264,22 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   // Find a note in cache and return it
-  findNoteInCache(noteId: string): Note | undefined {
+  findNoteInCache(noteId: string, teamPath?: string): Note | undefined {
+    // If teamPath is provided, look in that specific team first
+    if (teamPath) {
+      const teamId = this.getTeamIdFromPath(teamPath);
+      if (teamId) {
+        const notes = this.teamNotesCache.get(teamId);
+        if (notes) {
+          const note = notes.find(n => n.id === noteId);
+          if (note) {
+            return note;
+          }
+        }
+      }
+    }
+
+    // Search all teams
     for (const notes of this.teamNotesCache.values()) {
       const note = notes.find(n => n.id === noteId);
       if (note) {

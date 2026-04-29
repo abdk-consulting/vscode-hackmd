@@ -1,11 +1,66 @@
 import * as vscode from 'vscode';
 
-import { Team } from '@hackmd/api/dist/type';
+import { Note, Team } from '@hackmd/api/dist/type';
 
-import { getHistoryProvider, getMyNotesProvider, getMyNotesTreeView, getTeamNotesProvider, getTeamNotesTreeView } from '../extension';
+import { getHistoryProvider, getMyNotesProvider, getMyNotesTreeView, getPropertiesProvider, getTeamNotesProvider, getTeamNotesTreeView } from '../extension';
 import { generateResourceUri } from '../mdFsProvider';
 import { recordUsage, teamNotesStore } from '../store';
 import { API } from './../api';
+
+function getNoteIdFromFragment(fragment: string): string {
+  if (!fragment) {
+    return '';
+  }
+  const questionIndex = fragment.indexOf('?');
+  if (questionIndex >= 0) {
+    return fragment.slice(0, questionIndex);
+  }
+  const encodedQuestionIndex = fragment.toLowerCase().indexOf('%3f');
+  if (encodedQuestionIndex >= 0) {
+    return fragment.slice(0, encodedQuestionIndex);
+  }
+  return fragment;
+}
+
+/**
+ * Check if a note is already open in an editor. If so, switch to it instead of opening a new one.
+ * @param note The note object to ensure properties provider is updated
+ * @returns true if note was already open (and we switched to it), false if not open
+ */
+async function switchToNoteIfAlreadyOpen(note: Note): Promise<boolean> {
+  const noteId = note.id;
+  const visibleEditors = vscode.window.visibleTextEditors;
+
+  for (const editor of visibleEditors) {
+    if (editor.document.uri.scheme === 'hackmd' && getNoteIdFromFragment(editor.document.uri.fragment) === noteId) {
+      // Note is already open, switch to it
+      await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
+      // Update properties provider with the note
+      const propertiesProvider = getPropertiesProvider();
+      if (propertiesProvider) {
+        propertiesProvider.updateNote(note, noteId, note.teamPath || null);
+      }
+      return true;
+    }
+  }
+
+  // Also check non-visible editors (in background tabs)
+  const allDocuments = vscode.workspace.textDocuments;
+  for (const doc of allDocuments) {
+    if (doc.uri.scheme === 'hackmd' && getNoteIdFromFragment(doc.uri.fragment) === noteId) {
+      // Note is open in a background tab, bring it to front
+      await vscode.window.showTextDocument(doc, { preview: false });
+      // Update properties provider with the note
+      const propertiesProvider = getPropertiesProvider();
+      if (propertiesProvider) {
+        propertiesProvider.updateNote(note, noteId, note.teamPath || null);
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
 
 // Helper function to reveal and select a note after creation
 async function revealNote(treeView: vscode.TreeView<any> | undefined, noteNode: any) {
@@ -59,7 +114,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       try {
         const note = await recordUsage(API.createNote({}, { unwrapData: false }));
 
-        const uri = generateResourceUri(note.title, note.id, note.teamPath);
+        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: false });
 
@@ -196,7 +251,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
           // Close the editor if it's open
           const label = node.note.title || node.note.shortId || 'Unnamed';
-          const uri = generateResourceUri(label, noteId, teamPath);
+          const uri = generateResourceUri(label, noteId, teamPath, (node.note as any).folderPaths);
 
           // Find and close the tab
           for (const tabGroup of vscode.window.tabGroups.all) {
@@ -250,7 +305,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         historyProvider?.setPendingNote(noteId, note);
 
         try {
-          const uri = generateResourceUri(label, noteId, note.teamPath);
+          const uri = generateResourceUri(label, noteId, note.teamPath, (note as any).folderPaths);
           const doc = await vscode.workspace.openTextDocument(uri);
           await vscode.window.showTextDocument(doc, { preview: false });
         } finally {
@@ -270,7 +325,14 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.editNote', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
-        const uri = generateResourceUri(note.title, note.id, note.teamPath);
+
+        // Check if note is already open and switch to it
+        const alreadyOpen = await switchToNoteIfAlreadyOpen(note);
+        if (alreadyOpen) {
+          return;
+        }
+
+        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: false });
       }
@@ -300,7 +362,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.showPreview', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
-        const uri = generateResourceUri(note.title, note.id, note.teamPath);
+        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
         vscode.commands.executeCommand('markdown.showPreview', uri);
       } else {
         const editor = vscode.window.activeTextEditor;
@@ -308,7 +370,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           return;
         }
 
-        const noteId = editor.document.uri.fragment;
+        const noteId = getNoteIdFromFragment(editor.document.uri.fragment);
         if (!checkNoteIdExist(noteId)) {
           return;
         }
@@ -325,9 +387,17 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.showPreviewAndEditor', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
-        const uri = generateResourceUri(note.title, note.id, note.teamPath);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preview: false });
+
+        // Check if note is already open and switch to it
+        const alreadyOpen = await switchToNoteIfAlreadyOpen(note);
+        if (!alreadyOpen) {
+          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+          const doc = await vscode.workspace.openTextDocument(uri);
+          await vscode.window.showTextDocument(doc, { preview: false });
+        }
+
+        // Show preview alongside the editor
+        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
         vscode.commands.executeCommand('markdown.showPreviewToSide', uri);
       } else {
         const editor = vscode.window.activeTextEditor;
@@ -335,7 +405,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           return;
         }
 
-        const noteId = editor.document.uri.fragment;
+        const noteId = getNoteIdFromFragment(editor.document.uri.fragment);
         if (!checkNoteIdExist(noteId)) {
           return;
         }
@@ -361,7 +431,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const note = noteNode.note;
         vscode.env.openExternal(vscode.Uri.parse(note.publishLink));
       } else {
-        const noteId = vscode.window.activeTextEditor.document.uri.fragment;
+        const noteId = getNoteIdFromFragment(vscode.window.activeTextEditor.document.uri.fragment);
 
         const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
 
@@ -443,7 +513,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           }
 
           // Open in editor after cache is updated
-          const uri = generateResourceUri(note.title, note.id, note.teamPath);
+          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
           const doc = await vscode.workspace.openTextDocument(uri);
           await vscode.window.showTextDocument(doc, { preview: false });
 
@@ -522,7 +592,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             }
 
             // Open in editor only after cache is updated
-            const uri = generateResourceUri(note.title, note.id, note.teamPath);
+            const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
             const doc = await vscode.workspace.openTextDocument(uri);
             await vscode.window.showTextDocument(doc, { preview: false });
 

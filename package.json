@@ -77,6 +77,11 @@
         {
           "id": "hackmd.tree.recent-notes",
           "name": "Recent Notes"
+        },
+        {
+          "id": "hackmd.properties",
+          "name": "Note Properties",
+          "type": "webview"
         }
       ]
     },

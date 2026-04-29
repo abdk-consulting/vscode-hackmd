@@ -245,6 +245,35 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  updateNoteInCache(noteId: string, updatedNote: Note): void {
+    if (this.notesCache) {
+      const index = this.notesCache.findIndex(n => n.id === noteId);
+      if (index !== -1) {
+        const oldNote = this.notesCache[index];
+        this.notesCache[index] = updatedNote;
+
+        // Rebuild tree to update folder objects
+        this.organizeNotesIntoFolders(this.notesCache);
+
+        // Manually determine where to fire event based on the note's location
+        if (updatedNote.folderPaths && updatedNote.folderPaths.length > 0) {
+          // Note is in a folder - fire onChange on the deepest folder
+          const deepestFolder = updatedNote.folderPaths[updatedNote.folderPaths.length - 1];
+          const folderNode = this.foldersCache.get(deepestFolder.id);
+          if (folderNode) {
+            this._onDidChangeTreeData.fire(folderNode);
+          } else {
+            // Fallback to root if folder not found
+            this._onDidChangeTreeData.fire(undefined);
+          }
+        } else {
+          // Note is at root level - fire onChange on root
+          this._onDidChangeTreeData.fire(undefined);
+        }
+      }
+    }
+  }
+
   getTreeItem(element: TreeNode): vscode.TreeItem {
     switch (element.type) {
       case 'folder':

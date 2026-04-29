@@ -45,6 +45,17 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  updateNoteInCache(noteId: string, updatedNote: Note): void {
+    if (this.notesCache) {
+      const index = this.notesCache.findIndex(n => n.id === noteId);
+      if (index !== -1) {
+        this.notesCache[index] = updatedNote;
+        // Fire onChange to refresh the tree
+        this._onDidChangeTreeData.fire(undefined);
+      }
+    }
+  }
+
   // Find a note in cache and return it
   findNoteInCache(noteId: string): Note | undefined {
     if (!this.notesCache) {

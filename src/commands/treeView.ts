@@ -74,6 +74,80 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     })
   );
 
+  // HackMD.renameNote
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.renameNote', async (node: any) => {
+      if (node && node.type === 'note') {
+        const note = node.note;
+        const noteId = note.id;
+        const currentTitle = note.title || note.shortId || 'Unnamed';
+
+        // Show input box to get new name
+        const newTitle = await vscode.window.showInputBox({
+          prompt: 'Enter new note name',
+          value: currentTitle,
+          validateInput: (value) => {
+            if (!value || value.trim().length === 0) {
+              return 'Note name cannot be empty';
+            }
+            return null;
+          }
+        });
+
+        if (!newTitle || newTitle === currentTitle) {
+          return; // User cancelled or no change
+        }
+
+        const myNotesProvider = getMyNotesProvider();
+        const teamNotesProvider = getTeamNotesProvider();
+        const historyProvider = getHistoryProvider();
+
+        // Set pending state
+        if (note.teamPath) {
+          teamNotesProvider?.setPendingNote(noteId, note);
+        } else {
+          myNotesProvider?.setPendingNote(noteId, note);
+        }
+        historyProvider?.setPendingNote(noteId, note);
+
+        try {
+          // Update note via API - use 'title' field
+          // Note: TypeScript types are restrictive but API accepts more fields
+          if (note.teamPath) {
+            await recordUsage(
+              API.updateTeamNote(note.teamPath, noteId, { title: newTitle } as any)
+            );
+          } else {
+            await recordUsage(
+              API.updateNote(noteId, { title: newTitle } as any, { unwrapData: false })
+            );
+          }
+
+          // Update the title in the cached note object directly
+          // API response might not include the updated note, so we update locally
+          const updatedNote = { ...note, title: newTitle };
+
+          if (note.teamPath) {
+            teamNotesProvider?.updateNoteInCache(noteId, updatedNote, note.teamPath);
+          } else {
+            myNotesProvider?.updateNoteInCache(noteId, updatedNote);
+          }
+          historyProvider?.updateNoteInCache(noteId, updatedNote);
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`Failed to rename note: ${error.message}`);
+        } finally {
+          // Clear pending state
+          if (note.teamPath) {
+            teamNotesProvider?.clearPendingNote(noteId, note);
+          } else {
+            myNotesProvider?.clearPendingNote(noteId, note);
+          }
+          historyProvider?.clearPendingNote(noteId, note);
+        }
+      }
+    })
+  );
+
   // HackMD.deleteMyNote
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.deleteMyNote', async (node: any) => {

@@ -6,6 +6,10 @@
 
 ### Added
 
+- Added note renaming functionality with context menu command for owned notes
+  - Shows input box with current title pre-filled
+  - Updates note title via API for both personal and team notes
+  - Displays spinner during rename operation with immediate tree update on completion
 - Added folder context menu with commands: Create Note in Folder, and Open Folder on HackMD
 - Added inline toolbar buttons on folders and teams for quick note creation
 - Added team-level "Create Team Note" command and context menu

@@ -365,6 +365,94 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  updateNoteInCache(noteId: string, updatedNote: Note, teamPath?: string): void {
+    // If we have a teamPath, only search that team's cache
+    if (teamPath) {
+      const teamId = this.getTeamIdFromPath(teamPath);
+      if (teamId) {
+        const notes = this.teamNotesCache.get(teamId);
+        if (notes) {
+          const index = notes.findIndex(n => n.id === noteId);
+          if (index !== -1) {
+            notes[index] = updatedNote;
+
+            // Ensure the note has teamPath set
+            if (!updatedNote.teamPath) {
+              (updatedNote as any).teamPath = teamPath;
+            }
+
+            // Rebuild tree to update folder objects
+            this.organizeNotesIntoFolders(notes, teamId);
+
+            // Manually determine where to fire event based on the note's location
+            if (updatedNote.folderPaths && updatedNote.folderPaths.length > 0) {
+              // Note is in a folder - fire onChange on the deepest folder
+              const deepestFolder = updatedNote.folderPaths[updatedNote.folderPaths.length - 1];
+              const folderCache = this.teamFoldersCache.get(teamId);
+              const folderNode = folderCache?.get(deepestFolder.id);
+              if (folderNode) {
+                this._onDidChangeTreeData.fire(folderNode);
+              } else {
+                // Fallback to team if folder not found
+                const teamNode = this.teamNodesCache.get(teamId);
+                if (teamNode) {
+                  this._onDidChangeTreeData.fire(teamNode);
+                }
+              }
+            } else {
+              // Note is at team root level - fire onChange on team
+              const teamNode = this.teamNodesCache.get(teamId);
+              if (teamNode) {
+                this._onDidChangeTreeData.fire(teamNode);
+              }
+            }
+            return;
+          }
+        }
+      }
+    } else {
+      // Search all teams' caches
+      for (const [teamId, notes] of this.teamNotesCache.entries()) {
+        const index = notes.findIndex(n => n.id === noteId);
+        if (index !== -1) {
+          notes[index] = updatedNote;
+
+          // Ensure the note has teamPath set if it's not already
+          if (!updatedNote.teamPath && notes[0]?.teamPath) {
+            (updatedNote as any).teamPath = notes[0].teamPath;
+          }
+
+          // Rebuild tree to update folder objects
+          this.organizeNotesIntoFolders(notes, teamId);
+
+          // Manually determine where to fire event based on the note's location
+          if (updatedNote.folderPaths && updatedNote.folderPaths.length > 0) {
+            // Note is in a folder - fire onChange on the deepest folder
+            const deepestFolder = updatedNote.folderPaths[updatedNote.folderPaths.length - 1];
+            const folderCache = this.teamFoldersCache.get(teamId);
+            const folderNode = folderCache?.get(deepestFolder.id);
+            if (folderNode) {
+              this._onDidChangeTreeData.fire(folderNode);
+            } else {
+              // Fallback to team if folder not found
+              const teamNode = this.teamNodesCache.get(teamId);
+              if (teamNode) {
+                this._onDidChangeTreeData.fire(teamNode);
+              }
+            }
+          } else {
+            // Note is at team root level - fire onChange on team
+            const teamNode = this.teamNodesCache.get(teamId);
+            if (teamNode) {
+              this._onDidChangeTreeData.fire(teamNode);
+            }
+          }
+          return;
+        }
+      }
+    }
+  }
+
   getTreeItem(element: TreeNode): vscode.TreeItem {
     switch (element.type) {
       case 'team':

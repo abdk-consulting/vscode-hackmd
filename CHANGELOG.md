@@ -25,10 +25,16 @@
   - If the note is open, the editor is closed first so users get normal Save/Don't Save/Cancel behavior.
   - Rename is cancelled if editor close is cancelled.
   - Virtual FS rename is applied after successful API title update.
+- Updated Note Properties panel layout to a compact sharing/permissions design.
+  - Added share URL copy action and status feedback.
+  - Moved pending-change warning placement to avoid layout jumps.
+- Updated editable-state logic to distinguish ownership from editability.
+  - Team notes are treated as editable for icon/lock rendering.
 
 ### Removed
 
 - Removed redundant `viewsWelcome` entries that duplicated API token prompts.
+- Removed publish mode from Note Properties editor.
 
 ### Fixed
 
@@ -39,6 +45,9 @@
 - Fixed focus loss in properties inputs by avoiding full re-render on every keystroke.
 - Fixed title/rename regressions by removing title edits from Note Properties save flow.
 - Fixed extension activation regression caused by automatic workspace settings mutation (removed).
+- Fixed team note property persistence by keeping content and metadata updates compatible with HackMD APIs.
+- Fixed read-only lock icon regressions by using editability checks in all note trees.
+- Fixed save failures when permalink is empty by omitting empty permalink values from payloads.
 
 ### Contributors
 

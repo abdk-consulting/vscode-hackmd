@@ -405,6 +405,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     // Set icon and context based on ownership
     const isOwner = meStore.getState().checkIsOwner(note);
+    const canEdit = meStore.getState().checkCanEdit(note);
 
     if (isPending) {
       item.contextValue = isOwner ? 'file-owned-pending' : 'file-pending';
@@ -415,7 +416,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     // Set icon - spinner when pending, otherwise file icon
     if (isPending) {
       item.iconPath = ICON_SPINNER;
-    } else if (isOwner) {
+    } else if (canEdit) {
       item.iconPath = ICON_FILE;
     } else {
       item.iconPath = ICON_LOCK;

@@ -56,6 +56,12 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
         case 'propertyChanged':
           this._onPropertyChanged(data.property, data.value);
           break;
+        case 'copyShareUrl':
+          if (typeof data.url === 'string' && data.url.length > 0) {
+            void vscode.env.clipboard.writeText(data.url);
+            vscode.window.setStatusBarMessage('HackMD share URL copied', 1500);
+          }
+          break;
         case 'ready':
           // Webview is ready, send current state
           if (this._currentNote) {
@@ -205,6 +211,9 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     .property-group {
       margin-bottom: 16px;
     }
+    .property-group.compact {
+      margin-bottom: 10px;
+    }
     label {
       display: block;
       margin-bottom: 4px;
@@ -252,6 +261,73 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
     }
+    .section-title {
+      margin: 14px 0 8px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground);
+    }
+    .permission-row {
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .permission-row label {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--vscode-foreground);
+    }
+    .permission-row select {
+      padding: 4px 8px;
+    }
+    .sharing-prefix {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 8px;
+      word-break: break-all;
+    }
+    .sharing-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .sharing-row.input-button {
+      grid-template-columns: 1fr auto;
+    }
+    .sharing-row label {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--vscode-foreground);
+    }
+    .sharing-row select {
+      padding: 4px 8px;
+    }
+    .sharing-row button {
+      min-width: 74px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-input-border));
+      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+      cursor: pointer;
+      font: inherit;
+    }
+    .sharing-row button:hover {
+      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+    }
   </style>
 </head>
 <body>
@@ -290,6 +366,36 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       });
     }
 
+    function onCopyShareUrl() {
+      const url = buildShareUrl();
+      if (url) {
+        vscode.postMessage({ type: 'copyShareUrl', url });
+      }
+    }
+
+    function getShareBaseAndSlug() {
+      const publishLink = currentNote?.publishLink || '';
+      if (publishLink && publishLink.includes('/')) {
+        const lastSlash = publishLink.lastIndexOf('/');
+        const base = publishLink.slice(0, lastSlash + 1);
+        const fallbackSlug = publishLink.slice(lastSlash + 1);
+        return { base, fallbackSlug };
+      }
+      return {
+        base: 'https://hackmd.io/',
+        fallbackSlug: currentNote?.shortId || '',
+      };
+    }
+
+    function buildShareUrl() {
+      if (!currentNote) {
+        return '';
+      }
+      const { base, fallbackSlug } = getShareBaseAndSlug();
+      const slug = (pendingChanges.permalink !== undefined ? pendingChanges.permalink : currentNote.permalink) || fallbackSlug;
+      return \`\${base}\${slug || ''}\`;
+    }
+
     function updateModifiedIndicators() {
       // Update modified indicators and warning message without re-rendering inputs
       const hasPending = Object.keys(pendingChanges).length > 0;
@@ -297,25 +403,26 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       // Update warning message
       const existingWarning = document.querySelector('.pending-warning');
       if (hasPending && !existingWarning) {
-        const noteInfo = document.querySelector('.note-info');
-        if (noteInfo) {
+        const lastPropertyGroup = document.querySelector('.property-group:last-of-type');
+        if (lastPropertyGroup) {
           const warning = document.createElement('div');
           warning.className = 'info pending-warning';
-          warning.style.marginBottom = '12px';
+          warning.style.marginTop = '12px';
+          warning.style.marginBottom = '0';
           warning.style.color = 'var(--vscode-inputValidation-warningBorder)';
           warning.textContent = '⚠ Changes will be saved when you save the note';
-          noteInfo.insertAdjacentElement('afterend', warning);
+          lastPropertyGroup.insertAdjacentElement('afterend', warning);
         }
       } else if (!hasPending && existingWarning) {
         existingWarning.remove();
       }
       
       // Update each property's modified state
-      ['publishType', 'permalink', 'readPermission', 'writePermission'].forEach(property => {
+      ['permalink', 'readPermission', 'writePermission'].forEach(property => {
         const element = document.getElementById(property);
         const label = element?.parentElement?.querySelector('label');
         
-        if (element && label) {
+        if (element) {
           const isModified = pendingChanges[property] !== undefined;
           
           // Update CSS class
@@ -326,14 +433,16 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           }
           
           // Update indicator dot
-          let indicator = label.querySelector('.modified-indicator');
-          if (isModified && !indicator) {
-            indicator = document.createElement('span');
-            indicator.className = 'modified-indicator';
-            indicator.textContent = '●';
-            label.appendChild(indicator);
-          } else if (!isModified && indicator) {
-            indicator.remove();
+          if (label) {
+            let indicator = label.querySelector('.modified-indicator');
+            if (isModified && !indicator) {
+              indicator = document.createElement('span');
+              indicator.className = 'modified-indicator';
+              indicator.textContent = '●';
+              label.appendChild(indicator);
+            } else if (!isModified && indicator) {
+              indicator.remove();
+            }
           }
         }
       });
@@ -353,80 +462,55 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       }
 
       const hasPending = Object.keys(pendingChanges).length > 0;
-      const publishTypeValue = pendingChanges.publishType !== undefined ? pendingChanges.publishType : currentNote.publishType;
       const permalinkValue = pendingChanges.permalink !== undefined ? pendingChanges.permalink : (currentNote.permalink || '');
       const readPermValue = pendingChanges.readPermission !== undefined ? pendingChanges.readPermission : currentNote.readPermission;
       const writePermValue = pendingChanges.writePermission !== undefined ? pendingChanges.writePermission : currentNote.writePermission;
+      const shareInfo = getShareBaseAndSlug();
 
       content.innerHTML = \`
-        <div class="note-info">
-          Editing note: \${escapeHtml(currentNote.shortId)}
+        <div class="property-group compact">
+          <div class="section-title">Sharing URL</div>
+          <div class="sharing-prefix">\${escapeHtml(shareInfo.base)}</div>
+
+          <div class="sharing-row input-button">
+            <input
+              type="text"
+              id="permalink"
+              value="\${escapeHtml(permalinkValue)}"
+              placeholder="\${escapeHtml(shareInfo.fallbackSlug || 'custom-note-url')}"
+            />
+            <button type="button" id="copyShareUrl">Copy</button>
+          </div>
         </div>
 
-        <div class="property-group">
-          <label>
-            Publish Type
-          </label>
-          <select 
-            id="publishType"
-          >
-            <option value="edit" \${publishTypeValue === 'edit' ? 'selected' : ''}>Edit (default editor view)</option>
-            <option value="view" \${publishTypeValue === 'view' ? 'selected' : ''}>View (published view)</option>
-            <option value="slide" \${publishTypeValue === 'slide' ? 'selected' : ''}>Slide (presentation mode)</option>
-            <option value="book" \${publishTypeValue === 'book' ? 'selected' : ''}>Book (book mode)</option>
-          </select>
-          <div class="info">How your note is published</div>
-        </div>
+        <div class="property-group compact">
+          <div class="section-title">Note Permission</div>
 
-        <div class="property-group">
-          <label>
-            Permalink
-          </label>
-          <input 
-            type="text" 
-            id="permalink"
-            value="\${escapeHtml(permalinkValue)}"
-            placeholder="custom-note-url"
-          />
-          <div class="info">Custom URL slug for your note</div>
-        </div>
+          <div class="permission-row">
+            <label for="readPermission">Read</label>
+            <select id="readPermission">
+              <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>Only me</option>
+              <option value="signed_in" \${readPermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
+              <option value="guest" \${readPermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
+            </select>
+          </div>
 
-        <div class="property-group">
-          <label>
-            Read Permission
-          </label>
-          <select 
-            id="readPermission"
-          >
-            <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>Owner</option>
-            <option value="signed_in" \${readPermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
-            <option value="guest" \${readPermValue === 'guest' ? 'selected' : ''}>Guest (anyone with link)</option>
-          </select>
-          <div class="info">Who can view this note</div>
-        </div>
-
-        <div class="property-group">
-          <label>
-            Write Permission
-          </label>
-          <select 
-            id="writePermission"
-          >
-            <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>Owner</option>
-            <option value="signed_in" \${writePermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
-            <option value="guest" \${writePermValue === 'guest' ? 'selected' : ''}>Guest (anyone with link)</option>
-          </select>
-          <div class="info">Who can edit this note</div>
+          <div class="permission-row">
+            <label for="writePermission">Write</label>
+            <select id="writePermission">
+              <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>Only me</option>
+              <option value="signed_in" \${writePermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
+              <option value="guest" \${writePermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
+            </select>
+          </div>
         </div>
       \`;
 
       // Attach event listeners
-      document.getElementById('publishType').addEventListener('change', (e) => {
-        onPropertyChange('publishType', e.target.value);
-      });
-
       document.getElementById('permalink').addEventListener('input', (e) => {
-        onPropertyChange('permalink', e.target.value || null);
+        // Always track the change, use undefined for empty to signal clearing attempt
+        const value = e.target.value.trim();
+        onPropertyChange('permalink', value === '' ? undefined : value);
       });
 
       document.getElementById('readPermission').addEventListener('change', (e) => {
@@ -435,6 +519,10 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
       document.getElementById('writePermission').addEventListener('change', (e) => {
         onPropertyChange('writePermission', e.target.value);
+      });
+
+      document.getElementById('copyShareUrl').addEventListener('click', () => {
+        onCopyShareUrl();
       });
       
       // Update modified indicators after initial render

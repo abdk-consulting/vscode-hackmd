@@ -175,7 +175,17 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
       // Add pending property changes to the payload
       if (hasPropertyChanges) {
-        Object.assign(updatePayload, pendingChanges);
+        // Only add non-empty permalink, null/undefined values are fine for other fields
+        const filteredChanges: any = {};
+        Object.keys(pendingChanges).forEach(key => {
+          const value = pendingChanges[key as keyof typeof pendingChanges];
+          // Skip empty permalink strings
+          if (key === 'permalink' && value === '') {
+            return;
+          }
+          filteredChanges[key] = value;
+        });
+        Object.assign(updatePayload, filteredChanges);
       }
 
       // Use appropriate API method based on teamPath

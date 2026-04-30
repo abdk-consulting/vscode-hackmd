@@ -9,6 +9,13 @@
 - Added note-link completion inside HackMD editors when typing `[`.
   - Suggests cached personal and team notes whose titles or permalinks match the typed query.
   - Inserts links in the form `[Note Title](/@scope/permalink-or-id)`.
+- Added note export action in tree context menus.
+  - Shows a Save dialog with default filename `{note-title}.md`.
+  - Exports the note's markdown content to the selected local file.
+- Added markdown import actions for all note-creation entry points.
+  - My Notes view title action now includes `Import...`.
+  - Folder and Team context menus now include `Import...` (including inline buttons).
+  - Import reads a local `.md` file and creates a note with title derived from filename (without extension).
 - Added per-team inline Refresh button in Team Notes tree view, visible after a team's notes have been loaded.
   - Refresh keeps stale children visible during the background fetch and replaces them atomically on completion.
   - The team row shows a spinner while the refresh is in progress.
@@ -66,6 +73,8 @@
   - If the backend rejects a save due to permissions, the user sees an error but retains their content.
 - Note Properties panel now automatically updates the displayed title when the note is renamed.
 - Recent Notes is drag-only (not a drop target) to prevent misleading drop highlighting.
+- Import actions now use a cloud-upload icon for clearer local-file import affordance.
+- Imported notes are now revealed and selected in the tree without automatically opening an editor.
 
 ### Removed
 
@@ -76,6 +85,7 @@
 ### Fixed
 
 - Fixed note-link completion insertion when VS Code auto-inserts a closing `]` after `[`. The completion now consumes that bracket instead of leaving a trailing `]`.
+- Fixed export UX by showing pending spinner state on the selected note while export content is being fetched.
 - Fixed note open failures caused by malformed team-note URIs (`#fragment?query` ordering).
 - Fixed URI fragment parsing so note IDs remain stable even with legacy malformed links.
 - Fixed duplicate/incorrect breadcrumb behavior while preserving folder hierarchy.

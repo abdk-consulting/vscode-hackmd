@@ -1,3 +1,5 @@
+import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 import { Note, Team } from '@hackmd/api/dist/type';
@@ -24,6 +26,86 @@ function getNoteIdFromFragment(fragment: string): string {
 
 function getTeamPathFromUri(uri: vscode.Uri): string | null {
   return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
+}
+
+function getExportFileName(note: Note): string {
+  const baseName = (note.title || note.shortId || 'Untitled').replace(/[\\/:*?"<>|]/g, '_').trim() || 'Untitled';
+  return baseName.toLowerCase().endsWith('.md') ? baseName : `${baseName}.md`;
+}
+
+async function pickMarkdownImportData(): Promise<{ title: string; content: string } | undefined> {
+  const selection = await vscode.window.showOpenDialog({
+    canSelectMany: false,
+    filters: {
+      Markdown: ['md'],
+    },
+    openLabel: 'Import Note',
+  });
+
+  const sourceUri = selection?.[0];
+  if (!sourceUri) {
+    return undefined;
+  }
+
+  const fileBytes = await vscode.workspace.fs.readFile(sourceUri);
+  const title = path.parse(sourceUri.fsPath).name || 'Untitled';
+  return {
+    title,
+    content: Buffer.from(fileBytes).toString('utf8'),
+  };
+}
+
+async function createNoteInScope(
+  payload: Record<string, any>,
+  options: { teamPath?: string | null; openEditor?: boolean }
+): Promise<void> {
+  const { teamPath, openEditor = true } = options;
+  const myNotesProvider = getMyNotesProvider();
+  const teamNotesProvider = getTeamNotesProvider();
+
+  let note: any;
+  let noteNode: any;
+
+  if (teamPath) {
+    const teamId = teamNotesProvider?.getTeamIdFromPath(teamPath);
+    const areNotesLoaded = teamId && teamNotesProvider?.isTeamNotesCached(teamId);
+
+    if (!areNotesLoaded && teamNotesProvider) {
+      const [createdNote, loadedNotes] = await Promise.all([
+        recordUsage(API.createTeamNote(teamPath, payload as any, { unwrapData: false })),
+        recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }))
+      ]);
+      note = createdNote;
+      if (teamId && loadedNotes) {
+        teamNotesProvider.cacheTeamNotes(teamId, loadedNotes);
+      }
+    } else {
+      note = await recordUsage(API.createTeamNote(teamPath, payload as any, { unwrapData: false }));
+    }
+
+    if (teamNotesProvider) {
+      noteNode = await teamNotesProvider.addNoteToCache(note, teamPath);
+    }
+  } else {
+    note = await recordUsage(API.createNote(payload as any, { unwrapData: false }));
+    if (myNotesProvider) {
+      noteNode = await myNotesProvider.addNoteToCache(note);
+    }
+  }
+
+  if (openEditor) {
+    const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc, { preview: false });
+  }
+
+  if (noteNode) {
+    if (teamPath) {
+      await revealNote(getTeamNotesTreeView(), noteNode);
+    } else {
+      await revealNote(getMyNotesTreeView(), noteNode);
+    }
+  }
 }
 
 function isSameNoteUri(uri: vscode.Uri, noteId: string, teamPath?: string | null): boolean {
@@ -533,6 +615,32 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('treeView.importMyNotes', async () => {
+      const importData = await pickMarkdownImportData();
+      if (!importData) {
+        return;
+      }
+
+      const provider = getMyNotesProvider();
+      provider?.setPendingContainer('root');
+
+      try {
+        await vscode.window.withProgress(
+          {
+            location: { viewId: 'hackmd.tree.my-notes' },
+            title: 'Importing note...',
+          },
+          async () => {
+            await createNoteInScope(importData, { openEditor: false });
+          }
+        );
+      } finally {
+        provider?.clearPendingContainer('root');
+      }
+    })
+  );
+
   // HackMD.renameNote
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.renameNote', async (node: any) => {
@@ -841,6 +949,54 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.exportNote', async (noteNode: any) => {
+      if (!noteNode || noteNode.type !== 'note') {
+        return;
+      }
+
+      const note = noteNode.note as Note;
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+      const historyProvider = getHistoryProvider();
+      const exportFileName = getExportFileName(note);
+      const defaultDirectory = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
+      const targetUri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(defaultDirectory, exportFileName)),
+        filters: {
+          Markdown: ['md'],
+        },
+        saveLabel: 'Export Note',
+      });
+
+      if (!targetUri) {
+        return;
+      }
+
+      if (note.teamPath) {
+        teamNotesProvider?.setPendingNote(note.id, note);
+      } else {
+        myNotesProvider?.setPendingNote(note.id, note);
+      }
+      historyProvider?.setPendingNote(note.id, note);
+
+      try {
+        const sourceUri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+        const document = await vscode.workspace.openTextDocument(sourceUri);
+        await vscode.workspace.fs.writeFile(targetUri, Buffer.from(document.getText(), 'utf8'));
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to export note: ${error.message}`);
+      } finally {
+        if (note.teamPath) {
+          teamNotesProvider?.clearPendingNote(note.id, note);
+        } else {
+          myNotesProvider?.clearPendingNote(note.id, note);
+        }
+        historyProvider?.clearPendingNote(note.id, note);
+      }
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.selectTeam', async () => {
       const teams = await recordUsage(API.getTeams({ unwrapData: false }));
 
@@ -971,65 +1127,48 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         provider?.setPendingContainer(containerId);
 
         try {
-          let note: any;
-          if (teamPath) {
-            // Team note in folder
-            const teamId = teamNotesProvider?.getTeamIdFromPath(teamPath);
-            const areNotesLoaded = teamId && teamNotesProvider?.isTeamNotesCached(teamId);
-
-            if (!areNotesLoaded && teamNotesProvider) {
-              // Team notes not loaded - execute both API calls in parallel
-              const [createdNote, loadedNotes] = await Promise.all([
-                recordUsage(API.createTeamNote(teamPath, payload as any, { unwrapData: false })),
-                recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }))
-              ]);
-              note = createdNote;
-              // Cache the loaded notes manually
-              if (teamId && loadedNotes) {
-                teamNotesProvider.cacheTeamNotes(teamId, loadedNotes);
-              }
-            } else {
-              // Team notes already loaded - just create the note
-              note = await recordUsage(
-                API.createTeamNote(teamPath, payload as any, { unwrapData: false })
-              );
-            }
-          } else {
-            // Personal note
-            note = await recordUsage(
-              API.createNote(payload as any, { unwrapData: false })
-            );
-          }
-
-          // Add to cache first, then open editor
-          let noteNode: any;
-          if (teamPath) {
-            if (teamNotesProvider) {
-              noteNode = await teamNotesProvider.addNoteToCache(note, teamPath);
-            }
-          } else {
-            if (myNotesProvider) {
-              noteNode = await myNotesProvider.addNoteToCache(note);
-            }
-          }
-
-          // Open in editor after cache is updated
-          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-          const doc = await vscode.workspace.openTextDocument(uri);
-          await vscode.window.showTextDocument(doc, { preview: false });
-
-          // Reveal and select the note
-          if (noteNode) {
-            if (teamPath) {
-              await revealNote(getTeamNotesTreeView(), noteNode);
-            } else {
-              await revealNote(getMyNotesTreeView(), noteNode);
-            }
-          }
+          await createNoteInScope(payload, { teamPath });
         } finally {
           // Clear pending state
           provider?.clearPendingContainer(containerId);
         }
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.folder.importNote', async (node: any) => {
+      if (!node) {
+        return;
+      }
+
+      let folderId, teamPath;
+
+      if (node.type === 'folder') {
+        folderId = node.id;
+        teamPath = node.teamPath;
+      } else {
+        folderId = node.value?.context?.folderId || node.folderId;
+        teamPath = node.value?.context?.teamPath || node.teamPath;
+      }
+
+      const importData = await pickMarkdownImportData();
+      if (!importData) {
+        return;
+      }
+
+      const payload = folderId ? { ...importData, parentFolderId: folderId } : { ...importData };
+      const containerId = folderId ? `folder-${folderId}` : 'root';
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+      const provider = teamPath ? teamNotesProvider : myNotesProvider;
+
+      provider?.setPendingContainer(containerId);
+
+      try {
+        await createNoteInScope(payload, { teamPath, openEditor: false });
+      } finally {
+        provider?.clearPendingContainer(containerId);
       }
     })
   );
@@ -1065,42 +1204,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           provider?.setPendingContainer(containerId);
 
           try {
-            const areNotesLoaded = teamId && provider?.isTeamNotesCached(teamId);
-
-            let note: any;
-            if (!areNotesLoaded && provider) {
-              // Team notes not loaded - execute both API calls in parallel
-              const [createdNote, loadedNotes] = await Promise.all([
-                recordUsage(API.createTeamNote(teamPath, {} as any, { unwrapData: false })),
-                recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }))
-              ]);
-              note = createdNote;
-              // Cache the loaded notes manually (set teamId directly)
-              if (teamId && loadedNotes) {
-                provider.cacheTeamNotes(teamId, loadedNotes);
-              }
-            } else {
-              // Team notes already loaded or provider unavailable - just create the note
-              note = await recordUsage(
-                API.createTeamNote(teamPath, {} as any, { unwrapData: false })
-              );
-            }
-
-            // Add to cache (won't trigger additional API call as notes are now loaded)
-            let noteNode: any;
-            if (provider) {
-              noteNode = await provider.addNoteToCache(note, teamPath);
-            }
-
-            // Open in editor only after cache is updated
-            const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-            const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, { preview: false });
-
-            // Reveal and select the note
-            if (noteNode) {
-              await revealNote(getTeamNotesTreeView(), noteNode);
-            }
+            await createNoteInScope({}, { teamPath });
           } catch (error) {
             vscode.window.showErrorMessage(`Failed to create team note: ${error.message}`);
           } finally {
@@ -1110,6 +1214,39 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         } else {
           vscode.window.showErrorMessage('Team path not found');
         }
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.team.importNote', async (node: any) => {
+      if (!node) {
+        return;
+      }
+
+      const teamPath = node.team?.path;
+      if (!teamPath) {
+        vscode.window.showErrorMessage('Team path not found');
+        return;
+      }
+
+      const importData = await pickMarkdownImportData();
+      if (!importData) {
+        return;
+      }
+
+      const provider = getTeamNotesProvider();
+      const teamId = provider?.getTeamIdFromPath(teamPath);
+      const containerId = `team-${teamId}`;
+
+      provider?.setPendingContainer(containerId);
+
+      try {
+        await createNoteInScope(importData, { teamPath, openEditor: false });
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to import team note: ${error.message}`);
+      } finally {
+        provider?.clearPendingContainer(containerId);
       }
     })
   );

@@ -6,6 +6,9 @@
 
 ### Added
 
+- Added note-link completion inside HackMD editors when typing `[`.
+  - Suggests cached personal and team notes whose titles or permalinks match the typed query.
+  - Inserts links in the form `[Note Title](/@scope/permalink-or-id)`.
 - Added per-team inline Refresh button in Team Notes tree view, visible after a team's notes have been loaded.
   - Refresh keeps stale children visible during the background fetch and replaces them atomically on completion.
   - The team row shows a spinner while the refresh is in progress.
@@ -72,6 +75,7 @@
 
 ### Fixed
 
+- Fixed note-link completion insertion when VS Code auto-inserts a closing `]` after `[`. The completion now consumes that bracket instead of leaving a trailing `]`.
 - Fixed note open failures caused by malformed team-note URIs (`#fragment?query` ordering).
 - Fixed URI fragment parsing so note IDs remain stable even with legacy malformed links.
 - Fixed duplicate/incorrect breadcrumb behavior while preserving folder hierarchy.

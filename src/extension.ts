@@ -14,6 +14,7 @@ import { ACCESS_TOKEN_KEY } from './constants';
 import { HistoryProvider } from './historyProvider';
 import { activate as activateFSProvider } from './mdFsProvider';
 import { MyNotesProvider } from './myNotesProvider';
+import { NoteCompletionProvider } from './noteCompletionProvider';
 import { NotePropertiesProvider } from './propertiesProvider';
 import { TeamNotesProvider } from './teamNotesProvider';
 
@@ -321,6 +322,15 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   activateFSProvider(context);
+
+  // Register note-link completion provider for hackmd:// documents.
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      { scheme: 'hackmd' },
+      new NoteCompletionProvider(),
+      '[', // trigger character
+    )
+  );
 
   return {
     extendMarkdownIt(md: any) {

@@ -67,6 +67,49 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return this.notesCache.find(n => n.id === noteId);
   }
 
+  getMoveFolderTargetsFromCache(): Array<{ label: string; folderId: string; folderPaths: any[] }> {
+    const targets: Array<{ label: string; folderId: string; folderPaths: any[] }> = [];
+
+    for (const folder of this.foldersCache.values()) {
+      const folderPaths = this.buildFolderPath(folder.id);
+      if (folderPaths.length === 0) {
+        continue;
+      }
+
+      targets.push({
+        label: folderPaths.map((entry) => entry.name).join(' / '),
+        folderId: folder.id,
+        folderPaths,
+      });
+    }
+
+    return targets;
+  }
+
+  private buildFolderPath(folderId: string): any[] {
+    const path: any[] = [];
+    let currentId: string | undefined = folderId;
+
+    while (currentId) {
+      const folder = this.foldersCache.get(currentId);
+      if (!folder) {
+        return [];
+      }
+
+      path.unshift({
+        id: folder.id,
+        name: folder.name,
+        icon: folder.icon,
+        color: folder.color,
+        parentId: folder.parentId,
+        clientId: folder.clientId,
+      });
+      currentId = folder.parentId;
+    }
+
+    return path;
+  }
+
   // Pending operation management
   setPendingNote(noteId: string, noteObject?: Note): void {
     this.pendingNotes.add(noteId);
@@ -94,8 +137,12 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  clearPendingNote(noteId: string, noteObject?: Note): void {
+  clearPendingNote(noteId: string, noteObject?: Note, emitEvent = true): void {
     this.pendingNotes.delete(noteId);
+
+    if (!emitEvent) {
+      return;
+    }
 
     // Find the note to determine its parent
     let note = noteObject;
@@ -245,7 +292,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  updateNoteInCache(noteId: string, updatedNote: Note): void {
+  updateNoteInCache(noteId: string, updatedNote: Note, emitEvents = true): Note | undefined {
     if (this.notesCache) {
       const index = this.notesCache.findIndex(n => n.id === noteId);
       if (index !== -1) {
@@ -255,23 +302,81 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         // Rebuild tree to update folder objects
         this.organizeNotesIntoFolders(this.notesCache);
 
-        // Manually determine where to fire event based on the note's location
-        if (updatedNote.folderPaths && updatedNote.folderPaths.length > 0) {
-          // Note is in a folder - fire onChange on the deepest folder
-          const deepestFolder = updatedNote.folderPaths[updatedNote.folderPaths.length - 1];
-          const folderNode = this.foldersCache.get(deepestFolder.id);
-          if (folderNode) {
-            this._onDidChangeTreeData.fire(folderNode);
-          } else {
-            // Fallback to root if folder not found
-            this._onDidChangeTreeData.fire(undefined);
-          }
-        } else {
-          // Note is at root level - fire onChange on root
-          this._onDidChangeTreeData.fire(undefined);
+        if (emitEvents) {
+          this.emitMoveChangeEvents(oldNote, updatedNote);
         }
+
+        return oldNote;
       }
     }
+
+    return undefined;
+  }
+
+  emitMoveChangeEvents(oldNote: Note, updatedNote: Note): void {
+    const oldTarget = this.getContainerTargetFromNote(oldNote);
+    const newTarget = this.getContainerTargetFromNote(updatedNote);
+
+    if (oldTarget.key === newTarget.key) {
+      this.fireContainerTarget(oldTarget);
+      return;
+    }
+
+    // Overlapping containers (root/folder or ancestor/descendant): emit only the ancestor container.
+    if (oldTarget.folderId && newTarget.folderId) {
+      if (this.isFolderAncestor(oldTarget.folderId, newTarget.folderId)) {
+        this.fireContainerTarget(oldTarget);
+        return;
+      }
+      if (this.isFolderAncestor(newTarget.folderId, oldTarget.folderId)) {
+        this.fireContainerTarget(newTarget);
+        return;
+      }
+    } else if (!oldTarget.folderId || !newTarget.folderId) {
+      this._onDidChangeTreeData.fire(undefined);
+      return;
+    }
+
+    // Independent containers: refresh old then new.
+    this.fireContainerTarget(oldTarget);
+    this.fireContainerTarget(newTarget);
+  }
+
+  private getContainerTargetFromNote(note: Note): { key: string; folderId?: string } {
+    const folderId = note.folderPaths && note.folderPaths.length > 0
+      ? note.folderPaths[note.folderPaths.length - 1].id
+      : undefined;
+
+    return folderId ? { key: `folder-${folderId}`, folderId } : { key: 'root' };
+  }
+
+  private fireContainerTarget(target: { key: string; folderId?: string }): void {
+    if (!target.folderId) {
+      this._onDidChangeTreeData.fire(undefined);
+      return;
+    }
+
+    const folderNode = this.foldersCache.get(target.folderId);
+    if (folderNode) {
+      this._onDidChangeTreeData.fire(folderNode);
+    } else {
+      this._onDidChangeTreeData.fire(undefined);
+    }
+  }
+
+  private isFolderAncestor(ancestorId: string, descendantId: string): boolean {
+    let currentId: string | undefined = descendantId;
+
+    while (currentId) {
+      if (currentId === ancestorId) {
+        return true;
+      }
+
+      const currentFolder = this.foldersCache.get(currentId);
+      currentId = currentFolder?.parentId;
+    }
+
+    return false;
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {

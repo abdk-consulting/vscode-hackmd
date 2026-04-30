@@ -289,6 +289,59 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return undefined;
   }
 
+  getMoveFolderTargetsFromCache(teamPath: string): Array<{ label: string; folderId: string; folderPaths: any[] }> {
+    const teamId = this.getTeamIdFromPath(teamPath);
+    if (!teamId) {
+      return [];
+    }
+
+    const folderCache = this.teamFoldersCache.get(teamId);
+    if (!folderCache) {
+      return [];
+    }
+
+    const targets: Array<{ label: string; folderId: string; folderPaths: any[] }> = [];
+
+    for (const folder of folderCache.values()) {
+      const folderPaths = this.buildFolderPath(folder.id, folderCache);
+      if (folderPaths.length === 0) {
+        continue;
+      }
+
+      targets.push({
+        label: folderPaths.map((entry) => entry.name).join(' / '),
+        folderId: folder.id,
+        folderPaths,
+      });
+    }
+
+    return targets;
+  }
+
+  private buildFolderPath(folderId: string, folderCache: Map<string, FolderNode>): any[] {
+    const path: any[] = [];
+    let currentId: string | undefined = folderId;
+
+    while (currentId) {
+      const folder = folderCache.get(currentId);
+      if (!folder) {
+        return [];
+      }
+
+      path.unshift({
+        id: folder.id,
+        name: folder.name,
+        icon: folder.icon,
+        color: folder.color,
+        parentId: folder.parentId,
+        clientId: folder.clientId,
+      });
+      currentId = folder.parentId;
+    }
+
+    return path;
+  }
+
   // Pending operation management
   setPendingNote(noteId: string, noteObject?: Note): void {
     this.pendingNotes.add(noteId);
@@ -313,8 +366,12 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  clearPendingNote(noteId: string, noteObject?: Note): void {
+  clearPendingNote(noteId: string, noteObject?: Note, emitEvent = true): void {
     this.pendingNotes.delete(noteId);
+
+    if (!emitEvent) {
+      return;
+    }
     // Try to find the note
     let note = noteObject;
     if (!note) {
@@ -380,7 +437,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  updateNoteInCache(noteId: string, updatedNote: Note, teamPath?: string): void {
+  updateNoteInCache(noteId: string, updatedNote: Note, teamPath?: string, emitEvents = true): Note | undefined {
     // If we have a teamPath, only search that team's cache
     if (teamPath) {
       const teamId = this.getTeamIdFromPath(teamPath);
@@ -389,6 +446,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         if (notes) {
           const index = notes.findIndex(n => n.id === noteId);
           if (index !== -1) {
+            const oldNote = notes[index];
             notes[index] = updatedNote;
 
             // Ensure the note has teamPath set
@@ -399,29 +457,11 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
             // Rebuild tree to update folder objects
             this.organizeNotesIntoFolders(notes, teamId);
 
-            // Manually determine where to fire event based on the note's location
-            if (updatedNote.folderPaths && updatedNote.folderPaths.length > 0) {
-              // Note is in a folder - fire onChange on the deepest folder
-              const deepestFolder = updatedNote.folderPaths[updatedNote.folderPaths.length - 1];
-              const folderCache = this.teamFoldersCache.get(teamId);
-              const folderNode = folderCache?.get(deepestFolder.id);
-              if (folderNode) {
-                this._onDidChangeTreeData.fire(folderNode);
-              } else {
-                // Fallback to team if folder not found
-                const teamNode = this.teamNodesCache.get(teamId);
-                if (teamNode) {
-                  this._onDidChangeTreeData.fire(teamNode);
-                }
-              }
-            } else {
-              // Note is at team root level - fire onChange on team
-              const teamNode = this.teamNodesCache.get(teamId);
-              if (teamNode) {
-                this._onDidChangeTreeData.fire(teamNode);
-              }
+            if (emitEvents) {
+              this.emitMoveChangeEvents(oldNote, updatedNote, teamId);
             }
-            return;
+
+            return oldNote;
           }
         }
       }
@@ -430,6 +470,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       for (const [teamId, notes] of this.teamNotesCache.entries()) {
         const index = notes.findIndex(n => n.id === noteId);
         if (index !== -1) {
+          const oldNote = notes[index];
           notes[index] = updatedNote;
 
           // Ensure the note has teamPath set if it's not already
@@ -440,32 +481,102 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           // Rebuild tree to update folder objects
           this.organizeNotesIntoFolders(notes, teamId);
 
-          // Manually determine where to fire event based on the note's location
-          if (updatedNote.folderPaths && updatedNote.folderPaths.length > 0) {
-            // Note is in a folder - fire onChange on the deepest folder
-            const deepestFolder = updatedNote.folderPaths[updatedNote.folderPaths.length - 1];
-            const folderCache = this.teamFoldersCache.get(teamId);
-            const folderNode = folderCache?.get(deepestFolder.id);
-            if (folderNode) {
-              this._onDidChangeTreeData.fire(folderNode);
-            } else {
-              // Fallback to team if folder not found
-              const teamNode = this.teamNodesCache.get(teamId);
-              if (teamNode) {
-                this._onDidChangeTreeData.fire(teamNode);
-              }
-            }
-          } else {
-            // Note is at team root level - fire onChange on team
-            const teamNode = this.teamNodesCache.get(teamId);
-            if (teamNode) {
-              this._onDidChangeTreeData.fire(teamNode);
-            }
+          if (emitEvents) {
+            this.emitMoveChangeEvents(oldNote, updatedNote, teamId);
           }
-          return;
+
+          return oldNote;
         }
       }
     }
+
+    return undefined;
+  }
+
+  emitMoveChangeEvents(oldNote: Note, updatedNote: Note, explicitTeamId?: string): void {
+    const teamId = explicitTeamId
+      || this.getTeamIdFromPath(updatedNote.teamPath || oldNote.teamPath || '');
+
+    if (!teamId) {
+      this._onDidChangeTreeData.fire(undefined);
+      return;
+    }
+
+    const oldTarget = this.getContainerTargetFromNote(oldNote, teamId);
+    const newTarget = this.getContainerTargetFromNote(updatedNote, teamId);
+
+    if (oldTarget.key === newTarget.key) {
+      this.fireContainerTarget(newTarget, teamId);
+      return;
+    }
+
+    // Overlapping containers (team/folder or ancestor/descendant): emit only the ancestor container.
+    if (oldTarget.folderId && newTarget.folderId) {
+      if (this.isFolderAncestor(teamId, oldTarget.folderId, newTarget.folderId)) {
+        this.fireContainerTarget(oldTarget, teamId);
+        return;
+      }
+      if (this.isFolderAncestor(teamId, newTarget.folderId, oldTarget.folderId)) {
+        this.fireContainerTarget(newTarget, teamId);
+        return;
+      }
+    } else if (!oldTarget.folderId || !newTarget.folderId) {
+      this.fireContainerTarget({ key: `team-${teamId}` }, teamId);
+      return;
+    }
+
+    // Independent containers: refresh old then new.
+    this.fireContainerTarget(oldTarget, teamId);
+    this.fireContainerTarget(newTarget, teamId);
+  }
+
+  private getContainerTargetFromNote(note: Note, teamId: string): { key: string; folderId?: string } {
+    const folderId = note.folderPaths && note.folderPaths.length > 0
+      ? note.folderPaths[note.folderPaths.length - 1].id
+      : undefined;
+
+    return folderId ? { key: `folder-${folderId}`, folderId } : { key: `team-${teamId}` };
+  }
+
+  private fireContainerTarget(target: { key: string; folderId?: string }, teamId: string): void {
+    if (!target.folderId) {
+      const teamNode = this.teamNodesCache.get(teamId);
+      if (teamNode) {
+        this._onDidChangeTreeData.fire(teamNode);
+      } else {
+        this._onDidChangeTreeData.fire(undefined);
+      }
+      return;
+    }
+
+    const folderCache = this.teamFoldersCache.get(teamId);
+    const folderNode = folderCache?.get(target.folderId);
+    if (folderNode) {
+      this._onDidChangeTreeData.fire(folderNode);
+    } else {
+      const teamNode = this.teamNodesCache.get(teamId);
+      if (teamNode) {
+        this._onDidChangeTreeData.fire(teamNode);
+      } else {
+        this._onDidChangeTreeData.fire(undefined);
+      }
+    }
+  }
+
+  private isFolderAncestor(teamId: string, ancestorId: string, descendantId: string): boolean {
+    const folderCache = this.teamFoldersCache.get(teamId);
+    let currentId: string | undefined = descendantId;
+
+    while (currentId) {
+      if (currentId === ancestorId) {
+        return true;
+      }
+
+      const currentFolder = folderCache?.get(currentId);
+      currentId = currentFolder?.parentId;
+    }
+
+    return false;
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {

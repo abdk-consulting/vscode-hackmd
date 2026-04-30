@@ -45,13 +45,15 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  updateNoteInCache(noteId: string, updatedNote: Note): void {
+  updateNoteInCache(noteId: string, updatedNote: Note, emitEvent = true): void {
     if (this.notesCache) {
       const index = this.notesCache.findIndex(n => n.id === noteId);
       if (index !== -1) {
         this.notesCache[index] = updatedNote;
-        // Fire onChange to refresh the tree
-        this._onDidChangeTreeData.fire(undefined);
+        if (emitEvent) {
+          // Fire onChange to refresh the tree
+          this._onDidChangeTreeData.fire(undefined);
+        }
       }
     }
   }
@@ -71,10 +73,12 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  clearPendingNote(noteId: string, noteObject?: Note): void {
+  clearPendingNote(noteId: string, noteObject?: Note, emitEvent = true): void {
     this.pendingNotes.delete(noteId);
-    // Fire event on root to trigger refresh (all history notes are at root level)
-    this._onDidChangeTreeData.fire(undefined);
+    if (emitEvent) {
+      // Fire event on root to trigger refresh (all history notes are at root level)
+      this._onDidChangeTreeData.fire(undefined);
+    }
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {

@@ -197,6 +197,11 @@
         "category": "HackMD"
       },
       {
+        "command": "HackMD.moveNoteTo",
+        "title": "Move to...",
+        "category": "HackMD"
+      },
+      {
         "command": "HackMD.deleteMyNote",
         "title": "Delete Note",
         "category": "HackMD"
@@ -293,6 +298,10 @@
         {
           "command": "HackMD.renameNote",
           "when": "view =~ /hackmd.tree/ && (viewItem == file-owned || viewItem == file)"
+        },
+        {
+          "command": "HackMD.moveNoteTo",
+          "when": "(view == hackmd.tree.my-notes || view == hackmd.tree.team-notes) && (viewItem == file-owned || viewItem == file)"
         },
         {
           "command": "HackMD.openNoteProperties",

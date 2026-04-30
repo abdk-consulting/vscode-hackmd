@@ -34,6 +34,12 @@
   - Notes with no original permalink can have other properties saved without setting a permalink.
 - "Properties..." context menu item is now available for all notes, not only owned ones.
 - "Rename" context menu item is now available for all notes, not only owned ones.
+- Added "Move to..." note action in tree context menu for My Notes and Team Notes.
+  - Destination picker is built from the already loaded tree/folder cache (no backend folder fetch).
+  - The current location is excluded from the destination list.
+  - Move operation now follows a strict sequence after API success: model update, deduplicated tree refresh, reveal, select.
+  - If the note is open, editors are closed first using the normal Save/Don't Save/Cancel flow.
+  - Canceling editor close cancels the move operation.
 - All notes now open as editable in the editor.
   - If the backend rejects a save due to permissions, the user sees an error but retains their content.
 - Note Properties panel now automatically updates the displayed title when the note is renamed.
@@ -60,6 +66,9 @@
   - 403 → insufficient permissions
   - 409 → permalink already in use
   - 400 → invalid permalink format
+- Fixed delay before opening the team-note Move-to picker by avoiding subtree traversal that could trigger async loads.
+- Fixed intermittent loss of selection after moving notes by preventing overlapping/late tree refreshes after reveal.
+- Fixed Move-to empty-state UX by showing clear messages when there are no valid destination folders.
 
 ### Contributors
 

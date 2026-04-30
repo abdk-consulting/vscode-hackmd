@@ -64,6 +64,28 @@ async function switchToNoteIfAlreadyOpen(note: Note): Promise<boolean> {
   return false;
 }
 
+async function closeOpenEditorsForNote(note: Note): Promise<boolean> {
+  const tabsToClose: vscode.Tab[] = [];
+
+  for (const tabGroup of vscode.window.tabGroups.all) {
+    for (const tab of tabGroup.tabs) {
+      if (tab.input instanceof vscode.TabInputText && isSameNoteUri(tab.input.uri, note.id, note.teamPath)) {
+        tabsToClose.push(tab);
+      }
+    }
+  }
+
+  for (const tab of tabsToClose) {
+    const closed = await vscode.window.tabGroups.close(tab);
+    if (!closed) {
+      // User canceled from the save/discard/cancel prompt.
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Helper function to reveal and select a note after creation
 async function revealNote(treeView: vscode.TreeView<any> | undefined, noteNode: any) {
   if (!treeView || !noteNode) return;
@@ -76,6 +98,11 @@ async function revealNote(treeView: vscode.TreeView<any> | undefined, noteNode: 
   } catch (error) {
     console.error('Failed to reveal note:', error);
   }
+}
+
+interface MoveTargetQuickPickItem extends vscode.QuickPickItem {
+  folderId: string;
+  folderPaths: any[];
 }
 
 export async function registerTreeViewCommands(context: vscode.ExtensionContext) {
@@ -226,6 +253,132 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             myNotesProvider?.clearPendingNote(noteId, note);
           }
           historyProvider?.clearPendingNote(noteId, note);
+        }
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.moveNoteTo', async (node: any) => {
+      if (!node || node.type !== 'note') {
+        return;
+      }
+
+      const note = node.note as Note;
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+
+      const treeView = note.teamPath ? getTeamNotesTreeView() : getMyNotesTreeView();
+      const folderTargets = note.teamPath
+        ? (teamNotesProvider?.getMoveFolderTargetsFromCache(note.teamPath) || [])
+        : (myNotesProvider?.getMoveFolderTargetsFromCache() || []);
+
+      if (folderTargets.length === 0) {
+        vscode.window.showInformationMessage('No folders are available in this note scope.');
+        return;
+      }
+
+      const currentFolderId = note.folderPaths && note.folderPaths.length > 0
+        ? note.folderPaths[note.folderPaths.length - 1].id
+        : null;
+
+      const filteredTargets = folderTargets.filter((target) => target.folderId !== currentFolderId);
+
+      if (filteredTargets.length === 0) {
+        vscode.window.showInformationMessage('This note is already in the only available folder.');
+        return;
+      }
+
+      const pickerItems: MoveTargetQuickPickItem[] = filteredTargets.map((target) => ({
+        label: target.label,
+        folderId: target.folderId,
+        folderPaths: target.folderPaths,
+      }));
+
+      const selected = await vscode.window.showQuickPick(pickerItems, {
+        placeHolder: 'Move note to...',
+        ignoreFocusOut: true,
+      });
+
+      if (!selected) {
+        return;
+      }
+
+      const canProceed = await closeOpenEditorsForNote(note);
+      if (!canProceed) {
+        return;
+      }
+
+      const historyProvider = getHistoryProvider();
+
+      const noteId = note.id;
+      const teamPath = note.teamPath;
+      let pendingCleared = false;
+
+      if (teamPath) {
+        teamNotesProvider?.setPendingNote(noteId, note);
+      } else {
+        myNotesProvider?.setPendingNote(noteId, note);
+      }
+      historyProvider?.setPendingNote(noteId, note);
+
+      let noteForClear: Note = note;
+
+      try {
+        const payload = { parentFolderId: selected.folderId };
+
+        if (teamPath) {
+          await recordUsage(API.updateTeamNote(teamPath, noteId, payload));
+        } else {
+          await recordUsage(API.updateNote(noteId, payload, { unwrapData: false }));
+        }
+
+        const updatedNote = {
+          ...note,
+          parentFolderId: selected.folderId,
+          folderPaths: selected.folderPaths,
+        } as Note;
+        noteForClear = updatedNote;
+
+        // 1) Clear pending state without emitting refresh events.
+        if (teamPath) {
+          teamNotesProvider?.clearPendingNote(noteId, noteForClear, false);
+        } else {
+          myNotesProvider?.clearPendingNote(noteId, noteForClear, false);
+        }
+        historyProvider?.clearPendingNote(noteId, noteForClear, false);
+        pendingCleared = true;
+
+        // 2) Update tree model without emitting refresh events.
+        const oldNote = teamPath
+          ? teamNotesProvider?.updateNoteInCache(noteId, updatedNote, teamPath, false)
+          : myNotesProvider?.updateNoteInCache(noteId, updatedNote, false);
+        historyProvider?.updateNoteInCache(noteId, updatedNote, false);
+
+        // 3) Emit deduplicated tree change events for old/new containers.
+        if (teamPath) {
+          if (oldNote) {
+            teamNotesProvider?.emitMoveChangeEvents(oldNote, updatedNote);
+          }
+        } else {
+          if (oldNote) {
+            myNotesProvider?.emitMoveChangeEvents(oldNote, updatedNote);
+          }
+        }
+        getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote);
+
+        // 4) Reveal + select moved note at the new location.
+        await revealNote(treeView, { type: 'note', note: updatedNote });
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to move note: ${error.message || 'Unknown error'}`);
+      } finally {
+        if (!pendingCleared) {
+          if (teamPath) {
+            teamNotesProvider?.clearPendingNote(noteId, noteForClear);
+          } else {
+            myNotesProvider?.clearPendingNote(noteId, noteForClear);
+          }
+          historyProvider?.clearPendingNote(noteId, noteForClear);
         }
       }
     })

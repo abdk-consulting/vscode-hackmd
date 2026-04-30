@@ -1,6 +1,7 @@
 import { Note, NotePublishType } from '@hackmd/api/dist/type';
 import * as vscode from 'vscode';
 import { API } from './api';
+import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
 import { recordUsage } from './store';
 
 interface NoteProperties {
@@ -18,21 +19,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   private _currentNoteId?: string;
   private _currentTeamPath?: string | null;
   private _pendingChanges: Partial<NoteProperties> = {};
-
-  private _getNoteIdFromFragment(fragment: string): string {
-    if (!fragment) {
-      return '';
-    }
-    const questionIndex = fragment.indexOf('?');
-    if (questionIndex >= 0) {
-      return fragment.slice(0, questionIndex);
-    }
-    const encodedQuestionIndex = fragment.toLowerCase().indexOf('%3f');
-    if (encodedQuestionIndex >= 0) {
-      return fragment.slice(0, encodedQuestionIndex);
-    }
-    return fragment;
-  }
+  private _isSaving = false;
 
   constructor(private readonly _extensionUri: vscode.Uri) { }
 
@@ -56,6 +43,12 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
         case 'propertyChanged':
           this._onPropertyChanged(data.property, data.value);
           break;
+        case 'save':
+          void this.saveCurrentProperties();
+          break;
+        case 'cancel':
+          void this.cancelEditing();
+          break;
         case 'copyShareUrl':
           if (typeof data.url === 'string' && data.url.length > 0) {
             void vscode.env.clipboard.writeText(data.url);
@@ -63,75 +56,225 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           }
           break;
         case 'ready':
-          // Webview is ready, send current state
-          if (this._currentNote) {
-            this._fullRenderWebview();
-          }
+          this._fullRenderWebview();
           break;
       }
     });
 
-    // Update if we already have a note
-    if (this._currentNote) {
-      this._fullRenderWebview();
-    } else {
-      // Check if there's an active editor with a HackMD note and fetch it
-      const editor = vscode.window.activeTextEditor;
-      if (editor && editor.document.uri.scheme === 'hackmd') {
-        const noteId = this._getNoteIdFromFragment(editor.document.uri.fragment);
-        const teamPath = editor.document.uri.query
-          ? new URLSearchParams(editor.document.uri.query).get('teamPath')
-          : null;
-
-        if (noteId) {
-          // Fetch the note and update the webview
-          recordUsage(API.getNote(noteId, { unwrapData: false }))
-            .then(note => {
-              this.updateNote(note, noteId, teamPath);
-            })
-            .catch(err => {
-              console.error('Failed to fetch note for properties view:', err);
-            });
-        }
-      }
-    }
+    this._fullRenderWebview();
   }
 
-  public updateNote(note: Note | undefined, noteId?: string, teamPath?: string | null) {
+  public async openNote(note: Note, noteId: string, teamPath?: string | null): Promise<boolean> {
+    if (this._currentNoteId && this._currentNoteId !== noteId && this.hasPendingChanges()) {
+      const selection = await vscode.window.showWarningMessage(
+        'You have unsaved property changes. What would you like to do?',
+        { modal: true },
+        'Save',
+        'Discard'
+      );
+
+      if (selection === 'Save') {
+        const saved = await this.saveCurrentProperties();
+        if (!saved) {
+          return false;
+        }
+      } else if (selection === 'Discard') {
+        this.reset();
+      } else {
+        return false;
+      }
+    }
+
     this._currentNote = note;
     this._currentNoteId = noteId;
     this._currentTeamPath = teamPath;
     this._pendingChanges = {};
+    this._isSaving = false;
     this._fullRenderWebview();
+    return true;
   }
 
-  /**
-   * Updates the current note data without clearing pending property changes or
-   * re-rendering the inputs. Used by readFile to refresh note metadata while
-   * the user may be actively editing properties.
-   */
-  public updateNotePreservingChanges(note: Note, noteId: string, teamPath?: string | null) {
-    if (this._currentNoteId !== noteId) {
-      // Different note — do a full update
-      this.updateNote(note, noteId, teamPath);
-      return;
+  public async cancelEditing(): Promise<boolean> {
+    if (!this.hasPendingChanges()) {
+      this.reset();
+      return true;
     }
-    // Same note: refresh cached data but keep pending edits intact
-    this._currentNote = note;
-    this._currentTeamPath = teamPath;
-    // Do NOT clear _pendingChanges or call _fullRenderWebview
+
+    const selection = await vscode.window.showWarningMessage(
+      'You have unsaved property changes. What would you like to do?',
+      { modal: true },
+      'Save',
+      'Discard'
+    );
+
+    if (selection === 'Save') {
+      return this.saveCurrentProperties();
+    }
+
+    if (selection === 'Discard') {
+      this.reset();
+      return true;
+    }
+
+    return false;
   }
 
-  public getPendingChanges(): Partial<NoteProperties> {
-    return this._pendingChanges;
-  }
-
-  public clearPendingChanges() {
-    this._pendingChanges = {};
+  public updateCurrentNote(noteId: string, updatedNote: Note): void {
+    if (this._currentNoteId === noteId && this._currentNote) {
+      this._currentNote = updatedNote;
+      this._fullRenderWebview();
+    }
   }
 
   public hasPendingChanges(): boolean {
     return Object.keys(this._pendingChanges).length > 0;
+  }
+
+  private reset() {
+    this._currentNote = undefined;
+    this._currentNoteId = undefined;
+    this._currentTeamPath = undefined;
+    this._pendingChanges = {};
+    this._isSaving = false;
+    this._fullRenderWebview();
+  }
+
+  private getMergedProperties(): NoteProperties | undefined {
+    if (!this._currentNote) {
+      return undefined;
+    }
+    return {
+      permalink: this._pendingChanges.permalink !== undefined ? this._pendingChanges.permalink : (this._currentNote.permalink || ''),
+      readPermission: this._pendingChanges.readPermission !== undefined ? this._pendingChanges.readPermission : this._currentNote.readPermission,
+      writePermission: this._pendingChanges.writePermission !== undefined ? this._pendingChanges.writePermission : this._currentNote.writePermission,
+      publishType: this._pendingChanges.publishType !== undefined ? this._pendingChanges.publishType : this._currentNote.publishType,
+    };
+  }
+
+  private isValidPermalink(value: string | null | undefined): boolean {
+    if (!value) {
+      return false;
+    }
+    return /^[A-Za-z0-9_-]+$/.test(value);
+  }
+
+  private _normalizePermissions(changedProperty: keyof NoteProperties, changedValue: any): Partial<NoteProperties> {
+    const rank: Record<string, number> = {
+      owner: 0,
+      signed_in: 1,
+      guest: 2,
+    };
+
+    const merged = this.getMergedProperties();
+    if (!merged) {
+      return {};
+    }
+
+    let readPermission = merged.readPermission;
+    let writePermission = merged.writePermission;
+
+    if (changedProperty === 'readPermission') {
+      readPermission = changedValue;
+    } else if (changedProperty === 'writePermission') {
+      writePermission = changedValue;
+    }
+
+    // readPermission cannot be more restrictive than writePermission.
+    if (rank[readPermission] < rank[writePermission]) {
+      if (changedProperty === 'readPermission') {
+        writePermission = readPermission;
+      } else if (changedProperty === 'writePermission') {
+        readPermission = writePermission;
+      }
+    }
+
+    return {
+      readPermission,
+      writePermission,
+    };
+  }
+
+  public async saveCurrentProperties(): Promise<boolean> {
+    if (!this._currentNote || !this._currentNoteId || this._isSaving) {
+      return false;
+    }
+
+    const merged = this.getMergedProperties();
+    if (!merged) {
+      return false;
+    }
+    if ('permalink' in this._pendingChanges && !this.isValidPermalink(this._pendingChanges.permalink)) {
+      vscode.window.showErrorMessage('Permalink must be non-empty and contain only letters, numbers, hyphens, or underscores.');
+      this._fullRenderWebview();
+      return false;
+    }
+
+    this._isSaving = true;
+    this._fullRenderWebview();
+
+    const noteId = this._currentNoteId;
+    const teamPath = this._currentTeamPath;
+    const myNotesProvider = getMyNotesProvider();
+    const teamNotesProvider = getTeamNotesProvider();
+    const historyProvider = getHistoryProvider();
+
+    if (teamPath) {
+      teamNotesProvider?.setPendingNote(noteId, this._currentNote);
+    } else {
+      myNotesProvider?.setPendingNote(noteId, this._currentNote);
+    }
+    historyProvider?.setPendingNote(noteId, this._currentNote);
+
+    try {
+      const payload: Record<string, any> = {
+        readPermission: merged.readPermission,
+        writePermission: merged.writePermission,
+      };
+      if ('permalink' in this._pendingChanges) {
+        payload.permalink = merged.permalink;
+      }
+
+      if (teamPath) {
+        await recordUsage(API.updateTeamNote(teamPath, noteId, payload as any));
+      } else {
+        await recordUsage(API.updateNote(noteId, payload as any, { unwrapData: false }));
+      }
+
+      const updatedNote = { ...this._currentNote, ...payload } as Note;
+
+      if (teamPath) {
+        teamNotesProvider?.updateNoteInCache(noteId, updatedNote, teamPath);
+      } else {
+        myNotesProvider?.updateNoteInCache(noteId, updatedNote);
+      }
+      historyProvider?.updateNoteInCache(noteId, updatedNote);
+
+      this.reset();
+      return true;
+    } catch (error: any) {
+      const code = error?.response?.status ?? error?.code;
+      let message: string;
+      if (code === 403) {
+        message = 'You do not have permission to edit this note\'s properties.';
+      } else if (code === 409) {
+        message = 'That permalink is already in use. Please choose a different one.';
+      } else if (code === 400) {
+        message = 'Invalid permalink. Use only letters, numbers, hyphens, and underscores.';
+      } else {
+        message = `Failed to save note properties: ${error.message || 'Unknown error'}`;
+      }
+      vscode.window.showErrorMessage(message);
+      this._isSaving = false;
+      this._fullRenderWebview();
+      return false;
+    } finally {
+      if (teamPath) {
+        teamNotesProvider?.clearPendingNote(noteId, this._currentNote);
+      } else {
+        myNotesProvider?.clearPendingNote(noteId, this._currentNote);
+      }
+      historyProvider?.clearPendingNote(noteId, this._currentNote);
+    }
   }
 
   private _onPropertyChanged(property: string, value: any) {
@@ -139,44 +282,57 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Store the pending change
-    this._pendingChanges[property as keyof NoteProperties] = value;
+    const key = property as keyof NoteProperties;
 
-    // Make the editor dirty by applying a minimal edit
-    this._makeEditorDirty();
+    if (key === 'readPermission' || key === 'writePermission') {
+      const normalized = this._normalizePermissions(key, value);
 
-    // Update the badge to show unsaved changes
-    this._updateWebview();
-  }
+      (['readPermission', 'writePermission'] as const).forEach((permissionKey) => {
+        const nextValue = normalized[permissionKey];
+        const originalValue = (this._currentNote as any)[permissionKey] ?? '';
 
-  private async _makeEditorDirty() {
-    const editor = vscode.window.activeTextEditor;
-    if (editor && editor.document.uri.scheme === 'hackmd' && !editor.document.isDirty) {
-      // Insert an invisible zero-width space to mark the document as dirty.
-      // writeFile strips this character before saving to the API.
-      const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
-      const endPos = lastLine.range.end;
-      await editor.edit((editBuilder) => {
-        editBuilder.insert(endPos, '\u200B');
+        if (nextValue === originalValue) {
+          delete this._pendingChanges[permissionKey];
+        } else {
+          this._pendingChanges[permissionKey] = nextValue;
+        }
       });
+    } else {
+      const originalValue = (this._currentNote as any)[key] ?? '';
+
+      if (value === originalValue) {
+        delete this._pendingChanges[key];
+      } else {
+        this._pendingChanges[key] = value;
+      }
     }
-  }
 
-  public getCurrentNoteId(): string | undefined {
-    return this._currentNoteId;
-  }
-
-  public getCurrentTeamPath(): string | null | undefined {
-    return this._currentTeamPath;
+    if (key === 'readPermission' || key === 'writePermission') {
+      this._fullRenderWebview();
+    } else {
+      this._updateWebview();
+    }
   }
 
   private _updateWebview() {
     if (this._view) {
       this._view.webview.postMessage({
         type: 'updatePendingChanges',
-        pendingChanges: this._pendingChanges
+        pendingChanges: this._pendingChanges,
+        canSave: this._canSave(),
+        isSaving: this._isSaving,
       });
     }
+  }
+
+  private _canSave(): boolean {
+    if (!this._currentNote || this._isSaving || !this.hasPendingChanges()) {
+      return false;
+    }
+    if ('permalink' in this._pendingChanges && !this.isValidPermalink(this._pendingChanges.permalink)) {
+      return false;
+    }
+    return true;
   }
 
   private _fullRenderWebview() {
@@ -184,7 +340,9 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       this._view.webview.postMessage({
         type: 'update',
         note: this._currentNote,
-        pendingChanges: this._pendingChanges
+        pendingChanges: this._pendingChanges,
+        canSave: this._canSave(),
+        isSaving: this._isSaving,
       });
     }
   }
@@ -205,11 +363,22 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     }
     .empty-state {
       padding: 20px 0;
-      text-align: center;
       color: var(--vscode-descriptionForeground);
+      line-height: 1.5;
+    }
+    .header {
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--vscode-editorWidget-border);
+    }
+    .title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--vscode-foreground);
+      word-break: break-word;
     }
     .property-group {
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
     .property-group.compact {
       margin-bottom: 10px;
@@ -241,11 +410,10 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       border-color: var(--vscode-inputValidation-warningBorder);
       background: var(--vscode-inputValidation-warningBackground);
     }
-    .info {
+    .error {
+      margin-top: 6px;
       font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      margin-top: 4px;
-      font-style: italic;
+      color: var(--vscode-inputValidation-errorForeground);
     }
     .modified-indicator {
       display: inline-block;
@@ -253,16 +421,8 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-inputValidation-warningBorder);
       font-size: 10px;
     }
-    .note-info {
-      padding: 6px 8px;
-      margin-bottom: 12px;
-      background: var(--vscode-textBlockQuote-background);
-      border-left: 2px solid var(--vscode-textBlockQuote-border);
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-    }
     .section-title {
-      margin: 14px 0 8px;
+      margin: 0 0 8px;
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.08em;
@@ -328,13 +488,49 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     .sharing-row button:hover {
       background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
     }
+    .actions {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--vscode-editorWidget-border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .actions button {
+      min-width: 74px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-input-border));
+      font: inherit;
+      cursor: pointer;
+    }
+    .actions .secondary {
+      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+    }
+    .actions .secondary:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+    }
+    .actions .primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .actions .primary:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+    }
+    .actions button:disabled,
+    .sharing-row button:disabled,
+    input:disabled,
+    select:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
   </style>
 </head>
 <body>
   <div id="content">
     <div class="empty-state">
-      <p>No note open</p>
-      <p style="font-size: 11px;">Open a HackMD note to edit its properties</p>
+      Select “Properties...” option from the context menu of a note to edit note properties
     </div>
   </div>
 
@@ -342,6 +538,10 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     const vscode = acquireVsCodeApi();
     let currentNote = null;
     let pendingChanges = {};
+    let canSave = false;
+    let isSaving = false;
+
+    const permalinkRegex = /^[A-Za-z0-9_-]+$/;
 
     window.addEventListener('message', event => {
       const message = event.data;
@@ -349,11 +549,16 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
         case 'update':
           currentNote = message.note;
           pendingChanges = message.pendingChanges || {};
+          canSave = !!message.canSave;
+          isSaving = !!message.isSaving;
           render();
           break;
         case 'updatePendingChanges':
           pendingChanges = message.pendingChanges || {};
+          canSave = !!message.canSave;
+          isSaving = !!message.isSaving;
           updateModifiedIndicators();
+          updateSaveState();
           break;
       }
     });
@@ -397,26 +602,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     }
 
     function updateModifiedIndicators() {
-      // Update modified indicators and warning message without re-rendering inputs
-      const hasPending = Object.keys(pendingChanges).length > 0;
-      
-      // Update warning message
-      const existingWarning = document.querySelector('.pending-warning');
-      if (hasPending && !existingWarning) {
-        const lastPropertyGroup = document.querySelector('.property-group:last-of-type');
-        if (lastPropertyGroup) {
-          const warning = document.createElement('div');
-          warning.className = 'info pending-warning';
-          warning.style.marginTop = '12px';
-          warning.style.marginBottom = '0';
-          warning.style.color = 'var(--vscode-inputValidation-warningBorder)';
-          warning.textContent = '⚠ Changes will be saved when you save the note';
-          lastPropertyGroup.insertAdjacentElement('afterend', warning);
-        }
-      } else if (!hasPending && existingWarning) {
-        existingWarning.remove();
-      }
-      
       // Update each property's modified state
       ['permalink', 'readPermission', 'writePermission'].forEach(property => {
         const element = document.getElementById(property);
@@ -446,6 +631,32 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           }
         }
       });
+
+      const permalinkInput = document.getElementById('permalink');
+      const permalinkError = document.getElementById('permalinkError');
+      if (permalinkInput && permalinkError) {
+        const value = permalinkInput.value.trim();
+        const permalinkDirty = pendingChanges['permalink'] !== undefined;
+        if (permalinkDirty && !value) {
+          permalinkError.textContent = 'Permalink is required.';
+        } else if (value && !permalinkRegex.test(value)) {
+          permalinkError.textContent = 'Use only letters, numbers, hyphens, and underscores.';
+        } else {
+          permalinkError.textContent = '';
+        }
+      }
+    }
+
+    function updateSaveState() {
+      const saveButton = document.getElementById('saveProperties');
+      const cancelButton = document.getElementById('cancelProperties');
+      if (saveButton) {
+        saveButton.disabled = !canSave;
+        saveButton.textContent = isSaving ? 'Saving...' : 'Save';
+      }
+      if (cancelButton) {
+        cancelButton.disabled = isSaving;
+      }
     }
 
     function render() {
@@ -454,20 +665,22 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       if (!currentNote) {
         content.innerHTML = \`
           <div class="empty-state">
-            <p>No note open</p>
-            <p style="font-size: 11px;">Open a HackMD note to edit its properties</p>
+            Select “Properties...” option from the context menu of a note to edit note properties
           </div>
         \`;
         return;
       }
 
-      const hasPending = Object.keys(pendingChanges).length > 0;
       const permalinkValue = pendingChanges.permalink !== undefined ? pendingChanges.permalink : (currentNote.permalink || '');
       const readPermValue = pendingChanges.readPermission !== undefined ? pendingChanges.readPermission : currentNote.readPermission;
       const writePermValue = pendingChanges.writePermission !== undefined ? pendingChanges.writePermission : currentNote.writePermission;
       const shareInfo = getShareBaseAndSlug();
 
       content.innerHTML = \`
+        <div class="header">
+          <div class="title">\${escapeHtml(currentNote.title || currentNote.shortId || 'Untitled')}</div>
+        </div>
+
         <div class="property-group compact">
           <div class="section-title">Sharing URL</div>
           <div class="sharing-prefix">\${escapeHtml(shareInfo.base)}</div>
@@ -478,9 +691,11 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
               id="permalink"
               value="\${escapeHtml(permalinkValue)}"
               placeholder="\${escapeHtml(shareInfo.fallbackSlug || 'custom-note-url')}"
+              \${isSaving ? 'disabled' : ''}
             />
-            <button type="button" id="copyShareUrl">Copy</button>
+            <button type="button" id="copyShareUrl" \${isSaving ? 'disabled' : ''}>Copy</button>
           </div>
+          <div id="permalinkError" class="error"></div>
         </div>
 
         <div class="property-group compact">
@@ -488,7 +703,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
           <div class="permission-row">
             <label for="readPermission">Read</label>
-            <select id="readPermission">
+            <select id="readPermission" \${isSaving ? 'disabled' : ''}>
               <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>Only me</option>
               <option value="signed_in" \${readPermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
               <option value="guest" \${readPermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
@@ -497,20 +712,24 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
           <div class="permission-row">
             <label for="writePermission">Write</label>
-            <select id="writePermission">
+            <select id="writePermission" \${isSaving ? 'disabled' : ''}>
               <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>Only me</option>
               <option value="signed_in" \${writePermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
               <option value="guest" \${writePermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
             </select>
           </div>
         </div>
+
+        <div class="actions">
+          <button class="secondary" id="cancelProperties" type="button">Cancel</button>
+          <button class="primary" id="saveProperties" type="button">Save</button>
+        </div>
       \`;
 
       // Attach event listeners
       document.getElementById('permalink').addEventListener('input', (e) => {
-        // Always track the change, use undefined for empty to signal clearing attempt
         const value = e.target.value.trim();
-        onPropertyChange('permalink', value === '' ? undefined : value);
+        onPropertyChange('permalink', value);
       });
 
       document.getElementById('readPermission').addEventListener('change', (e) => {
@@ -524,9 +743,18 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       document.getElementById('copyShareUrl').addEventListener('click', () => {
         onCopyShareUrl();
       });
+
+      document.getElementById('cancelProperties').addEventListener('click', () => {
+        vscode.postMessage({ type: 'cancel' });
+      });
+
+      document.getElementById('saveProperties').addEventListener('click', () => {
+        vscode.postMessage({ type: 'save' });
+      });
       
       // Update modified indicators after initial render
       updateModifiedIndicators();
+      updateSaveState();
     }
 
     function escapeHtml(text) {

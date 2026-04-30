@@ -220,6 +220,11 @@
         }
       },
       {
+        "command": "HackMD.openNoteProperties",
+        "title": "Properties...",
+        "category": "HackMD"
+      },
+      {
         "command": "HackMD.upgrade",
         "title": "Upgrade",
         "category": "HackMD"
@@ -287,7 +292,11 @@
         },
         {
           "command": "HackMD.renameNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file-owned"
+          "when": "view =~ /hackmd.tree/ && (viewItem == file-owned || viewItem == file)"
+        },
+        {
+          "command": "HackMD.openNoteProperties",
+          "when": "view =~ /hackmd.tree/ && (viewItem == file-owned || viewItem == file)"
         },
         {
           "command": "HackMD.deleteMyNote",

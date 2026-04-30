@@ -313,53 +313,6 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Track active editor changes to update properties view
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      await syncPropertiesViewForEditor(editor);
-    })
-  );
-
-  async function syncPropertiesViewForEditor(editor: vscode.TextEditor | undefined) {
-    if (editor && editor.document.uri.scheme === 'hackmd') {
-      const noteId = editor.document.uri.fragment.split('?')[0].split('%3F')[0].split('%3f')[0];
-      const teamPath = editor.document.uri.query
-        ? new URLSearchParams(editor.document.uri.query).get('teamPath')
-        : null;
-
-      // Find the note in our providers
-      let note;
-      if (teamPath && teamNotesProvider) {
-        note = teamNotesProvider.findNoteInCache(noteId, teamPath);
-      } else if (myNotesProvider) {
-        note = myNotesProvider.findNoteInCache(noteId);
-      }
-
-      if (!note && historyProvider) {
-        note = historyProvider.findNoteInCache(noteId);
-      }
-
-      // If note not in cache, fetch it from API
-      if (!note) {
-        try {
-          note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
-        } catch (e) {
-          console.error('Failed to fetch note for properties:', e);
-        }
-      }
-
-      if (note) {
-        propertiesProvider?.updateNote(note, noteId, teamPath);
-      }
-    } else {
-      // No HackMD note open
-      propertiesProvider?.updateNote(undefined);
-    }
-  }
-
-  // Also sync immediately for the currently active editor.
-  await syncPropertiesViewForEditor(vscode.window.activeTextEditor);
-
   activateFSProvider(context);
 
   return {

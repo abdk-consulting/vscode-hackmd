@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 
 import { API } from './api';
-import { getHistoryProvider, getMyNotesProvider, getPropertiesProvider, getTeamNotesProvider } from './extension';
-import { meStore, recordUsage } from './store';
+import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
+import { recordUsage } from './store';
 
 export class File implements vscode.FileStat {
   type: vscode.FileType;
@@ -112,21 +112,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
-      const teamPath = getTeamPathFromUri(uri);
       const content = note.content;
-
-      // Only update the properties provider if this note is currently active in the editor.
-      // Use updateNotePreservingChanges to avoid clearing any pending property edits.
-      const activeEditor = vscode.window.activeTextEditor;
-      if (activeEditor && activeEditor.document.uri.scheme === 'hackmd') {
-        const activeNoteId = getNoteIdFromFragment(activeEditor.document.uri.fragment);
-        if (activeNoteId === noteId) {
-          const propertiesProvider = getPropertiesProvider();
-          if (propertiesProvider) {
-            propertiesProvider.updateNotePreservingChanges(note, noteId, teamPath);
-          }
-        }
-      }
 
       return Buffer.from(content);
     } catch (e) {
@@ -162,85 +148,13 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     historyProvider?.setPendingNote(noteId);
 
     try {
-      // Strip the zero-width space sentinel that _makeEditorDirty inserts to mark the doc dirty
-      const contentString = Buffer.from(content).toString().replace(/\u200B/g, '');
-
-      // Check if there are pending property changes to save
-      const propertiesProvider = getPropertiesProvider();
-      const pendingChanges = propertiesProvider?.getPendingChanges() || {};
-      const hasPropertyChanges = Object.keys(pendingChanges).length > 0;
-
-      // Prepare the update payload
-      const updatePayload: any = { content: contentString };
-
-      // Add pending property changes to the payload
-      if (hasPropertyChanges) {
-        // Only add non-empty permalink, null/undefined values are fine for other fields
-        const filteredChanges: any = {};
-        Object.keys(pendingChanges).forEach(key => {
-          const value = pendingChanges[key as keyof typeof pendingChanges];
-          // Skip empty permalink strings
-          if (key === 'permalink' && value === '') {
-            return;
-          }
-          filteredChanges[key] = value;
-        });
-        Object.assign(updatePayload, filteredChanges);
-      }
+      const contentString = Buffer.from(content).toString();
 
       // Use appropriate API method based on teamPath
       if (teamPath) {
-        // Team note update
-        await recordUsage(API.updateTeamNote(teamPath, noteId, updatePayload));
+        await recordUsage(API.updateTeamNote(teamPath, noteId, { content: contentString }));
       } else {
-        // Personal note update
-        if (hasPropertyChanges) {
-          // Use updateNote to save both content and properties
-          await recordUsage(API.updateNote(noteId, updatePayload, { unwrapData: false }));
-        } else {
-          // Use updateNoteContent for content-only updates
-          await recordUsage(API.updateNoteContent(noteId, contentString, { unwrapData: false }));
-        }
-      }
-
-      // If title or other metadata was changed, update the note in cache locally
-      if (hasPropertyChanges) {
-        // Find the current note in cache
-        let note;
-        if (teamPath && teamNotesProvider) {
-          note = teamNotesProvider.findNoteInCache(noteId, teamPath);
-        } else if (myNotesProvider) {
-          note = myNotesProvider.findNoteInCache(noteId);
-        }
-        if (!note && historyProvider) {
-          note = historyProvider.findNoteInCache(noteId);
-        }
-
-        // If we found the note, create an updated version with the changed properties
-        if (note) {
-          const updatedNote = { ...note };
-
-          // Apply the pending changes to the cached note
-          Object.keys(pendingChanges).forEach((key) => {
-            (updatedNote as any)[key] = pendingChanges[key];
-          });
-
-          // Update the note in all relevant caches
-          if (teamPath && teamNotesProvider) {
-            teamNotesProvider.updateNoteInCache(noteId, updatedNote, teamPath);
-          } else if (myNotesProvider) {
-            myNotesProvider.updateNoteInCache(noteId, updatedNote);
-          }
-          if (historyProvider) {
-            historyProvider.updateNoteInCache(noteId, updatedNote);
-          }
-
-          // Update the properties provider with the new note
-          propertiesProvider?.updateNote(updatedNote, noteId, teamPath);
-        }
-
-        // Clear pending property changes after successful save
-        propertiesProvider?.clearPendingChanges();
+        await recordUsage(API.updateNoteContent(noteId, contentString, { unwrapData: false }));
       }
 
       // Don't block here - set up async listener to clear pending state after dirty flag clears
@@ -297,8 +211,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     try {
       const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
 
-      const isOwner = meStore.getState().checkIsOwner(note);
-      const file = new File(note.title || note.shortId || 'Untitled', isOwner);
+      const file = new File(note.title || note.shortId || 'Untitled', true);
       file.data = Buffer.from(note.content);
 
       // TODO: ctime and size

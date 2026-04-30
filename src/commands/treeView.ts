@@ -37,7 +37,6 @@ function isSameNoteUri(uri: vscode.Uri, noteId: string, teamPath?: string | null
 
 /**
  * Check if a note is already open in an editor. If so, switch to it instead of opening a new one.
- * @param note The note object to ensure properties provider is updated
  * @returns true if note was already open (and we switched to it), false if not open
  */
 async function switchToNoteIfAlreadyOpen(note: Note): Promise<boolean> {
@@ -48,11 +47,6 @@ async function switchToNoteIfAlreadyOpen(note: Note): Promise<boolean> {
     if (editor.document.uri.scheme === 'hackmd' && getNoteIdFromFragment(editor.document.uri.fragment) === noteId) {
       // Note is already open, switch to it
       await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
-      // Update properties provider with the note
-      const propertiesProvider = getPropertiesProvider();
-      if (propertiesProvider) {
-        propertiesProvider.updateNote(note, noteId, note.teamPath || null);
-      }
       return true;
     }
   }
@@ -63,11 +57,6 @@ async function switchToNoteIfAlreadyOpen(note: Note): Promise<boolean> {
     if (doc.uri.scheme === 'hackmd' && getNoteIdFromFragment(doc.uri.fragment) === noteId) {
       // Note is open in a background tab, bring it to front
       await vscode.window.showTextDocument(doc, { preview: false });
-      // Update properties provider with the note
-      const propertiesProvider = getPropertiesProvider();
-      if (propertiesProvider) {
-        propertiesProvider.updateNote(note, noteId, note.teamPath || null);
-      }
       return true;
     }
   }
@@ -220,6 +209,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             myNotesProvider?.updateNoteInCache(noteId, updatedNote);
           }
           historyProvider?.updateNoteInCache(noteId, updatedNote);
+          getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote);
 
           // Perform virtual FS rename to move URI identity to the new title path.
           const newUri = generateResourceUri(trimmedNewTitle, noteId, note.teamPath, (note as any).folderPaths);
@@ -374,6 +364,22 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: false });
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.openNoteProperties', async (noteNode: any) => {
+      if (!noteNode || noteNode.type !== 'note') {
+        return;
+      }
+
+      const propertiesProvider = getPropertiesProvider();
+      if (!propertiesProvider) {
+        return;
+      }
+
+      await vscode.commands.executeCommand('hackmd.properties.focus');
+      await propertiesProvider.openNote(noteNode.note, noteNode.note.id, noteNode.note.teamPath || null);
     })
   );
 

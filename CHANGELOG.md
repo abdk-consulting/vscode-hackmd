@@ -30,11 +30,19 @@
   - Moved pending-change warning placement to avoid layout jumps.
 - Updated editable-state logic to distinguish ownership from editability.
   - Team notes are treated as editable for icon/lock rendering.
+- Empty permalink now only blocks saving when the permalink field itself has been modified.
+  - Notes with no original permalink can have other properties saved without setting a permalink.
+- "Properties..." context menu item is now available for all notes, not only owned ones.
+- "Rename" context menu item is now available for all notes, not only owned ones.
+- All notes now open as editable in the editor.
+  - If the backend rejects a save due to permissions, the user sees an error but retains their content.
+- Note Properties panel now automatically updates the displayed title when the note is renamed.
 
 ### Removed
 
 - Removed redundant `viewsWelcome` entries that duplicated API token prompts.
 - Removed publish mode from Note Properties editor.
+- Removed disruptive save/discard/cancel prompt that appeared whenever VS Code lost window focus.
 
 ### Fixed
 
@@ -48,6 +56,10 @@
 - Fixed team note property persistence by keeping content and metadata updates compatible with HackMD APIs.
 - Fixed read-only lock icon regressions by using editability checks in all note trees.
 - Fixed save failures when permalink is empty by omitting empty permalink values from payloads.
+- Fixed low-level HTTP error messages on property save failure; now shows friendly messages for common cases:
+  - 403 → insufficient permissions
+  - 409 → permalink already in use
+  - 400 → invalid permalink format
 
 ### Contributors
 

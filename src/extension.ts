@@ -9,6 +9,7 @@ import * as S from 'string';
 
 import { initializeAPIClient } from './api';
 import { registerCommands } from './commands';
+import { NoteDragAndDropController } from './commands/treeView';
 import { ACCESS_TOKEN_KEY } from './constants';
 import { HistoryProvider } from './historyProvider';
 import { activate as activateFSProvider } from './mdFsProvider';
@@ -286,21 +287,27 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   // Use TreeDataProvider for all views for consistency
+  const dragAndDropController = new NoteDragAndDropController(true);
+  const noDropDragAndDropController = new NoteDragAndDropController(false);
+
   myNotesProvider = new MyNotesProvider(context.extensionPath);
   myNotesTreeView = vscode.window.createTreeView('hackmd.tree.my-notes', {
     treeDataProvider: myNotesProvider,
+    dragAndDropController,
   });
   context.subscriptions.push(myNotesTreeView);
 
   historyProvider = new HistoryProvider(context.extensionPath);
   historyTreeView = vscode.window.createTreeView('hackmd.tree.recent-notes', {
     treeDataProvider: historyProvider,
+    dragAndDropController: noDropDragAndDropController,
   });
   context.subscriptions.push(historyTreeView);
 
   teamNotesProvider = new TeamNotesProvider(context.extensionPath);
   teamNotesTreeView = vscode.window.createTreeView('hackmd.tree.team-notes', {
     treeDataProvider: teamNotesProvider,
+    dragAndDropController,
   });
   context.subscriptions.push(teamNotesTreeView);
 

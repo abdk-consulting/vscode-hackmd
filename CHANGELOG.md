@@ -13,6 +13,10 @@
 - Added duplicate-editor prevention when opening notes from tree commands.
   - If a note is already open, commands switch to the existing editor instead of opening another tab.
 - Added robust note ID normalization from URI fragments in command and FS paths.
+- Added drag-and-drop note move support across tree views using `text/uri-list` payloads with `hackmd:` URIs.
+  - Dragging from Recent Notes to My Notes / Team Notes now works.
+  - Dropping on a note resolves to that note's containing folder.
+  - Invalid drop destinations show a clear warning.
 
 ### Changed
 
@@ -28,12 +32,17 @@
 - Updated Note Properties panel layout to a compact sharing/permissions design.
   - Added share URL copy action and status feedback.
   - Moved pending-change warning placement to avoid layout jumps.
-- Updated editable-state logic to distinguish ownership from editability.
-  - Team notes are treated as editable for icon/lock rendering.
+- Updated permission wording in Note Properties to match HackMD semantics.
+  - Personal notes show `Only me`.
+  - Team notes show `Owners`.
+- Removed owner/non-owner distinctions from tree item context and icon rendering.
+  - Notes now use unified `file` / `file-pending` context values.
+  - Edit authorization is handled by backend APIs.
 - Empty permalink now only blocks saving when the permalink field itself has been modified.
   - Notes with no original permalink can have other properties saved without setting a permalink.
 - "Properties..." context menu item is now available for all notes, not only owned ones.
 - "Rename" context menu item is now available for all notes, not only owned ones.
+- "Delete Note" context menu item is now available for all notes, not only owned ones.
 - Added "Move to..." note action in tree context menu for My Notes and Team Notes.
   - Destination picker is built from the already loaded tree/folder cache (no backend folder fetch).
   - The current location is excluded from the destination list.
@@ -43,6 +52,7 @@
 - All notes now open as editable in the editor.
   - If the backend rejects a save due to permissions, the user sees an error but retains their content.
 - Note Properties panel now automatically updates the displayed title when the note is renamed.
+- Recent Notes is drag-only (not a drop target) to prevent misleading drop highlighting.
 
 ### Removed
 
@@ -69,6 +79,7 @@
 - Fixed delay before opening the team-note Move-to picker by avoiding subtree traversal that could trigger async loads.
 - Fixed intermittent loss of selection after moving notes by preventing overlapping/late tree refreshes after reveal.
 - Fixed Move-to empty-state UX by showing clear messages when there are no valid destination folders.
+- Fixed Recent Notes spinner not clearing after successful move operations.
 
 ### Contributors
 

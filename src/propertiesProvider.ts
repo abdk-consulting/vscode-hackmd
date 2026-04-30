@@ -704,7 +704,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           <div class="permission-row">
             <label for="readPermission">Read</label>
             <select id="readPermission" \${isSaving ? 'disabled' : ''}>
-              <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>Only me</option>
+              <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>\${currentNote.teamPath ? 'Owners' : 'Only me'}</option>
               <option value="signed_in" \${readPermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
               <option value="guest" \${readPermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
             </select>
@@ -713,7 +713,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           <div class="permission-row">
             <label for="writePermission">Write</label>
             <select id="writePermission" \${isSaving ? 'disabled' : ''}>
-              <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>Only me</option>
+              <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>\${currentNote.teamPath ? 'Owners' : 'Only me'}</option>
               <option value="signed_in" \${writePermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
               <option value="guest" \${writePermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
             </select>

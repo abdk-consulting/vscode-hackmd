@@ -25,7 +25,6 @@ export const teamNotesStore = createStore<TeamNoteState>()((set) => ({
 type UserState = {
   user: Awaited<ReturnType<typeof API.getMe>>;
   refreshLogin: () => Promise<void>;
-  checkIsOwner: (note: Note) => boolean;
   checkCanEdit: (note: Note) => boolean;
 };
 
@@ -35,20 +34,9 @@ export const meStore = createStore<UserState>()((set) => ({
     const currentUser = await recordUsage(API.getMe({ unwrapData: false }));
     set({ user: currentUser });
   },
-  checkIsOwner: (note: Note) => {
-    const user = meStore.getState().user;
-    // Ownership is based on the note owner path.
-    return !!(user && note.userPath === user.userPath);
-  },
-  checkCanEdit: (note: Note) => {
-    // Team notes are editable by team members; personal notes require ownership if owner-only.
-    if (note.teamPath) {
-      // Team note: editable for team members (server enforces permissions)
-      return true;
-    }
-    // Personal note: editable if not owner-only, or if user is the owner
-    const isOwner = meStore.getState().checkIsOwner(note);
-    return note.writePermission !== 'owner' || isOwner;
+  checkCanEdit: (_note: Note) => {
+    // Always allow edit actions client-side and rely on backend authorization.
+    return true;
   },
 }));
 

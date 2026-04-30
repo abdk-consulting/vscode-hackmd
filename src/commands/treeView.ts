@@ -105,6 +105,353 @@ interface MoveTargetQuickPickItem extends vscode.QuickPickItem {
   folderPaths: any[];
 }
 
+const NOTE_DRAG_MIME_TYPE = 'text/uri-list';
+
+/**
+ * Shared implementation for moving a note to a specific folder.
+ * Used by both the "Move to..." command and the drag-and-drop controller.
+ */
+async function performMove(note: Note, targetFolderId: string, targetFolderPaths: any[]): Promise<void> {
+  const myProv = getMyNotesProvider();
+  const teamProv = getTeamNotesProvider();
+  const histProv = getHistoryProvider();
+  const treeView = note.teamPath ? getTeamNotesTreeView() : getMyNotesTreeView();
+  const noteId = note.id;
+  const teamPath = note.teamPath;
+  let pendingCleared = false;
+
+  if (teamPath) {
+    teamProv?.setPendingNote(noteId, note);
+  } else {
+    myProv?.setPendingNote(noteId, note);
+  }
+  histProv?.setPendingNote(noteId, note);
+
+  let noteForClear: Note = note;
+
+  try {
+    const payload = { parentFolderId: targetFolderId };
+    if (teamPath) {
+      await recordUsage(API.updateTeamNote(teamPath, noteId, payload));
+    } else {
+      await recordUsage(API.updateNote(noteId, payload, { unwrapData: false }));
+    }
+
+    const updatedNote = { ...note, parentFolderId: targetFolderId, folderPaths: targetFolderPaths } as Note;
+    noteForClear = updatedNote;
+
+    // 1) Clear pending state without emitting refresh events.
+    if (teamPath) {
+      teamProv?.clearPendingNote(noteId, noteForClear, false);
+    } else {
+      myProv?.clearPendingNote(noteId, noteForClear, false);
+    }
+    histProv?.clearPendingNote(noteId, noteForClear, false);
+    pendingCleared = true;
+
+    // 2) Update tree model without emitting refresh events.
+    const oldNote = teamPath
+      ? teamProv?.updateNoteInCache(noteId, updatedNote, teamPath, false)
+      : myProv?.updateNoteInCache(noteId, updatedNote, false);
+    // Emit update for Recent Notes (if this note is shown there) to clear spinner.
+    histProv?.updateNoteInCache(noteId, updatedNote, true);
+
+    // 3) Emit deduplicated tree change events for old/new containers.
+    if (teamPath) {
+      if (oldNote) teamProv?.emitMoveChangeEvents(oldNote, updatedNote);
+    } else {
+      if (oldNote) myProv?.emitMoveChangeEvents(oldNote, updatedNote);
+    }
+    getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote);
+
+    // 4) Reveal + select moved note at the new location.
+    await revealNote(treeView, { type: 'note', note: updatedNote });
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`Failed to move note: ${error.message || 'Unknown error'}`);
+  } finally {
+    if (!pendingCleared) {
+      if (teamPath) {
+        teamProv?.clearPendingNote(noteId, noteForClear);
+      } else {
+        myProv?.clearPendingNote(noteId, noteForClear);
+      }
+      histProv?.clearPendingNote(noteId, noteForClear);
+    }
+  }
+}
+
+interface ResolvedDropContainer {
+  teamPath: string | null;
+  folderId: string | null;
+  folderPaths: any[];
+}
+
+function getNoteFolderId(note: Note): string | null {
+  if (note.folderPaths && note.folderPaths.length > 0) {
+    return note.folderPaths[note.folderPaths.length - 1].id;
+  }
+
+  return ((note as any).parentFolderId as string | null | undefined) ?? null;
+}
+
+function getFolderPathsForContainer(teamPath: string | null, folderId: string | null): any[] {
+  if (!folderId) {
+    return [];
+  }
+
+  if (teamPath) {
+    const teamProv = getTeamNotesProvider();
+    const targets = teamProv?.getMoveFolderTargetsFromCache(teamPath) || [];
+    return targets.find((t) => t.folderId === folderId)?.folderPaths ?? [];
+  }
+
+  const myProv = getMyNotesProvider();
+  const targets = myProv?.getMoveFolderTargetsFromCache() || [];
+  return targets.find((t) => t.folderId === folderId)?.folderPaths ?? [];
+}
+
+function hydrateDraggedNote(note: Note): Note {
+  const noteId = note.id;
+  const noteTeamPath: string | null = ((note as any).teamPath as string | null | undefined) ?? null;
+  const myProv = getMyNotesProvider();
+  const teamProv = getTeamNotesProvider();
+  const historyProv = getHistoryProvider();
+
+  const cached = noteTeamPath
+    ? (teamProv?.findNoteInCache(noteId, noteTeamPath) || historyProv?.findNoteInCache(noteId))
+    : (myProv?.findNoteInCache(noteId) || teamProv?.findNoteInCache(noteId) || historyProv?.findNoteInCache(noteId));
+
+  if (!cached) {
+    return note;
+  }
+
+  return {
+    ...cached,
+    ...note,
+    teamPath: ((note as any).teamPath ?? (cached as any).teamPath),
+    folderPaths: (note.folderPaths && note.folderPaths.length > 0)
+      ? note.folderPaths
+      : ((cached as any).folderPaths || []),
+  } as Note;
+}
+
+function normalizeDraggedNotes(raw: any): Note[] {
+  if (raw && Array.isArray(raw.notes)) {
+    return normalizeDraggedNotes(raw.notes);
+  }
+
+  if (raw && Array.isArray(raw.items)) {
+    return normalizeDraggedNotes(raw.items);
+  }
+
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const notes: Note[] = [];
+
+  for (const entry of raw) {
+    if (!entry) {
+      continue;
+    }
+
+    // Custom payload stores Note objects directly.
+    if (entry.id) {
+      notes.push(entry as Note);
+      continue;
+    }
+
+    // Built-in tree payload usually stores serialized tree nodes.
+    if (entry.type === 'note' && entry.note?.id) {
+      notes.push(entry.note as Note);
+      continue;
+    }
+  }
+
+  return notes;
+}
+
+async function getDraggedNotesFromDataTransfer(dataTransfer: vscode.DataTransfer): Promise<Note[]> {
+  const preferred = dataTransfer.get(NOTE_DRAG_MIME_TYPE);
+  if (!preferred) {
+    return [];
+  }
+
+  const raw = await preferred.asString();
+
+  if (preferred) {
+    try {
+      const uriList = raw
+        .split(/\r\n|\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'));
+
+      const notes: Note[] = [];
+      for (const uriText of uriList) {
+        try {
+          const uri = vscode.Uri.parse(uriText);
+          if (uri.scheme !== 'hackmd') {
+            continue;
+          }
+
+          const noteId = getNoteIdFromFragment(uri.fragment);
+          if (!noteId) {
+            continue;
+          }
+
+          notes.push({
+            id: noteId,
+            teamPath: getTeamPathFromUri(uri),
+            folderPaths: [],
+          } as Note);
+        } catch {
+          // Skip malformed URI entries.
+        }
+      }
+
+      if (notes.length > 0) {
+        return notes;
+      }
+    } catch {
+      // No valid payload.
+    }
+  }
+
+  return [];
+}
+
+function resolveDropContainer(target: any | undefined): ResolvedDropContainer | null {
+  if (!target) {
+    return null;
+  }
+
+  if (target.type === 'folder') {
+    const teamPath = target.teamPath ?? null;
+    const folderPaths = getFolderPathsForContainer(teamPath, target.id);
+
+    return {
+      teamPath,
+      folderId: target.id,
+      folderPaths,
+    };
+  }
+
+  if (target.type === 'note') {
+    const note = hydrateDraggedNote(target.note as Note);
+    const folderId = getNoteFolderId(note);
+    return {
+      teamPath: ((note as any).teamPath as string | null | undefined) ?? null,
+      folderId,
+      folderPaths: (note.folderPaths && note.folderPaths.length > 0)
+        ? note.folderPaths
+        : getFolderPathsForContainer((((note as any).teamPath as string | null | undefined) ?? null), folderId),
+    };
+  }
+
+  if (target.type === 'team') {
+    return {
+      teamPath: target.team?.path ?? null,
+      folderId: null,
+      folderPaths: [],
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Drag-and-drop controller shared by all HackMD tree views.
+ * Only note nodes are draggable. Drops on notes resolve to that note's container.
+ */
+export class NoteDragAndDropController implements vscode.TreeDragAndDropController<any> {
+  readonly dragMimeTypes = [NOTE_DRAG_MIME_TYPE];
+  readonly dropMimeTypes: string[];
+
+  constructor(allowDrops = true) {
+    this.dropMimeTypes = allowDrops ? [NOTE_DRAG_MIME_TYPE] : [];
+  }
+
+  handleDrag(source: any[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
+    // Strictly reject drag if any selected item is not a note.
+    if (source.length === 0 || source.some((node) => node.type !== 'note')) {
+      return;
+    }
+
+    const notes = source.map((node) => node.note);
+
+    const uriList = notes
+      .map((note) => {
+        const label = note.title || note.shortId || 'Untitled';
+        return generateResourceUri(label, note.id, note.teamPath, (note as any).folderPaths).toString();
+      })
+      .join('\r\n');
+
+    dataTransfer.set(NOTE_DRAG_MIME_TYPE, new vscode.DataTransferItem(uriList));
+  }
+
+  async handleDrop(target: any | undefined, dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
+    const warnCannotMove = (reason: string, details?: Record<string, unknown>) => {
+      vscode.window.showWarningMessage('This note cannot be moved here.');
+    };
+
+    const draggedNotes = await getDraggedNotesFromDataTransfer(dataTransfer);
+    if (draggedNotes.length === 0) {
+      warnCannotMove('no-dragged-notes-extracted');
+      return;
+    }
+
+    const resolvedTarget = resolveDropContainer(target);
+    if (!resolvedTarget) {
+      warnCannotMove('target-could-not-be-resolved', {
+        draggedNoteIds: draggedNotes.map((n) => n.id),
+      });
+      return;
+    }
+
+    for (const dragged of draggedNotes) {
+      const hydrated = hydrateDraggedNote(dragged);
+      // Recent Notes payloads may omit teamPath. In that case, infer scope from the
+      // drop target so valid moves are attempted and backend authorization decides.
+      const note = (((hydrated as any).teamPath as string | null | undefined) === undefined || ((hydrated as any).teamPath as string | null | undefined) === null)
+        ? ({ ...hydrated, teamPath: resolvedTarget.teamPath } as Note)
+        : hydrated;
+      const noteTeamPath: string | null = ((note as any).teamPath as string | null | undefined) ?? null;
+      const currentFolderId = getNoteFolderId(note);
+
+      // Reject cross-scope drops (personal ↔ team, or different teams).
+      if (noteTeamPath !== resolvedTarget.teamPath) {
+        warnCannotMove('scope-mismatch', {
+          noteId: note.id,
+          noteTeamPath: noteTeamPath ?? 'personal',
+          targetTeamPath: resolvedTarget.teamPath ?? 'personal',
+        });
+        continue;
+      }
+
+      // If this note is already in the resolved container, do nothing.
+      if (currentFolderId === resolvedTarget.folderId) {
+        continue;
+      }
+
+      // Moving to root containers is not currently supported by HackMD API behavior.
+      if (!resolvedTarget.folderId) {
+        warnCannotMove('root-target-not-supported', {
+          noteId: note.id,
+          noteTeamPath: noteTeamPath ?? 'personal',
+        });
+        continue;
+      }
+
+      const canProceed = await closeOpenEditorsForNote(note);
+      if (!canProceed) {
+        continue;
+      }
+
+      await performMove(note, resolvedTarget.folderId, resolvedTarget.folderPaths);
+    }
+  }
+}
+
 export async function registerTreeViewCommands(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.refreshMyNotes', async () => {
@@ -309,78 +656,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         return;
       }
 
-      const historyProvider = getHistoryProvider();
-
-      const noteId = note.id;
-      const teamPath = note.teamPath;
-      let pendingCleared = false;
-
-      if (teamPath) {
-        teamNotesProvider?.setPendingNote(noteId, note);
-      } else {
-        myNotesProvider?.setPendingNote(noteId, note);
-      }
-      historyProvider?.setPendingNote(noteId, note);
-
-      let noteForClear: Note = note;
-
-      try {
-        const payload = { parentFolderId: selected.folderId };
-
-        if (teamPath) {
-          await recordUsage(API.updateTeamNote(teamPath, noteId, payload));
-        } else {
-          await recordUsage(API.updateNote(noteId, payload, { unwrapData: false }));
-        }
-
-        const updatedNote = {
-          ...note,
-          parentFolderId: selected.folderId,
-          folderPaths: selected.folderPaths,
-        } as Note;
-        noteForClear = updatedNote;
-
-        // 1) Clear pending state without emitting refresh events.
-        if (teamPath) {
-          teamNotesProvider?.clearPendingNote(noteId, noteForClear, false);
-        } else {
-          myNotesProvider?.clearPendingNote(noteId, noteForClear, false);
-        }
-        historyProvider?.clearPendingNote(noteId, noteForClear, false);
-        pendingCleared = true;
-
-        // 2) Update tree model without emitting refresh events.
-        const oldNote = teamPath
-          ? teamNotesProvider?.updateNoteInCache(noteId, updatedNote, teamPath, false)
-          : myNotesProvider?.updateNoteInCache(noteId, updatedNote, false);
-        historyProvider?.updateNoteInCache(noteId, updatedNote, false);
-
-        // 3) Emit deduplicated tree change events for old/new containers.
-        if (teamPath) {
-          if (oldNote) {
-            teamNotesProvider?.emitMoveChangeEvents(oldNote, updatedNote);
-          }
-        } else {
-          if (oldNote) {
-            myNotesProvider?.emitMoveChangeEvents(oldNote, updatedNote);
-          }
-        }
-        getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote);
-
-        // 4) Reveal + select moved note at the new location.
-        await revealNote(treeView, { type: 'note', note: updatedNote });
-      } catch (error: any) {
-        vscode.window.showErrorMessage(`Failed to move note: ${error.message || 'Unknown error'}`);
-      } finally {
-        if (!pendingCleared) {
-          if (teamPath) {
-            teamNotesProvider?.clearPendingNote(noteId, noteForClear);
-          } else {
-            myNotesProvider?.clearPendingNote(noteId, noteForClear);
-          }
-          historyProvider?.clearPendingNote(noteId, noteForClear);
-        }
-      }
+      await performMove(note, selected.folderId, selected.folderPaths);
     })
   );
 

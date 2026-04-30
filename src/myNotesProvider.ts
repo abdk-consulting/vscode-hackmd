@@ -1,13 +1,12 @@
 import { Note } from '@hackmd/api/dist/type';
 import * as vscode from 'vscode';
 import { API } from './api';
-import { meStore, recordUsage } from './store';
+import { recordUsage } from './store';
 
 // Cache ThemeIcon instances to prevent layout shifts during updates
 const ICON_FOLDER = new vscode.ThemeIcon('folder');
 const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
 const ICON_FILE = new vscode.ThemeIcon('file');
-const ICON_LOCK = new vscode.ThemeIcon('lock');
 
 type TreeNode = FolderNode | NoteNode | PlaceholderNode;
 
@@ -508,23 +507,17 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     // Store note ID for commands
     (item as any).noteId = note.id;
 
-    // Set icon and context based on ownership
-    const isOwner = meStore.getState().checkIsOwner(note);
-    const canEdit = meStore.getState().checkCanEdit(note);
-
     if (isPending) {
-      item.contextValue = isOwner ? 'file-owned-pending' : 'file-pending';
+      item.contextValue = 'file-pending';
     } else {
-      item.contextValue = isOwner ? 'file-owned' : 'file';
+      item.contextValue = 'file';
     }
 
     // Set icon - spinner when pending, otherwise file icon
     if (isPending) {
       item.iconPath = ICON_SPINNER;
-    } else if (canEdit) {
-      item.iconPath = ICON_FILE;
     } else {
-      item.iconPath = ICON_LOCK;
+      item.iconPath = ICON_FILE;
     }
 
     return item;

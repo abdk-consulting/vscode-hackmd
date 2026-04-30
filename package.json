@@ -137,6 +137,15 @@
         }
       },
       {
+        "command": "treeView.refreshSelectedTeam",
+        "title": "Refresh Team",
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/sync.svg",
+          "dark": "images/icon/dark/sync.svg"
+        }
+      },
+      {
         "command": "HackMD.folder.createNote",
         "title": "Create Note in Folder",
         "category": "HackMD",
@@ -326,12 +335,17 @@
         },
         {
           "command": "HackMD.team.createNote",
-          "when": "view == hackmd.tree.team-notes && viewItem == team",
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "inline@1"
         },
         {
           "command": "HackMD.team.createNote",
-          "when": "view == hackmd.tree.team-notes && viewItem == team"
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)"
+        },
+        {
+          "command": "treeView.refreshSelectedTeam",
+          "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
+          "group": "inline@2"
         }
       ]
     }

@@ -6,6 +6,16 @@
 
 ### Added
 
+- Added per-team inline Refresh button in Team Notes tree view, visible after a team's notes have been loaded.
+  - Refresh keeps stale children visible during the background fetch and replaces them atomically on completion.
+  - The team row shows a spinner while the refresh is in progress.
+- Added progress indicator in My Notes tree view header while a new note is being created.
+- Team notes now load in the background on first expand.
+  - The team row shows a spinner and a "Loading notes..." placeholder until the initial fetch completes.
+  - Global tree-view progress bar is no longer shown during team note loading.
+
+### Added (previously unreleased)
+
 - Added Note Properties sidebar panel (`hackmd.properties`) for currently open notes.
   - Editable fields: publish type, permalink, read permission, write permission.
   - Property edits mark the editor dirty and are saved with normal note save.

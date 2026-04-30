@@ -49,6 +49,8 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private teamFoldersCache = new Map<string, Map<string, FolderNode>>();
   // Cache team node objects to maintain stable references for change events
   private teamNodesCache = new Map<string, TeamNode>();
+  // Track in-flight async team loads to avoid duplicate requests
+  private loadingTeams = new Set<string>();
   // Track pending operations
   private pendingNotes = new Set<string>(); // Note IDs being opened/deleted/saved
   private pendingContainers = new Set<string>(); // Folder/team IDs where notes are being created
@@ -73,18 +75,44 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     if (element.type === 'folder') {
       const teamId = this.getTeamIdFromPath(element.teamPath);
       if (teamId) {
-        this.teamNotesCache.delete(teamId);
-        // Find the team node and fire refresh for it
+        // Keep stale cache visible while fresh data loads; clear it atomically on completion.
         const teamNode = this.teamNodesCache.get(teamId);
         if (teamNode) {
-          this._onDidChangeTreeData.fire(teamNode);
+          this.loadTeamNotesInBackground(teamNode, true);
           return;
         }
       }
     } else if (element.type === 'team') {
-      this.teamNotesCache.delete(element.team.id);
-      this._onDidChangeTreeData.fire(element);
+      // Keep stale cache visible while fresh data loads; clear it atomically on completion.
+      this.loadTeamNotesInBackground(element, true);
     }
+  }
+
+  private loadTeamNotesInBackground(teamNode: TeamNode, forceRefresh = false): void {
+    const teamId = teamNode.team.id;
+    if (this.loadingTeams.has(teamId)) {
+      return;
+    }
+
+    this.loadingTeams.add(teamId);
+    this.setPendingContainer(`team-${teamId}`);
+
+    void (async () => {
+      try {
+        const notes = await recordUsage(API.getTeamNotes(teamNode.team.path, { unwrapData: false }));
+        // On a forced refresh, clear the stale folder cache atomically before updating notes.
+        if (forceRefresh) {
+          this.teamFoldersCache.delete(teamId);
+        }
+        this.teamNotesCache.set(teamId, notes);
+      } catch (error) {
+        // Keep cache as-is on error so old children remain visible.
+      } finally {
+        this.loadingTeams.delete(teamId);
+        this.clearPendingContainer(`team-${teamId}`);
+        this._onDidChangeTreeData.fire(teamNode);
+      }
+    })();
   }
 
   async addNoteToCache(note: Note, teamPath: string): Promise<NoteNode | undefined> {
@@ -675,28 +703,25 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   private async getTeamChildren(teamNode: TeamNode): Promise<TreeNode[]> {
-    try {
-      // Lazy load - only fetch notes when team is expanded
-      let notes = this.teamNotesCache.get(teamNode.team.id);
-      if (!notes) {
-        notes = await recordUsage(API.getTeamNotes(teamNode.team.path, { unwrapData: false }));
-        this.teamNotesCache.set(teamNode.team.id, notes);
-      }
-
-      if (notes.length === 0) {
-        return [{ type: 'placeholder', message: 'No notes' }];
-      }
-
-      const { rootFolders, rootNotes } = this.organizeNotesIntoFolders(notes, teamNode.team.id);
-
-      const children: TreeNode[] = [];
-      children.push(...rootFolders);
-      children.push(...rootNotes.map(note => ({ type: 'note' as const, note })));
-
-      return children;
-    } catch (error) {
-      return [{ type: 'placeholder', message: `Error loading notes: ${error.message}` }];
+    // Return quickly and load notes in background to avoid global tree-view progress
+    // bar; the team row spinner indicates pending state.
+    let notes = this.teamNotesCache.get(teamNode.team.id);
+    if (!notes) {
+      this.loadTeamNotesInBackground(teamNode);
+      return [{ type: 'placeholder', message: 'Loading notes...' }];
     }
+
+    if (notes.length === 0) {
+      return [{ type: 'placeholder', message: 'No notes' }];
+    }
+
+    const { rootFolders, rootNotes } = this.organizeNotesIntoFolders(notes, teamNode.team.id);
+
+    const children: TreeNode[] = [];
+    children.push(...rootFolders);
+    children.push(...rootNotes.map(note => ({ type: 'note' as const, note })));
+
+    return children;
   }
 
   private getFolderChildren(folderNode: FolderNode): TreeNode[] {
@@ -710,7 +735,12 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(teamNode.team.name, vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `team-${teamNode.team.id}`; // Stable ID for VS Code to track this item
     const isPending = this.pendingContainers.has(`team-${teamNode.team.id}`);
-    item.contextValue = isPending ? 'team-pending' : 'team';
+    const isLoaded = this.teamNotesCache.has(teamNode.team.id);
+    if (isPending) {
+      item.contextValue = isLoaded ? 'team-loaded-pending' : 'team-pending';
+    } else {
+      item.contextValue = isLoaded ? 'team-loaded' : 'team';
+    }
 
     // Set icon - spinner when pending, otherwise team icon
     if (isPending) {

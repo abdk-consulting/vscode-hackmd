@@ -481,6 +481,26 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('treeView.refreshSelectedTeam', async (node: any) => {
+      if (!node || node.type !== 'team') {
+        return;
+      }
+
+      const provider = getTeamNotesProvider();
+      if (!provider) {
+        return;
+      }
+
+      const teamId = node.team?.id as string | undefined;
+      if (!teamId || !provider.isTeamNotesCached(teamId)) {
+        return;
+      }
+
+      provider.refreshElement(node);
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('treeView.createMyNotes', async () => {
       const provider = getMyNotesProvider();
 
@@ -488,16 +508,24 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       provider?.setPendingContainer('root');
 
       try {
-        const note = await recordUsage(API.createNote({}, { unwrapData: false }));
+        await vscode.window.withProgress(
+          {
+            location: { viewId: 'hackmd.tree.my-notes' },
+            title: 'Creating note...',
+          },
+          async () => {
+            const note = await recordUsage(API.createNote({}, { unwrapData: false }));
 
-        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preview: false });
+            const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+            const doc = await vscode.workspace.openTextDocument(uri);
+            await vscode.window.showTextDocument(doc, { preview: false });
 
-        if (provider) {
-          const noteNode = await provider.addNoteToCache(note);
-          await revealNote(getMyNotesTreeView(), noteNode);
-        }
+            if (provider) {
+              const noteNode = await provider.addNoteToCache(note);
+              await revealNote(getMyNotesTreeView(), noteNode);
+            }
+          }
+        );
       } finally {
         // Clear pending state
         provider?.clearPendingContainer('root');

@@ -953,7 +953,12 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           return [{ type: 'placeholder', message: 'No teams' }];
         }
         // Return cached team nodes to maintain stable object references
-        return this.teams.map(team => {
+        const cmpStr = (a: string, b: string) => {
+          const ci = a.localeCompare(b, undefined, { sensitivity: 'base' });
+          return ci !== 0 ? ci : a.localeCompare(b);
+        };
+        const sortedTeams = [...this.teams].sort((a, b) => cmpStr(a.name, b.name));
+        return sortedTeams.map(team => {
           let teamNode = this.teamNodesCache.get(team.id);
           if (!teamNode) {
             teamNode = { type: 'team', team };
@@ -1339,6 +1344,18 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       ![...oldRootNoteIds].every(id => newRootNoteIds.has(id)) ||
       // Also check if root folders changed (this happens when folders are added/removed)
       rootFolders.length !== oldRootFoldersCount;
+
+    // Sort alphabetically: case-insensitive primary, case-sensitive tiebreaker
+    const cmpStr = (a: string, b: string) => {
+      const ci = a.localeCompare(b, undefined, { sensitivity: 'base' });
+      return ci !== 0 ? ci : a.localeCompare(b);
+    };
+    rootFolders.sort((a, b) => cmpStr(a.name, b.name));
+    rootNotes.sort((a, b) => cmpStr(a.title || '', b.title || ''));
+    for (const folder of folderCache.values()) {
+      folder.children.sort((a, b) => cmpStr(a.name, b.name));
+      folder.notes.sort((a, b) => cmpStr(a.title || '', b.title || ''));
+    }
 
     return { rootFolders, rootNotes, changedFolders, teamRootChanged };
   }

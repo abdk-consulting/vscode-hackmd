@@ -18,6 +18,7 @@
 
 - Added progress indicator in My Notes and Team Notes tree view headers while a folder is being created at root level, matching note-creation UX.
 - Added spinner on folders during drag-and-drop and command-based move operations, matching the note-drag pending-state behavior.
+- Notes and folders in the My Notes and Team Notes trees are now sorted alphabetically. Within each container, folders appear first (sorted by name), followed by notes (sorted by title). Sorting is case-insensitive, with a case-sensitive tiebreaker when names differ only in case. Team workspaces at the root of Team Notes are also sorted by name.
 
 ### Changed
 

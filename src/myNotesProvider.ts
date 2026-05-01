@@ -951,6 +951,18 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       // Also check if root folders changed (this happens when folders are added/removed)
       rootFolders.length !== oldRootFoldersCount;
 
+    // Sort alphabetically: case-insensitive primary, case-sensitive tiebreaker
+    const cmpStr = (a: string, b: string) => {
+      const ci = a.localeCompare(b, undefined, { sensitivity: 'base' });
+      return ci !== 0 ? ci : a.localeCompare(b);
+    };
+    rootFolders.sort((a, b) => cmpStr(a.name, b.name));
+    rootNotes.sort((a, b) => cmpStr(a.title || '', b.title || ''));
+    for (const folder of this.foldersCache.values()) {
+      folder.children.sort((a, b) => cmpStr(a.name, b.name));
+      folder.notes.sort((a, b) => cmpStr(a.title || '', b.title || ''));
+    }
+
     return { rootFolders, rootNotes, changedFolders, rootChanged };
   }
 }

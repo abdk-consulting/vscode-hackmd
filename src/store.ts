@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 
-import { Note } from '@hackmd/api/dist/type';
 import type { AxiosResponse } from 'axios';
 import { createStore } from 'zustand/vanilla';
 
@@ -17,7 +16,7 @@ type TeamNoteState = {
   setSelectedTeamId: (id: string) => void;
 };
 
-export const teamNotesStore = createStore<TeamNoteState>()((set) => ({
+export const teamNotesStore = createStore<TeamNoteState>((set) => ({
   selectedTeamId: null,
   setSelectedTeamId: (selectedTeamId: string) => set({ selectedTeamId }),
 }));
@@ -25,18 +24,13 @@ export const teamNotesStore = createStore<TeamNoteState>()((set) => ({
 type UserState = {
   user: Awaited<ReturnType<typeof API.getMe>>;
   refreshLogin: () => Promise<void>;
-  checkCanEdit: (note: Note) => boolean;
 };
 
-export const meStore = createStore<UserState>()((set) => ({
+export const meStore = createStore<UserState>((set) => ({
   user: null,
   refreshLogin: async () => {
     const currentUser = await recordUsage(API.getMe({ unwrapData: false }));
     set({ user: currentUser });
-  },
-  checkCanEdit: (_note: Note) => {
-    // Always allow edit actions client-side and rely on backend authorization.
-    return true;
   },
 }));
 
@@ -57,7 +51,7 @@ type APIUsageState = {
   updateTeamUsageLimitRecord: (teamId: string, limit: number, remaining: number) => void;
 };
 
-export const apiStore = createStore<APIUsageState>()((set) => ({
+export const apiStore = createStore<APIUsageState>((set) => ({
   userRecord: {
     limit: null,
     remaining: null,

@@ -4,6 +4,15 @@
 
 ## Recent Changes (Unreleased)
 
+### Chores
+
+- Upgraded ESLint to `^10.2.1` and migrated lint configuration from legacy `.eslintrc.js` to ESLint flat config (`eslint.config.js`).
+  - Removed `eslint-plugin-import` and `eslint-import-resolver-typescript` (incompatible with ESLint 10 peer requirements).
+- Upgraded TypeScript to `^6.0.3`.
+- Upgraded `glob` to `^13.0.6` and migrated call sites to the async Promise API.
+- Upgraded `jquery` to `^4.0.0` and `@types/jquery` to `^4.0.0`.
+- Upgraded `imports-loader` to `^5.0.0`.
+
 ### Added
 
 - Added progress indicator in My Notes and Team Notes tree view headers while a folder is being created at root level, matching note-creation UX.

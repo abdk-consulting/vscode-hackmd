@@ -7,6 +7,7 @@ import { Note, Team } from '@hackmd/api/dist/type';
 import { getHistoryProvider, getHistoryTreeView, getMyNotesProvider, getMyNotesTreeView, getPropertiesProvider, getTeamNotesProvider, getTeamNotesTreeView } from '../extension';
 import { generateFolderResourceUri, generateResourceUri } from '../mdFsProvider';
 import { recordUsage, teamNotesStore } from '../store';
+
 import { API } from './../api';
 
 function unwrapApiData<T>(responseOrData: any): T {
@@ -1076,7 +1077,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
   }
 
   async handleDrop(target: any | undefined, dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
-    const warnCannotMove = (reason: string, details?: Record<string, unknown>) => {
+    const warnCannotMove = () => {
       vscode.window.showWarningMessage('This note cannot be moved here.');
     };
 
@@ -1117,15 +1118,13 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
     const draggedNotes = await getDraggedNotesFromDataTransfer(dataTransfer);
     if (draggedNotes.length === 0) {
-      warnCannotMove('no-dragged-notes-extracted');
+      warnCannotMove();
       return;
     }
 
     const resolvedTarget = resolveDropContainer(target);
     if (!resolvedTarget) {
-      warnCannotMove('target-could-not-be-resolved', {
-        draggedNoteIds: draggedNotes.map((n) => n.id),
-      });
+      warnCannotMove();
       return;
     }
 
@@ -1143,11 +1142,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
       // Reject cross-scope drops (personal ↔ team, or different teams).
       if (noteTeamPath !== resolvedTarget.teamPath) {
-        warnCannotMove('scope-mismatch', {
-          noteId: note.id,
-          noteTeamPath: noteTeamPath ?? 'personal',
-          targetTeamPath: resolvedTarget.teamPath ?? 'personal',
-        });
+        warnCannotMove();
         continue;
       }
 
@@ -1158,10 +1153,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
       // Moving to root containers is not currently supported by HackMD API behavior.
       if (!resolvedTarget.folderId) {
-        warnCannotMove('root-target-not-supported', {
-          noteId: note.id,
-          noteTeamPath: noteTeamPath ?? 'personal',
-        });
+        warnCannotMove();
         continue;
       }
 

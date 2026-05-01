@@ -46,9 +46,6 @@ const extensionConfig = {
     ],
   },
   plugins: [
-    new webpack.ProvidePlugin({
-      React: 'react',
-    }),
     new CleanWebpackPlugin(),
   ],
   performance: {

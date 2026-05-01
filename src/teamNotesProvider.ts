@@ -1,5 +1,7 @@
-import { Note, Team } from '@hackmd/api/dist/type';
 import * as vscode from 'vscode';
+
+import { Note, Team } from '@hackmd/api/dist/type';
+
 import { API } from './api';
 import { recordUsage } from './store';
 

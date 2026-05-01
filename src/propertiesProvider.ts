@@ -1,5 +1,7 @@
-import { Note, NotePublishType } from '@hackmd/api/dist/type';
 import * as vscode from 'vscode';
+
+import { Note, NotePublishType } from '@hackmd/api/dist/type';
+
 import { API } from './api';
 import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
 import { recordUsage } from './store';

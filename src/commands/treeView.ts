@@ -430,7 +430,7 @@ async function performMove(note: Note, targetFolderId: string, targetFolderPaths
   try {
     const payload = { parentFolderId: targetFolderId };
     if (teamPath) {
-      await recordUsage(API.updateTeamNote(teamPath, noteId, payload));
+      await recordUsage(API.updateTeamNote(teamPath, noteId, payload, { unwrapData: false }));
     } else {
       await recordUsage(API.updateNote(noteId, payload, { unwrapData: false }));
     }

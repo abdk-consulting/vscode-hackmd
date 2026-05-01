@@ -152,7 +152,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
       // Use appropriate API method based on teamPath
       if (teamPath) {
-        await recordUsage(API.updateTeamNote(teamPath, noteId, { content: contentString }));
+        await recordUsage(API.updateTeamNote(teamPath, noteId, { content: contentString }, { unwrapData: false }));
       } else {
         await recordUsage(API.updateNoteContent(noteId, contentString, { unwrapData: false }));
       }

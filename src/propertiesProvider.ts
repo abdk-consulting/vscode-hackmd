@@ -235,7 +235,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       }
 
       if (teamPath) {
-        await recordUsage(API.updateTeamNote(teamPath, noteId, payload as any));
+        await recordUsage(API.updateTeamNote(teamPath, noteId, payload as any, { unwrapData: false }));
       } else {
         await recordUsage(API.updateNote(noteId, payload as any, { unwrapData: false }));
       }

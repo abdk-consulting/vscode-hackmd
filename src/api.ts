@@ -1,11 +1,10 @@
 import * as vscode from 'vscode';
 
-import ApiClient from '@hackmd/api';
-
 import { ACCESS_TOKEN_KEY } from './constants';
+import { HackMdApiClient } from './hackmdApiClient';
 import { meStore } from './store';
 
-let API: ApiClient;
+let API: HackMdApiClient;
 
 export async function initializeAPIClient(context: vscode.ExtensionContext, forceShowInputBox = false) {
   let accessToken = await context.secrets.get(ACCESS_TOKEN_KEY);
@@ -29,7 +28,7 @@ export async function initializeAPIClient(context: vscode.ExtensionContext, forc
     accessToken = input;
   }
 
-  API = new ApiClient(accessToken, apiEndPoint, { wrapResponseErrors: false });
+  API = new HackMdApiClient(accessToken, apiEndPoint);
   await meStore.getState().refreshLogin();
 
   // Clear the 'no API key' flag to hide welcome views

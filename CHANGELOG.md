@@ -6,6 +6,10 @@
 
 ### Changed
 
+- Replaced the runtime HackMD API client dependency with an in-repo, fully controlled HTTP client implementation.
+  - API bootstrap now uses the new local client wrapper instead of `@hackmd/api`.
+  - Existing `recordUsage(...)` rate-limit tracking compatibility is preserved for update calls that require full Axios responses.
+- Removed unused `@hackmd/react-vsc-treeview` dependency and related transitive packages from the lockfile.
 - Import actions now support selecting multiple `.md` files at once; each selected file is created as a separate note.
 - Tree views now support multi-selection for note actions.
   - Batch actions are available for selected notes: Move, Delete, and Export.
@@ -25,6 +29,7 @@
 
 ### Added
 
+- Added a local HackMD API client wrapper that follows the Swagger/OpenAPI endpoints and includes folder operations for personal and team scopes.
 - Added "Open on HackMD", "Export...", and improved inline buttons to team entries in the Team Notes tree view.
   - Inline buttons on team rows: New Note, Import..., and Refresh (Refresh visible only after team notes are loaded).
   - Context menu groups: primary actions (New Note, Open on HackMD, Refresh) and a transfer group (Import..., Export...) separated by a divider.

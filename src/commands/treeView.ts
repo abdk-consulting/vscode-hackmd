@@ -5,11 +5,18 @@ import * as vscode from 'vscode';
 import { Note, Team } from '@hackmd/api/dist/type';
 
 import { getHistoryProvider, getHistoryTreeView, getMyNotesProvider, getMyNotesTreeView, getPropertiesProvider, getTeamNotesProvider, getTeamNotesTreeView } from '../extension';
-import { generateResourceUri } from '../mdFsProvider';
+import { generateFolderResourceUri, generateResourceUri } from '../mdFsProvider';
 import { recordUsage, teamNotesStore } from '../store';
 import { API } from './../api';
 
-function getNoteIdFromFragment(fragment: string): string {
+function unwrapApiData<T>(responseOrData: any): T {
+  if (responseOrData && typeof responseOrData === 'object' && 'data' in responseOrData) {
+    return responseOrData.data as T;
+  }
+  return responseOrData as T;
+}
+
+function getLegacyNoteIdFromFragment(fragment: string): string {
   if (!fragment) {
     return '';
   }
@@ -24,8 +31,25 @@ function getNoteIdFromFragment(fragment: string): string {
   return fragment;
 }
 
+function getUriParams(uri: vscode.Uri): { noteId: string; folderId: string; teamPath: string | null } {
+  const params = new URLSearchParams(uri.query || '');
+  return {
+    noteId: params.get('noteId') || getLegacyNoteIdFromFragment(uri.fragment),
+    folderId: params.get('folderId') || '',
+    teamPath: params.get('teamPath'),
+  };
+}
+
+function getNoteIdFromUri(uri: vscode.Uri): string {
+  return getUriParams(uri).noteId;
+}
+
+function getFolderIdFromUri(uri: vscode.Uri): string {
+  return getUriParams(uri).folderId;
+}
+
 function getTeamPathFromUri(uri: vscode.Uri): string | null {
-  return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
+  return getUriParams(uri).teamPath;
 }
 
 function getExportFileName(note: Note): string {
@@ -45,6 +69,112 @@ function normalizeFolderId(rawFolderId: unknown): string | undefined {
 
   const value = String(rawFolderId);
   return value.startsWith('folder-') ? value.slice('folder-'.length) : value;
+}
+
+function resolveFolderCommandContext(node: any): { folderId?: string; folderName: string; teamPath: string | null } {
+  if (!node) {
+    return { folderName: 'Folder', teamPath: null };
+  }
+
+  if (node.type === 'folder') {
+    return {
+      folderId: normalizeFolderId(node.id),
+      folderName: node.name || 'Folder',
+      teamPath: node.teamPath ?? null,
+    };
+  }
+
+  return {
+    folderId: normalizeFolderId(node.value?.context?.folderId || node.folderId || node.id),
+    folderName: node.value?.context?.name || node.folderName || node.name || 'Folder',
+    teamPath: (node.value?.context?.teamPath || node.teamPath || null),
+  };
+}
+
+async function promptFolderName(defaultValue = ''): Promise<string | undefined> {
+  const input = await vscode.window.showInputBox({
+    prompt: 'Enter folder name',
+    value: defaultValue,
+    validateInput: (value) => {
+      if (!value || value.trim().length === 0) {
+        return 'Folder name cannot be empty';
+      }
+      return null;
+    },
+  });
+
+  const trimmed = input?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function createFolderInScope(options: { teamPath?: string | null; parentFolderId?: string }): Promise<void> {
+  const { teamPath, parentFolderId } = options;
+  const folderName = await promptFolderName();
+  if (!folderName) {
+    return;
+  }
+
+  const payload: Record<string, any> = { name: folderName };
+  if (parentFolderId) {
+    payload.parentFolderId = parentFolderId;
+  }
+
+  const myNotesProvider = getMyNotesProvider();
+  const teamNotesProvider = getTeamNotesProvider();
+  const provider = teamPath ? teamNotesProvider : myNotesProvider;
+  const containerId = parentFolderId
+    ? `folder-${parentFolderId}`
+    : (teamPath
+      ? `team-${teamNotesProvider?.getTeamIdFromPath(teamPath)}`
+      : 'root');
+
+  const isRoot = !parentFolderId;
+  const viewId = teamPath ? 'hackmd.tree.team-notes' : 'hackmd.tree.my-notes';
+
+  const doCreate = async () => {
+    if (teamPath) {
+      const createdFolder = unwrapApiData<any>(
+        await recordUsage(API.createTeamFolder(teamPath, payload, { unwrapData: false }))
+      );
+      if (createdFolder?.id) {
+        const normalizedCreatedFolder = {
+          ...createdFolder,
+          parentFolderId: createdFolder.parentFolderId || createdFolder.parentId || parentFolderId,
+          parentId: createdFolder.parentId || createdFolder.parentFolderId || parentFolderId,
+          teamPath,
+        };
+        teamNotesProvider?.addFolderToCache(teamPath, normalizedCreatedFolder);
+      }
+    } else {
+      const createdFolder = unwrapApiData<any>(
+        await recordUsage(API.createFolder(payload, { unwrapData: false }))
+      );
+      if (createdFolder?.id) {
+        const normalizedCreatedFolder = {
+          ...createdFolder,
+          parentFolderId: createdFolder.parentFolderId || createdFolder.parentId || parentFolderId,
+          parentId: createdFolder.parentId || createdFolder.parentFolderId || parentFolderId,
+        };
+        myNotesProvider?.addFolderToCache(normalizedCreatedFolder);
+      }
+    }
+  };
+
+  provider?.setPendingContainer(containerId);
+  try {
+    if (isRoot) {
+      await vscode.window.withProgress(
+        { location: { viewId }, title: 'Creating folder...' },
+        doCreate
+      );
+    } else {
+      await doCreate();
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`Failed to create folder: ${error.message || 'Unknown error'}`);
+  } finally {
+    provider?.clearPendingContainer(containerId);
+  }
 }
 
 function getUniqueMarkdownFileName(baseName: string, usedNames: Set<string>): string {
@@ -218,11 +348,34 @@ async function createNoteInScope(
     }
 
     if (teamNotesProvider) {
+      const targetFolderId = normalizeFolderId(payload.parentFolderId);
+      if (targetFolderId) {
+        const hasFolderPaths = Array.isArray((note as any).folderPaths) && (note as any).folderPaths.length > 0;
+        if (!hasFolderPaths) {
+          (note as any).folderPaths = getFolderPathsForContainer(teamPath, targetFolderId);
+        }
+        if (!(note as any).parentFolderId) {
+          (note as any).parentFolderId = targetFolderId;
+        }
+      }
+      if (!(note as any).teamPath) {
+        (note as any).teamPath = teamPath;
+      }
       noteNode = await teamNotesProvider.addNoteToCache(note, teamPath);
     }
   } else {
     note = await recordUsage(API.createNote(payload as any, { unwrapData: false }));
     if (myNotesProvider) {
+      const targetFolderId = normalizeFolderId(payload.parentFolderId);
+      if (targetFolderId) {
+        const hasFolderPaths = Array.isArray((note as any).folderPaths) && (note as any).folderPaths.length > 0;
+        if (!hasFolderPaths) {
+          (note as any).folderPaths = getFolderPathsForContainer(null, targetFolderId);
+        }
+        if (!(note as any).parentFolderId) {
+          (note as any).parentFolderId = targetFolderId;
+        }
+      }
       noteNode = await myNotesProvider.addNoteToCache(note);
     }
   }
@@ -245,13 +398,158 @@ function isSameNoteUri(uri: vscode.Uri, noteId: string, teamPath?: string | null
   if (uri.scheme !== 'hackmd') {
     return false;
   }
-  const uriNoteId = getNoteIdFromFragment(uri.fragment);
+  const uriNoteId = getNoteIdFromUri(uri);
   const uriTeamPath = getTeamPathFromUri(uri);
   return uriNoteId === noteId && (uriTeamPath || null) === (teamPath || null);
 }
 
 function isNoteNode(node: any): node is { type: 'note'; note: Note } {
   return node?.type === 'note' && !!node.note?.id;
+}
+
+type ResolvedFolderSelection = {
+  id: string;
+  name: string;
+  teamPath: string | null;
+  parentId: string | null;
+  folderPaths: any[];
+};
+
+type ResolvedOperationSelection = {
+  notes: Note[];
+  folders: ResolvedFolderSelection[];
+  hasUnsupportedNodes: boolean;
+  hasSingleScope: boolean;
+};
+
+function isFolderNode(node: any): boolean {
+  if (!node || node.type !== 'folder') {
+    return false;
+  }
+
+  return !!normalizeFolderId(node.id ?? node.folderId ?? node.value?.context?.folderId);
+}
+
+function getScopeKey(teamPath: string | null | undefined): string {
+  return teamPath || '__personal__';
+}
+
+function toResolvedFolderSelection(node: any): ResolvedFolderSelection | null {
+  if (!isFolderNode(node)) {
+    return null;
+  }
+
+  const id = normalizeFolderId(node.id ?? node.folderId ?? node.value?.context?.folderId);
+  if (!id) {
+    return null;
+  }
+
+  const teamPath = (node.teamPath ?? node.value?.context?.teamPath ?? null) as string | null;
+  const parentId = normalizeFolderId(node.parentId ?? node.value?.context?.parentId) || null;
+  const folderPaths = getFolderPathsForContainer(teamPath, id);
+
+  return {
+    id,
+    name: node.name || node.folderName || node.value?.context?.name || 'Folder',
+    teamPath,
+    parentId,
+    folderPaths,
+  };
+}
+
+function hasSelectedAncestorFolder(folder: ResolvedFolderSelection, selectedFolderIdsByScope: Map<string, Set<string>>): boolean {
+  const selectedInScope = selectedFolderIdsByScope.get(getScopeKey(folder.teamPath));
+  if (!selectedInScope) {
+    return false;
+  }
+
+  if (folder.folderPaths.length > 0) {
+    return folder.folderPaths.some((entry) => entry?.id && entry.id !== folder.id && selectedInScope.has(entry.id));
+  }
+
+  return false;
+}
+
+function isNoteUnderSelectedFolder(note: Note, selectedFolderIdsByScope: Map<string, Set<string>>): boolean {
+  const selectedInScope = selectedFolderIdsByScope.get(getScopeKey(((note as any).teamPath as string | null | undefined) ?? null));
+  if (!selectedInScope || selectedInScope.size === 0) {
+    return false;
+  }
+
+  const noteFolderPaths = ((note as any).folderPaths || []) as any[];
+  return noteFolderPaths.some((entry) => entry?.id && selectedInScope.has(entry.id));
+}
+
+function resolveOperationSelection(node: any, selectedNodes?: any[]): ResolvedOperationSelection {
+  const selection = getTreeSelectionForNode(node, selectedNodes);
+  const sourceNodes = selection.length > 0 ? selection : (node ? [node] : []);
+
+  if (sourceNodes.length === 0) {
+    return {
+      notes: [],
+      folders: [],
+      hasUnsupportedNodes: false,
+      hasSingleScope: true,
+    };
+  }
+
+  const notesByKey = new Map<string, Note>();
+  const foldersByKey = new Map<string, ResolvedFolderSelection>();
+  let hasUnsupportedNodes = false;
+
+  for (const selectedNode of sourceNodes) {
+    if (isNoteNode(selectedNode)) {
+      const note = hydrateDraggedNote(selectedNode.note as Note);
+      const teamPath = (((note as any).teamPath as string | null | undefined) ?? null);
+      notesByKey.set(`${getScopeKey(teamPath)}:${note.id}`, note);
+      continue;
+    }
+
+    const folder = toResolvedFolderSelection(selectedNode);
+    if (folder) {
+      foldersByKey.set(`${getScopeKey(folder.teamPath)}:${folder.id}`, folder);
+      continue;
+    }
+
+    hasUnsupportedNodes = true;
+  }
+
+  const selectedFolderIdsByScope = new Map<string, Set<string>>();
+  for (const folder of foldersByKey.values()) {
+    const key = getScopeKey(folder.teamPath);
+    const set = selectedFolderIdsByScope.get(key) || new Set<string>();
+    set.add(folder.id);
+    selectedFolderIdsByScope.set(key, set);
+  }
+
+  const folders = [...foldersByKey.values()].filter((folder) =>
+    !hasSelectedAncestorFolder(folder, selectedFolderIdsByScope)
+  );
+
+  const rootSelectedFolderIdsByScope = new Map<string, Set<string>>();
+  for (const folder of folders) {
+    const key = getScopeKey(folder.teamPath);
+    const set = rootSelectedFolderIdsByScope.get(key) || new Set<string>();
+    set.add(folder.id);
+    rootSelectedFolderIdsByScope.set(key, set);
+  }
+
+  const notes = [...notesByKey.values()].filter((note) => !isNoteUnderSelectedFolder(note, rootSelectedFolderIdsByScope));
+
+  const scopeSet = new Set<string>();
+  for (const note of notes) {
+    scopeSet.add(getScopeKey(((note as any).teamPath as string | null | undefined) ?? null));
+  }
+  for (const folder of folders) {
+    scopeSet.add(getScopeKey(folder.teamPath));
+  }
+
+  return {
+    notes,
+    folders,
+    hasUnsupportedNodes,
+    hasSingleScope: scopeSet.size <= 1,
+  };
 }
 
 function isSameNoteScope(left: Note, right: Note): boolean {
@@ -306,35 +604,41 @@ function getTreeSelectionForNode(node: any, selectedNodes?: any[]): any[] {
   return node ? [node] : [];
 }
 
-function getSelectedNotesForNode(node: any, selectedNodes?: any[]): Note[] | undefined {
-  if (!isNoteNode(node)) {
-    return undefined;
+async function performFolderMove(folder: ResolvedFolderSelection, targetFolderId: string | null): Promise<void> {
+  const normalizedFolderId = normalizeFolderId(folder.id);
+  const pendingContainerId = normalizedFolderId ? `folder-${normalizedFolderId}` : undefined;
+  const normalizedTargetFolderId = normalizeFolderId(targetFolderId) || null;
+  const payload = {
+    parentFolderId: normalizedTargetFolderId,
+  };
+
+  if (folder.teamPath) {
+    const provider = getTeamNotesProvider();
+    if (pendingContainerId) {
+      provider?.setPendingContainer(pendingContainerId);
+    }
+    try {
+      await recordUsage(API.updateTeamFolder(folder.teamPath, folder.id, payload, { unwrapData: false }));
+      provider?.moveFolderInCache(folder.teamPath, folder.id, normalizedTargetFolderId);
+    } finally {
+      if (pendingContainerId) {
+        provider?.clearPendingContainer(pendingContainerId);
+      }
+    }
+  } else {
+    const provider = getMyNotesProvider();
+    if (pendingContainerId) {
+      provider?.setPendingContainer(pendingContainerId);
+    }
+    try {
+      await recordUsage(API.updateFolder(folder.id, payload, { unwrapData: false }));
+      provider?.moveFolderInCache(folder.id, normalizedTargetFolderId);
+    } finally {
+      if (pendingContainerId) {
+        provider?.clearPendingContainer(pendingContainerId);
+      }
+    }
   }
-
-  const selection = getTreeSelectionForNode(node, selectedNodes);
-  if (selection.length <= 1) {
-    return [node.note as Note];
-  }
-
-  if (selection.some((selectedNode) => !isNoteNode(selectedNode))) {
-    return undefined;
-  }
-
-  return selection.map((selectedNode) => selectedNode.note as Note);
-}
-
-function getSelectedNotesForMove(node: any, selectedNodes?: any[]): Note[] | undefined {
-  const notes = getSelectedNotesForNode(node, selectedNodes);
-  if (!notes || notes.length === 0) {
-    return undefined;
-  }
-
-  const firstNote = notes[0];
-  if (!notes.every((note) => isSameNoteScope(note, firstNote))) {
-    return undefined;
-  }
-
-  return notes;
 }
 
 async function closeTabsForNote(note: Note): Promise<boolean> {
@@ -556,7 +860,7 @@ async function getDraggedNotesFromDataTransfer(dataTransfer: vscode.DataTransfer
             continue;
           }
 
-          const noteId = getNoteIdFromFragment(uri.fragment);
+          const noteId = getNoteIdFromUri(uri);
           if (!noteId) {
             continue;
           }
@@ -580,6 +884,55 @@ async function getDraggedNotesFromDataTransfer(dataTransfer: vscode.DataTransfer
   }
 
   return [];
+}
+
+type DraggedFolder = {
+  id: string;
+  teamPath: string | null;
+  name?: string;
+};
+
+async function getDraggedFoldersFromDataTransfer(dataTransfer: vscode.DataTransfer): Promise<DraggedFolder[]> {
+  const preferred = dataTransfer.get(NOTE_DRAG_MIME_TYPE);
+  if (!preferred) {
+    return [];
+  }
+
+  const raw = await preferred.asString();
+
+  try {
+    const uriList = raw
+      .split(/\r\n|\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'));
+
+    const folders: DraggedFolder[] = [];
+    for (const uriText of uriList) {
+      try {
+        const uri = vscode.Uri.parse(uriText);
+        if (uri.scheme !== 'hackmd') {
+          continue;
+        }
+
+        const folderId = getFolderIdFromUri(uri);
+        if (!folderId) {
+          continue;
+        }
+
+        folders.push({
+          id: folderId,
+          teamPath: getTeamPathFromUri(uri),
+          name: path.basename(uri.path || ''),
+        });
+      } catch {
+        // Skip malformed URI entries.
+      }
+    }
+
+    return folders;
+  } catch {
+    return [];
+  }
 }
 
 function resolveDropContainer(target: any | undefined): ResolvedDropContainer | null {
@@ -621,9 +974,50 @@ function resolveDropContainer(target: any | undefined): ResolvedDropContainer | 
   return null;
 }
 
+function isFolderInTargetPath(draggedFolderId: string, targetFolderPaths: any[]): boolean {
+  return targetFolderPaths.some((entry) => entry?.id === draggedFolderId);
+}
+
+async function moveFolderToTarget(folder: DraggedFolder, target: ResolvedDropContainer): Promise<void> {
+  const normalizedFolderId = normalizeFolderId(folder.id);
+  const pendingContainerId = normalizedFolderId ? `folder-${normalizedFolderId}` : undefined;
+  const normalizedTargetFolderId = normalizeFolderId(target.folderId) || null;
+  const payload = {
+    parentFolderId: normalizedTargetFolderId,
+  };
+
+  if (folder.teamPath) {
+    const provider = getTeamNotesProvider();
+    if (pendingContainerId) {
+      provider?.setPendingContainer(pendingContainerId);
+    }
+    try {
+      await recordUsage(API.updateTeamFolder(folder.teamPath, folder.id, payload, { unwrapData: false }));
+      provider?.moveFolderInCache(folder.teamPath, folder.id, normalizedTargetFolderId);
+    } finally {
+      if (pendingContainerId) {
+        provider?.clearPendingContainer(pendingContainerId);
+      }
+    }
+  } else {
+    const provider = getMyNotesProvider();
+    if (pendingContainerId) {
+      provider?.setPendingContainer(pendingContainerId);
+    }
+    try {
+      await recordUsage(API.updateFolder(folder.id, payload, { unwrapData: false }));
+      provider?.moveFolderInCache(folder.id, normalizedTargetFolderId);
+    } finally {
+      if (pendingContainerId) {
+        provider?.clearPendingContainer(pendingContainerId);
+      }
+    }
+  }
+}
+
 /**
  * Drag-and-drop controller shared by all HackMD tree views.
- * Only note nodes are draggable. Drops on notes resolve to that note's container.
+ * Note and folder nodes are draggable. Drops on notes resolve to that note's container.
  */
 export class NoteDragAndDropController implements vscode.TreeDragAndDropController<any> {
   readonly dragMimeTypes = [NOTE_DRAG_MIME_TYPE];
@@ -634,8 +1028,35 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
   }
 
   handleDrag(source: any[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
-    // Strictly reject drag if any selected item is not a note.
-    if (source.length === 0 || source.some((node) => node.type !== 'note')) {
+    if (source.length === 0) {
+      return;
+    }
+
+    const allNotes = source.every((node) => node.type === 'note');
+    const allFolders = source.every((node) => node.type === 'folder');
+    if (!allNotes && !allFolders) {
+      return;
+    }
+
+    if (allFolders) {
+      const folders = source.map((node) => ({
+        id: node.id,
+        teamPath: node.teamPath ?? null,
+        name: node.name,
+      })) as DraggedFolder[];
+
+      if (!folders.every((folder) => (folder.teamPath || null) === (folders[0].teamPath || null))) {
+        return;
+      }
+
+      const uriList = folders
+        .map((folder) => {
+          const label = folder.name || 'Folder';
+          return generateFolderResourceUri(label, folder.id, folder.teamPath).toString();
+        })
+        .join('\r\n');
+
+      dataTransfer.set(NOTE_DRAG_MIME_TYPE, new vscode.DataTransferItem(uriList));
       return;
     }
 
@@ -658,6 +1079,41 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
     const warnCannotMove = (reason: string, details?: Record<string, unknown>) => {
       vscode.window.showWarningMessage('This note cannot be moved here.');
     };
+
+    const draggedFolders = await getDraggedFoldersFromDataTransfer(dataTransfer);
+    if (draggedFolders.length > 0) {
+      const resolvedTarget = resolveDropContainer(target);
+      if (!resolvedTarget) {
+        vscode.window.showWarningMessage('This folder cannot be moved here.');
+        return;
+      }
+
+      const foldersToMove: DraggedFolder[] = [];
+      for (const folder of draggedFolders) {
+        if ((folder.teamPath || null) !== (resolvedTarget.teamPath || null)) {
+          continue;
+        }
+
+        // Prevent folder -> itself and folder -> descendant moves.
+        if (resolvedTarget.folderId === folder.id || isFolderInTargetPath(folder.id, resolvedTarget.folderPaths)) {
+          continue;
+        }
+
+        foldersToMove.push(folder);
+      }
+
+      if (foldersToMove.length === 0) {
+        vscode.window.showWarningMessage('This folder cannot be moved here.');
+        return;
+      }
+
+      try {
+        await Promise.all(foldersToMove.map((folder) => moveFolderToTarget(folder, resolvedTarget)));
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to move folder: ${error.message || 'Unknown error'}`);
+      }
+      return;
+    }
 
     const draggedNotes = await getDraggedNotesFromDataTransfer(dataTransfer);
     if (draggedNotes.length === 0) {
@@ -808,6 +1264,12 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('treeView.createMyFolder', async () => {
+      await createFolderInScope({});
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('treeView.importMyNotes', async () => {
       const importDataList = await pickMarkdownImportData();
       if (importDataList.length === 0) {
@@ -927,36 +1389,43 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.moveNoteTo', async (node: any, selectedNodes?: any[]) => {
-      if (!node || node.type !== 'note') {
+      const selection = resolveOperationSelection(node, selectedNodes);
+      if (selection.hasUnsupportedNodes || (selection.notes.length === 0 && selection.folders.length === 0)) {
+        vscode.window.showInformationMessage('Move is only available for note and folder selections.');
         return;
       }
 
-      const selectedNotes = getSelectedNotesForMove(node, selectedNodes);
-      if (!selectedNotes || selectedNotes.length === 0) {
-        vscode.window.showInformationMessage('Move is only available when only notes from the same scope are selected.');
+      if (!selection.hasSingleScope) {
+        vscode.window.showInformationMessage('Move is only available when selected items belong to one scope.');
         return;
       }
 
-      const note = selectedNotes[0];
+      const selectedNotes = selection.notes;
+      const selectedFolders = selection.folders;
+      const teamPath = selectedNotes[0]?.teamPath ?? selectedFolders[0]?.teamPath ?? null;
+
       const myNotesProvider = getMyNotesProvider();
       const teamNotesProvider = getTeamNotesProvider();
-      const folderTargets = note.teamPath
-        ? (teamNotesProvider?.getMoveFolderTargetsFromCache(note.teamPath) || [])
+      const folderTargets = teamPath
+        ? (teamNotesProvider?.getMoveFolderTargetsFromCache(teamPath) || [])
         : (myNotesProvider?.getMoveFolderTargetsFromCache() || []);
 
       if (folderTargets.length === 0) {
-        vscode.window.showInformationMessage('No folders are available in this note scope.');
+        vscode.window.showInformationMessage('No folders are available in this scope.');
         return;
       }
 
       const filteredTargets = folderTargets.filter((target) =>
         selectedNotes.some((selectedNote) => getNoteFolderId(selectedNote) !== target.folderId)
+        || selectedFolders.some((selectedFolder) => {
+          const isSameParent = selectedFolder.parentId === target.folderId;
+          const targetInsideDraggedFolder = target.folderPaths.some((entry) => entry?.id === selectedFolder.id);
+          return !isSameParent && !targetInsideDraggedFolder;
+        })
       );
 
       if (filteredTargets.length === 0) {
-        vscode.window.showInformationMessage(selectedNotes.length === 1
-          ? 'This note is already in the only available folder.'
-          : 'All selected notes are already in the only available folder.');
+        vscode.window.showInformationMessage('No valid destination folder is available for the current selection.');
         return;
       }
 
@@ -975,17 +1444,31 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         return;
       }
 
-      for (const selectedNote of selectedNotes) {
-        if (getNoteFolderId(selectedNote) === selected.folderId) {
-          continue;
-        }
+      const notesToMove = selectedNotes.filter((selectedNote) => getNoteFolderId(selectedNote) !== selected.folderId);
+      const foldersToMove = selectedFolders.filter((selectedFolder) => {
+        const isSameParent = selectedFolder.parentId === selected.folderId;
+        const targetInsideDraggedFolder = selected.folderPaths.some((entry) => entry?.id === selectedFolder.id);
+        return !isSameParent && !targetInsideDraggedFolder;
+      });
 
+      if (notesToMove.length === 0 && foldersToMove.length === 0) {
+        return;
+      }
+
+      for (const selectedNote of notesToMove) {
         const canProceed = await closeTabsForNote(selectedNote);
         if (!canProceed) {
           return;
         }
-
         await performMove(selectedNote, selected.folderId, selected.folderPaths);
+      }
+
+      if (foldersToMove.length > 0) {
+        try {
+          await Promise.all(foldersToMove.map((folder) => performFolderMove(folder, selected.folderId)));
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`Failed to move folder: ${error.message || 'Unknown error'}`);
+        }
       }
     })
   );
@@ -1000,47 +1483,41 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       const teamPath = sourceNote.teamPath || null;
       const myNotesProvider = getMyNotesProvider();
       const teamNotesProvider = getTeamNotesProvider();
+      const historyProvider = getHistoryProvider();
 
-      const fetchedNote = await recordUsage(API.getNote(sourceNote.id, { unwrapData: false }));
-      const folderPaths = ((fetchedNote as any).folderPaths || (sourceNote as any).folderPaths || []) as any[];
-      const parentFolderId = folderPaths.length > 0
-        ? normalizeFolderId(folderPaths[folderPaths.length - 1].id)
-        : undefined;
-
-      const payload: Record<string, any> = {
-        title: sourceNote.title || fetchedNote.title || 'Untitled',
-        content: fetchedNote.content || '',
-      };
-
-      if (parentFolderId) {
-        payload.parentFolderId = parentFolderId;
-      }
-
-      let containerId: string | undefined;
-      if (parentFolderId) {
-        containerId = `folder-${parentFolderId}`;
-      } else if (teamPath) {
-        const teamId = teamNotesProvider?.getTeamIdFromPath(teamPath);
-        if (teamId) {
-          containerId = `team-${teamId}`;
-        }
+      if (teamPath) {
+        teamNotesProvider?.setPendingNote(sourceNote.id, sourceNote);
       } else {
-        containerId = 'root';
+        myNotesProvider?.setPendingNote(sourceNote.id, sourceNote);
       }
-
-      const provider = teamPath ? teamNotesProvider : myNotesProvider;
-      if (containerId) {
-        provider?.setPendingContainer(containerId);
-      }
+      historyProvider?.setPendingNote(sourceNote.id, sourceNote);
 
       try {
+        const fetchedNote = await recordUsage(API.getNote(sourceNote.id, { unwrapData: false }));
+        const folderPaths = ((fetchedNote as any).folderPaths || (sourceNote as any).folderPaths || []) as any[];
+        const parentFolderId = folderPaths.length > 0
+          ? normalizeFolderId(folderPaths[folderPaths.length - 1].id)
+          : undefined;
+
+        const payload: Record<string, any> = {
+          title: sourceNote.title || fetchedNote.title || 'Untitled',
+          content: fetchedNote.content || '',
+        };
+
+        if (parentFolderId) {
+          payload.parentFolderId = parentFolderId;
+        }
+
         await createNoteInScope(payload, { teamPath, openEditor: false });
       } catch (error: any) {
         vscode.window.showErrorMessage(`Failed to duplicate note: ${error.message}`);
       } finally {
-        if (containerId) {
-          provider?.clearPendingContainer(containerId);
+        if (teamPath) {
+          teamNotesProvider?.clearPendingNote(sourceNote.id, sourceNote);
+        } else {
+          myNotesProvider?.clearPendingNote(sourceNote.id, sourceNote);
         }
+        historyProvider?.clearPendingNote(sourceNote.id, sourceNote);
       }
     })
   );
@@ -1048,83 +1525,117 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   // HackMD.deleteMyNote
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.deleteMyNote', async (node: any, selectedNodes?: any[]) => {
-      if (node) {
-        const selectedNotes = getSelectedNotesForNode(node, selectedNodes);
-        if (!selectedNotes || selectedNotes.length === 0) {
-          vscode.window.showInformationMessage('Delete is only available when only notes are selected.');
+      const selection = resolveOperationSelection(node, selectedNodes);
+      if (selection.hasUnsupportedNodes || (selection.notes.length === 0 && selection.folders.length === 0)) {
+        vscode.window.showInformationMessage('Delete is only available for note and folder selections.');
+        return;
+      }
+
+      const selectedNotes = selection.notes;
+      const selectedFolders = selection.folders;
+      const selectedCount = selectedNotes.length + selectedFolders.length;
+
+      const confirm = await vscode.window.showWarningMessage(
+        selectedCount === 1
+          ? 'Are you sure to delete this item?'
+          : `Are you sure to delete these ${selectedCount} items?`,
+        { modal: true },
+        'Yes'
+      );
+
+      if (!confirm) {
+        return;
+      }
+
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+      const historyProvider = getHistoryProvider();
+
+      for (const note of selectedNotes) {
+        const noteId = note.id;
+        const teamPath = note.teamPath;
+
+        if (teamPath) {
+          teamNotesProvider?.setPendingNote(noteId, note);
+        } else {
+          myNotesProvider?.setPendingNote(noteId, note);
+        }
+        historyProvider?.setPendingNote(noteId, note);
+      }
+
+      for (const folder of selectedFolders) {
+        const provider = folder.teamPath ? teamNotesProvider : myNotesProvider;
+        provider?.setPendingContainer(`folder-${folder.id}`);
+      }
+
+      const noteResults = await Promise.allSettled(selectedNotes.map(async (note) => {
+        const noteId = note.id;
+        const teamPath = note.teamPath;
+
+        if (teamPath) {
+          await recordUsage(API.deleteTeamNote(teamPath, noteId, { unwrapData: false }));
+        } else {
+          await recordUsage(API.deleteNote(noteId, { unwrapData: false }));
+        }
+
+        await closeTabsForNote(note);
+
+        if (teamPath) {
+          teamNotesProvider?.removeNoteFromCache(noteId, teamPath);
+        } else {
+          myNotesProvider?.removeNoteFromCache(noteId);
+        }
+        historyProvider?.removeNoteFromCache(noteId);
+      }));
+
+      const folderResults = await Promise.allSettled(selectedFolders.map(async (folder) => {
+        if (folder.teamPath) {
+          await recordUsage(API.deleteTeamFolder(folder.teamPath, folder.id, { unwrapData: false }));
+        } else {
+          await recordUsage(API.deleteFolder(folder.id, { unwrapData: false }));
+        }
+      }));
+
+      folderResults.forEach((result, index) => {
+        if (result.status !== 'fulfilled') {
           return;
         }
 
-        // prompt
-        const confirm = await vscode.window.showWarningMessage(
-          selectedNotes.length === 1
-            ? 'Are you sure to delete this note?'
-            : `Are you sure to delete these ${selectedNotes.length} notes?`,
-          { modal: true },
-          'Yes'
+        const folder = selectedFolders[index];
+        if (folder.teamPath) {
+          teamNotesProvider?.removeFolderFromCache(folder.teamPath, folder.id);
+        } else {
+          myNotesProvider?.removeFolderFromCache(folder.id);
+        }
+      });
+
+      for (const note of selectedNotes) {
+        if (note.teamPath) {
+          teamNotesProvider?.clearPendingNote(note.id, note);
+        } else {
+          myNotesProvider?.clearPendingNote(note.id, note);
+        }
+        historyProvider?.clearPendingNote(note.id, note);
+      }
+
+      for (const folder of selectedFolders) {
+        const provider = folder.teamPath ? teamNotesProvider : myNotesProvider;
+        provider?.clearPendingContainer(`folder-${folder.id}`);
+      }
+
+      const failedResults = [
+        ...noteResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected'),
+        ...folderResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected'),
+      ];
+      if (failedResults.length > 0) {
+        const message = failedResults[0].reason instanceof Error
+          ? failedResults[0].reason.message
+          : String(failedResults[0].reason);
+        vscode.window.showErrorMessage(
+          failedResults.length === 1
+            ? `Failed to delete item: ${message}`
+            : `Failed to delete ${failedResults.length} items. First error: ${message}`
         );
-
-        if (!confirm) {
-          return;
-        }
-
-        const myNotesProvider = getMyNotesProvider();
-        const teamNotesProvider = getTeamNotesProvider();
-        const historyProvider = getHistoryProvider();
-
-        for (const note of selectedNotes) {
-          const noteId = note.id;
-          const teamPath = note.teamPath;
-
-          if (teamPath) {
-            teamNotesProvider?.setPendingNote(noteId, note);
-          } else {
-            myNotesProvider?.setPendingNote(noteId, note);
-          }
-          historyProvider?.setPendingNote(noteId, note);
-        }
-
-        const results = await Promise.allSettled(selectedNotes.map(async (note) => {
-          const noteId = note.id;
-          const teamPath = note.teamPath;
-
-          try {
-            if (teamPath) {
-              await recordUsage(API.deleteTeamNote(teamPath, noteId, { unwrapData: false }));
-            } else {
-              await recordUsage(API.deleteNote(noteId, { unwrapData: false }));
-            }
-
-            await closeTabsForNote(note);
-
-            if (teamPath) {
-              teamNotesProvider?.removeNoteFromCache(noteId, teamPath);
-            } else {
-              myNotesProvider?.removeNoteFromCache(noteId);
-            }
-            historyProvider?.removeNoteFromCache(noteId);
-          } catch (error) {
-            if (teamPath) {
-              teamNotesProvider?.clearPendingNote(noteId, note);
-            } else {
-              myNotesProvider?.clearPendingNote(noteId, note);
-            }
-            historyProvider?.clearPendingNote(noteId, note);
-            throw error;
-          }
-        }));
-
-        const failedResults = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-        if (failedResults.length > 0) {
-          const message = failedResults[0].reason instanceof Error
-            ? failedResults[0].reason.message
-            : String(failedResults[0].reason);
-          vscode.window.showErrorMessage(
-            failedResults.length === 1
-              ? `Failed to delete note: ${message}`
-              : `Failed to delete ${failedResults.length} notes. First error: ${message}`
-          );
-        }
       }
     })
   );
@@ -1211,11 +1722,14 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.exportNote', async (noteNode: any, selectedNodes?: any[]) => {
-      const selectedNotes = getSelectedNotesForNode(noteNode, selectedNodes);
-      if (!selectedNotes || selectedNotes.length === 0) {
-        vscode.window.showInformationMessage('Export is only available when only notes are selected.');
+      const selection = resolveOperationSelection(noteNode, selectedNodes);
+      if (selection.hasUnsupportedNodes || (selection.notes.length === 0 && selection.folders.length === 0)) {
+        vscode.window.showInformationMessage('Export is only available for note and folder selections.');
         return;
       }
+
+      const selectedNotes = selection.notes;
+      const selectedFolders = selection.folders;
 
       const myNotesProvider = getMyNotesProvider();
       const teamNotesProvider = getTeamNotesProvider();
@@ -1224,7 +1738,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       let targetUri: vscode.Uri | undefined;
       let exportDirectoryUri: vscode.Uri | undefined;
 
-      if (selectedNotes.length === 1) {
+      if (selectedFolders.length === 0 && selectedNotes.length === 1) {
         const exportFileName = getExportFileName(selectedNotes[0]);
         targetUri = await vscode.window.showSaveDialog({
           defaultUri: vscode.Uri.file(path.join(defaultDirectory, exportFileName)),
@@ -1256,6 +1770,11 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         historyProvider?.setPendingNote(note.id, note);
       }
 
+      for (const folder of selectedFolders) {
+        const provider = folder.teamPath ? teamNotesProvider : myNotesProvider;
+        provider?.setPendingContainer(`folder-${folder.id}`);
+      }
+
       try {
         if (targetUri) {
           const note = selectedNotes[0];
@@ -1271,9 +1790,18 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             const fileUri = vscode.Uri.joinPath(exportDirectoryUri, fileName);
             await vscode.workspace.fs.writeFile(fileUri, Buffer.from(document.getText(), 'utf8'));
           }
+
+          for (const folder of selectedFolders) {
+            await exportFolderNotesRecursively({
+              folderId: folder.id,
+              folderName: folder.name,
+              teamPath: folder.teamPath,
+              destinationParentUri: exportDirectoryUri,
+            });
+          }
         }
       } catch (error: any) {
-        vscode.window.showErrorMessage(`Failed to export note${selectedNotes.length === 1 ? '' : 's'}: ${error.message}`);
+        vscode.window.showErrorMessage(`Failed to export selection: ${error.message}`);
       } finally {
         for (const note of selectedNotes) {
           if (note.teamPath) {
@@ -1282,6 +1810,11 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             myNotesProvider?.clearPendingNote(note.id, note);
           }
           historyProvider?.clearPendingNote(note.id, note);
+        }
+
+        for (const folder of selectedFolders) {
+          const provider = folder.teamPath ? teamNotesProvider : myNotesProvider;
+          provider?.clearPendingContainer(`folder-${folder.id}`);
         }
       }
     })
@@ -1338,7 +1871,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           return;
         }
 
-        const noteId = getNoteIdFromFragment(editor.document.uri.fragment);
+        const noteId = getNoteIdFromUri(editor.document.uri);
         if (!checkNoteIdExist(noteId)) {
           return;
         }
@@ -1383,7 +1916,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           return;
         }
 
-        const noteId = getNoteIdFromFragment(editor.document.uri.fragment);
+        const noteId = getNoteIdFromUri(editor.document.uri);
         if (!checkNoteIdExist(noteId)) {
           return;
         }
@@ -1402,7 +1935,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const note = noteNode.note;
         vscode.env.openExternal(vscode.Uri.parse(note.publishLink));
       } else {
-        const noteId = getNoteIdFromFragment(vscode.window.activeTextEditor.document.uri.fragment);
+        const noteId = getNoteIdFromUri(vscode.window.activeTextEditor.document.uri);
 
         const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
 
@@ -1447,6 +1980,13 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           provider?.clearPendingContainer(containerId);
         }
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.folder.createFolder', async (node: any) => {
+      const { folderId, teamPath } = resolveFolderCommandContext(node);
+      await createFolderInScope({ teamPath, parentFolderId: folderId });
     })
   );
 
@@ -1567,6 +2107,80 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.folder.rename', async (node: any) => {
+      const { folderId, folderName, teamPath } = resolveFolderCommandContext(node);
+      if (!folderId) {
+        vscode.window.showErrorMessage('Folder ID not found');
+        return;
+      }
+
+      const newName = await promptFolderName(folderName);
+      if (!newName || newName === folderName) {
+        return;
+      }
+
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+      const provider = teamPath ? teamNotesProvider : myNotesProvider;
+      const containerId = `folder-${folderId}`;
+
+      provider?.setPendingContainer(containerId);
+      try {
+        if (teamPath) {
+          await recordUsage(API.updateTeamFolder(teamPath, folderId, { name: newName }, { unwrapData: false }));
+          teamNotesProvider?.renameFolderInCache(folderId, newName, teamPath);
+        } else {
+          await recordUsage(API.updateFolder(folderId, { name: newName }, { unwrapData: false }));
+          myNotesProvider?.renameFolderInCache(folderId, newName);
+        }
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to rename folder: ${error.message || 'Unknown error'}`);
+      } finally {
+        provider?.clearPendingContainer(containerId);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.folder.delete', async (node: any) => {
+      const { folderId, folderName, teamPath } = resolveFolderCommandContext(node);
+      if (!folderId) {
+        vscode.window.showErrorMessage('Folder ID not found');
+        return;
+      }
+
+      const confirm = await vscode.window.showWarningMessage(
+        `Are you sure to delete folder \"${folderName}\"?`,
+        { modal: true },
+        'Yes'
+      );
+      if (!confirm) {
+        return;
+      }
+
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+      const provider = teamPath ? teamNotesProvider : myNotesProvider;
+      const containerId = `folder-${folderId}`;
+
+      provider?.setPendingContainer(containerId);
+      try {
+        if (teamPath) {
+          await recordUsage(API.deleteTeamFolder(teamPath, folderId, { unwrapData: false }));
+          teamNotesProvider?.removeFolderFromCache(teamPath, folderId);
+        } else {
+          await recordUsage(API.deleteFolder(folderId, { unwrapData: false }));
+          myNotesProvider?.removeFolderFromCache(folderId);
+        }
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to delete folder: ${error.message || 'Unknown error'}`);
+      } finally {
+        provider?.clearPendingContainer(containerId);
+      }
+    })
+  );
+
   // Team note creation command
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.team.createNote', async (node: any) => {
@@ -1594,6 +2208,18 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           vscode.window.showErrorMessage('Team path not found');
         }
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.team.createFolder', async (node: any) => {
+      const teamPath = node?.team?.path;
+      if (!teamPath) {
+        vscode.window.showErrorMessage('Team path not found');
+        return;
+      }
+
+      await createFolderInScope({ teamPath });
     })
   );
 

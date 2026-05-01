@@ -59,6 +59,24 @@ function isSelectedNoteNode(node: any): boolean {
   return node?.type === 'note' && !!node.note?.id;
 }
 
+function isSelectedFolderNode(node: any): boolean {
+  return node?.type === 'folder' && !!(node.id || node.folderId || node.value?.context?.folderId);
+}
+
+function getSelectedNodeTeamPath(node: any): string | null {
+  if (isSelectedNoteNode(node)) {
+    return (node.note?.teamPath || null);
+  }
+  if (isSelectedFolderNode(node)) {
+    return (node.teamPath || node.value?.context?.teamPath || null);
+  }
+  return null;
+}
+
+function isActionableSelectionNode(node: any): boolean {
+  return isSelectedNoteNode(node) || isSelectedFolderNode(node);
+}
+
 function updateTreeSelectionContexts(prefix: string, selection: readonly any[]): void {
   const hasSelection = selection.length > 0;
   const hasMixedSelection = selection.length > 1 && selection.some((node) => !isSelectedNoteNode(node));
@@ -66,11 +84,21 @@ function updateTreeSelectionContexts(prefix: string, selection: readonly any[]):
   const hasSameScopeMultiNoteSelection = hasMultiNoteSelection && selection.every(
     (node) => (node.note?.teamPath || null) === (selection[0].note?.teamPath || null)
   );
+  const hasActionableSelection = hasSelection && selection.every(isActionableSelectionNode);
+  const hasSingleScopeActionableSelection = hasActionableSelection && (() => {
+    const scopes = new Set<string>();
+    for (const node of selection) {
+      scopes.add(getSelectedNodeTeamPath(node) || '__personal__');
+    }
+    return scopes.size <= 1;
+  })();
 
   void vscode.commands.executeCommand('setContext', `${prefix}.hasSelection`, hasSelection);
   void vscode.commands.executeCommand('setContext', `${prefix}.hasMixedSelection`, hasMixedSelection);
   void vscode.commands.executeCommand('setContext', `${prefix}.hasMultiNoteSelection`, hasMultiNoteSelection);
   void vscode.commands.executeCommand('setContext', `${prefix}.hasSameScopeMultiNoteSelection`, hasSameScopeMultiNoteSelection);
+  void vscode.commands.executeCommand('setContext', `${prefix}.hasActionableSelection`, hasActionableSelection);
+  void vscode.commands.executeCommand('setContext', `${prefix}.hasSingleScopeActionableSelection`, hasSingleScopeActionableSelection);
 }
 
 function bindTreeSelectionContexts(treeView: vscode.TreeView<any>, prefix: string, context: vscode.ExtensionContext): void {

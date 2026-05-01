@@ -119,6 +119,12 @@
         }
       },
       {
+        "command": "treeView.createMyFolder",
+        "title": "New Folder...",
+        "category": "HackMD",
+        "icon": "$(new-folder)"
+      },
+      {
         "command": "treeView.refreshHistory",
         "title": "Refresh",
         "category": "HackMD",
@@ -155,6 +161,12 @@
         }
       },
       {
+        "command": "HackMD.folder.createFolder",
+        "title": "New Folder...",
+        "category": "HackMD",
+        "icon": "$(new-folder)"
+      },
+      {
         "command": "treeView.importMyNotes",
         "title": "Import...",
         "category": "HackMD",
@@ -178,6 +190,16 @@
         "category": "HackMD"
       },
       {
+        "command": "HackMD.folder.rename",
+        "title": "Rename...",
+        "category": "HackMD"
+      },
+      {
+        "command": "HackMD.folder.delete",
+        "title": "Delete...",
+        "category": "HackMD"
+      },
+      {
         "command": "HackMD.team.createNote",
         "title": "New Note",
         "category": "HackMD",
@@ -185,6 +207,12 @@
           "light": "images/icon/light/new-note.svg",
           "dark": "images/icon/dark/new-note.svg"
         }
+      },
+      {
+        "command": "HackMD.team.createFolder",
+        "title": "New Folder...",
+        "category": "HackMD",
+        "icon": "$(new-folder)"
       },
       {
         "command": "HackMD.team.importNote",
@@ -320,9 +348,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "treeView.importMyNotes",
+          "command": "treeView.createMyFolder",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@2"
+        },
+        {
+          "command": "treeView.importMyNotes",
+          "when": "view =~ /hackmd.tree.my-notes/",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -373,7 +406,7 @@
         },
         {
           "command": "HackMD.moveNoteTo",
-          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && (!hackmd.myNotesSelection.hasMultiNoteSelection || hackmd.myNotesSelection.hasSameScopeMultiNoteSelection)) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && (!hackmd.teamNotesSelection.hasMultiNoteSelection || hackmd.teamNotesSelection.hasSameScopeMultiNoteSelection)) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && (!hackmd.historySelection.hasMultiNoteSelection || hackmd.historySelection.hasSameScopeMultiNoteSelection)))",
+          "when": "((viewItem == file && ((view == hackmd.tree.my-notes && ((!hackmd.myNotesSelection.hasMixedSelection && (!hackmd.myNotesSelection.hasMultiNoteSelection || hackmd.myNotesSelection.hasSameScopeMultiNoteSelection)) || (hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection && hackmd.myNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.team-notes && ((!hackmd.teamNotesSelection.hasMixedSelection && (!hackmd.teamNotesSelection.hasMultiNoteSelection || hackmd.teamNotesSelection.hasSameScopeMultiNoteSelection)) || (hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection && hackmd.teamNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && (!hackmd.historySelection.hasMultiNoteSelection || hackmd.historySelection.hasSameScopeMultiNoteSelection)))) || ((viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && (!hackmd.myNotesSelection.hasSelection || (hackmd.myNotesSelection.hasActionableSelection && hackmd.myNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.team-notes && (!hackmd.teamNotesSelection.hasSelection || (hackmd.teamNotesSelection.hasActionableSelection && hackmd.teamNotesSelection.hasSingleScopeActionableSelection))))) )",
           "group": "2_noteActions@3"
         },
         {
@@ -383,43 +416,63 @@
         },
         {
           "command": "HackMD.exportNote",
-          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection))",
+          "when": "((viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasActionableSelection))) || ((viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection))))",
           "group": "2_noteActions@5"
         },
         {
           "command": "HackMD.deleteMyNote",
-          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection))",
+          "when": "((viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasActionableSelection))) || ((viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection))))",
           "group": "3_noteDanger@1"
         },
         {
           "command": "HackMD.folder.createNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == folder",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "inline@1"
         },
         {
-          "command": "HackMD.folder.importNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == folder",
+          "command": "HackMD.folder.createFolder",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "inline@2"
         },
         {
+          "command": "HackMD.folder.importNote",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "inline@3"
+        },
+        {
           "command": "HackMD.folder.createNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == folder",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "1_folderActions@1"
         },
         {
-          "command": "HackMD.folder.openOnWeb",
-          "when": "view =~ /hackmd.tree/ && viewItem == folder",
+          "command": "HackMD.folder.createFolder",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "1_folderActions@2"
         },
         {
+          "command": "HackMD.folder.openOnWeb",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending)",
+          "group": "1_folderActions@3"
+        },
+        {
+          "command": "HackMD.folder.rename",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "2_folderManage@1"
+        },
+        {
+          "command": "HackMD.folder.delete",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "2_folderManage@2"
+        },
+        {
           "command": "HackMD.folder.importNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == folder",
-          "group": "2_folderTransfer@1"
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "3_folderTransfer@1"
         },
         {
           "command": "HackMD.folder.exportNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == folder",
-          "group": "2_folderTransfer@2"
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "3_folderTransfer@2"
         },
         {
           "command": "HackMD.team.createNote",
@@ -427,9 +480,14 @@
           "group": "inline@1"
         },
         {
-          "command": "HackMD.team.importNote",
+          "command": "HackMD.team.createFolder",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "inline@2"
+        },
+        {
+          "command": "HackMD.team.importNote",
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
+          "group": "inline@3"
         },
         {
           "command": "HackMD.team.createNote",
@@ -437,19 +495,24 @@
           "group": "1_teamMain@1"
         },
         {
-          "command": "HackMD.team.openOnHackMD",
+          "command": "HackMD.team.createFolder",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "1_teamMain@2"
         },
         {
-          "command": "treeView.refreshSelectedTeam",
-          "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
+          "command": "HackMD.team.openOnHackMD",
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "1_teamMain@3"
         },
         {
           "command": "treeView.refreshSelectedTeam",
           "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
-          "group": "inline@3"
+          "group": "1_teamMain@4"
+        },
+        {
+          "command": "treeView.refreshSelectedTeam",
+          "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
+          "group": "inline@4"
         },
         {
           "command": "HackMD.team.importNote",

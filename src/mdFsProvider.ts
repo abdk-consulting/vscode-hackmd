@@ -51,7 +51,7 @@ function getTeamPathFromUri(uri: vscode.Uri): string | null {
   return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
 }
 
-function getNoteIdFromFragment(fragment: string): string {
+function getLegacyNoteIdFromFragment(fragment: string): string {
   if (!fragment) {
     return '';
   }
@@ -66,14 +66,19 @@ function getNoteIdFromFragment(fragment: string): string {
   return fragment;
 }
 
+function getNoteIdFromUri(uri: vscode.Uri): string {
+  const params = new URLSearchParams(uri.query || '');
+  return params.get('noteId') || getLegacyNoteIdFromFragment(uri.fragment);
+}
+
 export class HackMDFsProvider implements vscode.FileSystemProvider {
   createDirectory(uri: vscode.Uri): void | Thenable<void> {
     throw new Error('createDirectory Method not implemented.');
   }
 
   async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { readonly overwrite: boolean }): Promise<void> {
-    const oldNoteId = getNoteIdFromFragment(oldUri.fragment);
-    const newNoteId = getNoteIdFromFragment(newUri.fragment);
+    const oldNoteId = getNoteIdFromUri(oldUri);
+    const newNoteId = getNoteIdFromUri(newUri);
     const oldTeamPath = getTeamPathFromUri(oldUri);
     const newTeamPath = getTeamPathFromUri(newUri);
 
@@ -108,7 +113,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const noteId = getNoteIdFromFragment(uri.fragment);
+    const noteId = getNoteIdFromUri(uri);
 
     try {
       const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
@@ -126,7 +131,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     content: Uint8Array,
     options: { readonly create: boolean; readonly overwrite: boolean }
   ): Promise<void> {
-    const noteId = getNoteIdFromFragment(uri.fragment);
+    const noteId = getNoteIdFromUri(uri);
 
     if (!noteId) {
       throw vscode.FileSystemError.FileNotFound();
@@ -206,7 +211,7 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
   private async _lookup(uri: vscode.Uri, silent: false): Promise<Entry>;
   private async _lookup(uri: vscode.Uri, silent: boolean): Promise<Entry | undefined>;
   private async _lookup(uri: vscode.Uri, silent: boolean): Promise<Entry | undefined> {
-    const noteId = getNoteIdFromFragment(uri.fragment);
+    const noteId = getNoteIdFromUri(uri);
 
     try {
       const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
@@ -281,12 +286,49 @@ export function generateResourceUri(
     path = `/My Notes${folderPrefix}/${sanitizedTitle}`;
   }
 
-  // Keep noteId in fragment for identification, and teamPath in query for API calls.
-  // Use Uri.from to guarantee proper URI component ordering: scheme:path?query#fragment
+  // Keep resource identity in query params for both notes and folders.
+  const params = new URLSearchParams();
+  params.set('noteId', noteId);
+  if (teamPath) {
+    params.set('teamPath', teamPath);
+  }
+
   return vscode.Uri.from({
     scheme: 'hackmd',
     path,
-    query: teamPath ? `teamPath=${encodeURIComponent(teamPath)}` : '',
-    fragment: noteId,
+    query: params.toString(),
+    fragment: '',
+  });
+}
+
+export function generateFolderResourceUri(
+  label: string,
+  folderId: string,
+  teamPath?: string | null,
+  folderPaths?: FolderPath[]
+) {
+  const sanitizedTitle = (label || 'Folder').replace(/[\\/:*?"<>|#]/g, '-');
+
+  let folderPath = '';
+  if (folderPaths && folderPaths.length > 0) {
+    folderPath = folderPaths.map((f) => f.name.replace(/[\\/:*?"<>|#]/g, '-')).join('/');
+  }
+
+  const folderPrefix = folderPath ? `/${folderPath}` : '';
+  const path = teamPath
+    ? `/Teams/${teamPath}${folderPrefix}/${sanitizedTitle}`
+    : `/My Notes${folderPrefix}/${sanitizedTitle}`;
+
+  const params = new URLSearchParams();
+  params.set('folderId', folderId);
+  if (teamPath) {
+    params.set('teamPath', teamPath);
+  }
+
+  return vscode.Uri.from({
+    scheme: 'hackmd',
+    path,
+    query: params.toString(),
+    fragment: '',
   });
 }

@@ -4,6 +4,22 @@
 
 ## Recent Changes (Unreleased)
 
+### Added
+
+- Added progress indicator in My Notes and Team Notes tree view headers while a folder is being created at root level, matching note-creation UX.
+- Added spinner on folders during drag-and-drop and command-based move operations, matching the note-drag pending-state behavior.
+
+### Changed
+
+- "New Folder..." actions everywhere now use the `new-folder` codicon instead of the custom folder SVG icon.
+
+### Fixed
+
+- Fixed folder hierarchy rendering when the HackMD folder API returns `null` for a folder's parent despite the note paths showing it has a parent.
+  - Parent relationships inferred from note `folderPaths` now take precedence over the API-returned `parentFolderId`.
+  - Defensive fallback added for the API typo field `parentForderId`.
+  - String `"null"` is now treated as no parent when returned by the API.
+
 ### Changed
 
 - Replaced the runtime HackMD API client dependency with an in-repo, fully controlled HTTP client implementation.

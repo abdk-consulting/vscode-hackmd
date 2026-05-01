@@ -8,6 +8,19 @@ const ICON_FOLDER = new vscode.ThemeIcon('folder');
 const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
 const ICON_FILE = new vscode.ThemeIcon('file');
 
+function resolveFolderParentId(folderLike: any): string | undefined {
+  const rawParentId = folderLike?.parentFolderId || folderLike?.parentForderId || folderLike?.parentId;
+  if (!rawParentId) {
+    return undefined;
+  }
+
+  const value = String(rawParentId);
+  if (value === 'null') {
+    return undefined;
+  }
+  return value.startsWith('folder-') ? value.slice('folder-'.length) : value;
+}
+
 type TreeNode = FolderNode | NoteNode | PlaceholderNode;
 
 interface FolderNode {
@@ -37,6 +50,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private notesCache: Note[] | null = null;
+  private foldersApiCache: any[] | null = null;
   // Cache folder objects to maintain stable references for change events
   private foldersCache = new Map<string, FolderNode>();
   // Track pending operations
@@ -47,6 +61,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
   refresh(): void {
     this.notesCache = null;
+    this.foldersApiCache = null;
     this.foldersCache.clear();
     this._onDidChangeTreeData.fire(undefined);
   }
@@ -54,6 +69,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   refreshElement(element?: TreeNode): void {
     // For personal notes, always refresh from root
     this.notesCache = null;
+    this.foldersApiCache = null;
     this.foldersCache.clear();
     this._onDidChangeTreeData.fire(undefined);
   }
@@ -196,6 +212,213 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  renameFolderInCache(folderId: string, newName: string): void {
+    const folder = this.foldersCache.get(folderId);
+    if (!folder) {
+      return;
+    }
+
+    folder.name = newName;
+
+    if (this.foldersApiCache) {
+      const apiFolder = this.foldersApiCache.find((entry) => entry?.id === folderId);
+      if (apiFolder) {
+        apiFolder.name = newName;
+      }
+    }
+
+    if (this.notesCache) {
+      for (const note of this.notesCache) {
+        if (!note.folderPaths || note.folderPaths.length === 0) {
+          continue;
+        }
+        for (const folderPath of note.folderPaths) {
+          if (folderPath.id === folderId) {
+            folderPath.name = newName;
+          }
+        }
+      }
+    }
+
+    this._onDidChangeTreeData.fire(folder);
+  }
+
+  addFolderToCache(folderData: any): void {
+    const folderId = folderData?.id;
+    if (!folderId) {
+      return;
+    }
+
+    const parentId = folderData.parentId || folderData.parentFolderId;
+
+    if (!this.foldersApiCache) {
+      this.foldersApiCache = [];
+    }
+    const existingApiFolderIndex = this.foldersApiCache.findIndex((entry) => entry?.id === folderId);
+    if (existingApiFolderIndex >= 0) {
+      this.foldersApiCache[existingApiFolderIndex] = {
+        ...this.foldersApiCache[existingApiFolderIndex],
+        ...folderData,
+        parentId,
+      };
+    } else {
+      this.foldersApiCache.push({
+        ...folderData,
+        parentId,
+      });
+    }
+
+    const existingFolder = this.foldersCache.get(folderId);
+    if (existingFolder) {
+      existingFolder.name = folderData.name || existingFolder.name;
+      existingFolder.icon = folderData.icon || existingFolder.icon;
+      existingFolder.color = folderData.color || existingFolder.color;
+      existingFolder.parentId = parentId;
+      existingFolder.clientId = folderData.clientId || existingFolder.clientId || '';
+    } else {
+      this.foldersCache.set(folderId, {
+        type: 'folder',
+        id: folderId,
+        name: folderData.name || 'Folder',
+        icon: folderData.icon,
+        color: folderData.color,
+        parentId,
+        clientId: folderData.clientId || '',
+        teamPath: null,
+        children: [],
+        notes: [],
+      });
+    }
+
+    this.rebuildFolderHierarchyFromCache();
+    this.syncNoteFolderPathsFromCache();
+    this.fireFolderOrRoot(parentId || null);
+  }
+
+  moveFolderInCache(folderId: string, parentFolderId: string | null): void {
+    const folder = this.foldersCache.get(folderId);
+    if (!folder) {
+      return;
+    }
+
+    const oldParentId = folder.parentId || null;
+    folder.parentId = parentFolderId || undefined;
+
+    if (this.foldersApiCache) {
+      const apiFolder = this.foldersApiCache.find((entry) => entry?.id === folderId);
+      if (apiFolder) {
+        apiFolder.parentId = parentFolderId || undefined;
+      }
+    }
+
+    this.rebuildFolderHierarchyFromCache();
+    this.syncNoteFolderPathsFromCache();
+
+    this.fireFolderOrRoot(oldParentId);
+    if (oldParentId !== (parentFolderId || null)) {
+      this.fireFolderOrRoot(parentFolderId || null);
+    }
+  }
+
+  removeFolderFromCache(folderId: string): void {
+    const subtreeIds = this.collectFolderSubtreeIds(folderId);
+    if (subtreeIds.size === 0) {
+      return;
+    }
+
+    const removedFolder = this.foldersCache.get(folderId);
+    const oldParentId = removedFolder?.parentId || null;
+
+    for (const id of subtreeIds) {
+      this.foldersCache.delete(id);
+    }
+
+    if (this.foldersApiCache) {
+      this.foldersApiCache = this.foldersApiCache.filter((entry) => !subtreeIds.has(entry?.id));
+    }
+
+    if (this.notesCache) {
+      for (const note of this.notesCache) {
+        if (!note.folderPaths || note.folderPaths.length === 0) {
+          continue;
+        }
+
+        const filteredPaths = note.folderPaths.filter((folderPath) => !subtreeIds.has(folderPath.id));
+        if (filteredPaths.length !== note.folderPaths.length) {
+          (note as any).folderPaths = filteredPaths;
+          (note as any).parentFolderId = filteredPaths.length > 0
+            ? filteredPaths[filteredPaths.length - 1].id
+            : null;
+        }
+      }
+    }
+
+    this.rebuildFolderHierarchyFromCache();
+    this.syncNoteFolderPathsFromCache();
+    this.fireFolderOrRoot(oldParentId);
+  }
+
+  private rebuildFolderHierarchyFromCache(): void {
+    this.organizeNotesIntoFolders(this.notesCache || [], this.foldersApiCache || []);
+  }
+
+  private syncNoteFolderPathsFromCache(): void {
+    if (!this.notesCache) {
+      return;
+    }
+
+    for (const note of this.notesCache) {
+      const currentPaths = ((note as any).folderPaths || []) as any[];
+      if (currentPaths.length === 0) {
+        (note as any).parentFolderId = null;
+        continue;
+      }
+
+      const deepestFolderId = currentPaths[currentPaths.length - 1].id;
+      const rebuiltPath = this.buildFolderPath(deepestFolderId);
+      (note as any).folderPaths = rebuiltPath;
+      (note as any).parentFolderId = rebuiltPath.length > 0
+        ? rebuiltPath[rebuiltPath.length - 1].id
+        : null;
+    }
+  }
+
+  private collectFolderSubtreeIds(folderId: string): Set<string> {
+    const ids = new Set<string>();
+    const stack: string[] = [folderId];
+
+    while (stack.length > 0) {
+      const currentId = stack.pop() as string;
+      if (ids.has(currentId)) {
+        continue;
+      }
+      ids.add(currentId);
+
+      for (const folder of this.foldersCache.values()) {
+        if (folder.parentId === currentId) {
+          stack.push(folder.id);
+        }
+      }
+    }
+
+    return ids;
+  }
+
+  private fireFolderOrRoot(folderId: string | null): void {
+    if (!folderId) {
+      this._onDidChangeTreeData.fire(undefined);
+      return;
+    }
+
+    const folder = this.foldersCache.get(folderId);
+    if (folder) {
+      this._onDidChangeTreeData.fire(folder);
+      return;
+    }
+
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
   async addNoteToCache(note: Note): Promise<NoteNode> {
     let notes = this.notesCache;
 
@@ -203,6 +426,11 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       // Notes not loaded yet - load them
       try {
         notes = await recordUsage(API.getNoteList({ unwrapData: false }));
+        try {
+          this.foldersApiCache = await recordUsage(API.getFolders({ unwrapData: false }));
+        } catch {
+          this.foldersApiCache = [];
+        }
         // Check if note is already in the list
         if (!notes.find(n => n.id === note.id)) {
           notes.unshift(note); // Add at beginning (newer notes first)
@@ -219,7 +447,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     // Build the tree structure (same as getChildren does)
-    const { rootFolders, rootNotes } = this.organizeNotesIntoFolders(notes);
+    const { rootFolders, rootNotes } = this.organizeNotesIntoFolders(notes, this.foldersApiCache || []);
     const children: TreeNode[] = [
       ...rootFolders,
       ...rootNotes.map(n => ({ type: 'note' as const, note: n }))
@@ -270,7 +498,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         this.notesCache.splice(index, 1);
 
         // Rebuild tree to update folder objects
-        this.organizeNotesIntoFolders(this.notesCache);
+        this.organizeNotesIntoFolders(this.notesCache, this.foldersApiCache || []);
 
         // Manually determine where to fire event based on the note's location
         if (note.folderPaths && note.folderPaths.length > 0) {
@@ -299,7 +527,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         this.notesCache[index] = updatedNote;
 
         // Rebuild tree to update folder objects
-        this.organizeNotesIntoFolders(this.notesCache);
+        this.organizeNotesIntoFolders(this.notesCache, this.foldersApiCache || []);
 
         if (emitEvents) {
           this.emitMoveChangeEvents(oldNote, updatedNote);
@@ -394,16 +622,30 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       // Root level - show folders and notes
       try {
         let notes = this.notesCache;
+        let folders = this.foldersApiCache;
         if (!notes) {
           notes = await recordUsage(API.getNoteList({ unwrapData: false }));
+          try {
+            folders = await recordUsage(API.getFolders({ unwrapData: false }));
+          } catch {
+            folders = [];
+          }
           this.notesCache = notes;
+          this.foldersApiCache = folders;
+        } else if (!folders) {
+          try {
+            folders = await recordUsage(API.getFolders({ unwrapData: false }));
+          } catch {
+            folders = [];
+          }
+          this.foldersApiCache = folders;
         }
 
-        if (notes.length === 0) {
+        if (notes.length === 0 && (!folders || folders.length === 0)) {
           return [{ type: 'placeholder', message: 'No notes' }];
         }
 
-        const { rootFolders, rootNotes } = this.organizeNotesIntoFolders(notes);
+        const { rootFolders, rootNotes } = this.organizeNotesIntoFolders(notes, folders || []);
 
         const children: TreeNode[] = [];
         children.push(...rootFolders);
@@ -466,7 +708,12 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `folder-${folderNode.id}`; // Stable ID for VS Code to track this item
     const isPending = this.pendingContainers.has(`folder-${folderNode.id}`);
-    item.contextValue = isPending ? 'folder-pending' : 'folder';
+    const hasClientId = !!folderNode.clientId;
+    if (isPending) {
+      item.contextValue = hasClientId ? 'folder-pending' : 'folder-no-client-id-pending';
+    } else {
+      item.contextValue = hasClientId ? 'folder' : 'folder-no-client-id';
+    }
     item.tooltip = folderNode.name;
 
     // Store context on the item for command handlers
@@ -528,30 +775,85 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return item;
   }
 
-  private organizeNotesIntoFolders(notes: Note[]): { rootFolders: FolderNode[]; rootNotes: Note[]; changedFolders: Set<FolderNode>; rootChanged: boolean } {
+  private organizeNotesIntoFolders(notes: Note[], apiFolders: any[]): { rootFolders: FolderNode[]; rootNotes: Note[]; changedFolders: Set<FolderNode>; rootChanged: boolean } {
     const rootNotes: Note[] = [];
     const changedFolders = new Set<FolderNode>();
 
-    // Collect all unique folders from notes, reusing cached folder objects
+    const noteFolderById = new Map<string, any>();
     for (const note of notes) {
       if (note.folderPaths && note.folderPaths.length > 0) {
         for (const folderPath of note.folderPaths) {
-          if (!this.foldersCache.has(folderPath.id)) {
-            // Create new folder object and cache it
-            this.foldersCache.set(folderPath.id, {
-              type: 'folder',
-              id: folderPath.id,
-              name: folderPath.name,
-              icon: folderPath.icon,
-              color: folderPath.color,
-              parentId: folderPath.parentId,
-              clientId: folderPath.clientId,
-              teamPath: note.teamPath,
-              children: [],
-              notes: [],
-            });
-          }
+          noteFolderById.set(folderPath.id, folderPath);
         }
+      }
+    }
+
+    const desiredFolderIds = new Set<string>();
+    for (const folderPath of noteFolderById.values()) {
+      desiredFolderIds.add(folderPath.id);
+      const parentId = resolveFolderParentId(folderPath);
+      const existing = this.foldersCache.get(folderPath.id);
+      if (!existing) {
+        this.foldersCache.set(folderPath.id, {
+          type: 'folder',
+          id: folderPath.id,
+          name: folderPath.name,
+          icon: folderPath.icon,
+          color: folderPath.color,
+          parentId,
+          clientId: folderPath.clientId || '',
+          teamPath: null,
+          children: [],
+          notes: [],
+        });
+      } else {
+        existing.name = folderPath.name;
+        existing.icon = folderPath.icon;
+        existing.color = folderPath.color;
+        existing.parentId = parentId;
+        existing.clientId = folderPath.clientId || existing.clientId || '';
+      }
+    }
+
+    for (const folder of apiFolders || []) {
+      const folderId = folder.id;
+      if (!folderId) {
+        continue;
+      }
+      desiredFolderIds.add(folderId);
+
+      const noteFolder = noteFolderById.get(folderId);
+      const parentId = resolveFolderParentId(noteFolder) || resolveFolderParentId(folder);
+      const existing = this.foldersCache.get(folderId);
+      if (!existing) {
+        this.foldersCache.set(folderId, {
+          type: 'folder',
+          id: folderId,
+          name: folder.name,
+          icon: folder.icon,
+          color: folder.color,
+          parentId,
+          clientId: noteFolder?.clientId || '',
+          teamPath: null,
+          children: [],
+          notes: [],
+        });
+      } else {
+        existing.name = folder.name;
+        existing.icon = folder.icon;
+        existing.color = folder.color;
+        if (parentId !== undefined || !existing.parentId) {
+          existing.parentId = parentId;
+        }
+        if (!existing.clientId && noteFolder?.clientId) {
+          existing.clientId = noteFolder.clientId;
+        }
+      }
+    }
+
+    for (const folderId of [...this.foldersCache.keys()]) {
+      if (!desiredFolderIds.has(folderId)) {
+        this.foldersCache.delete(folderId);
       }
     }
 
@@ -580,6 +882,8 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         .filter(n => !oldNotesInFolders.has(n.id) && oldNoteIds.has(n.id))
         .map(n => n.id)
     );
+
+    const oldRootFoldersCount = [...this.foldersCache.values()].filter((folder) => !folder.parentId).length;
 
     // Clear children and notes arrays in all cached folders
     for (const folder of this.foldersCache.values()) {

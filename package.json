@@ -323,6 +323,106 @@
         "command": "HackMD.upgrade",
         "title": "Upgrade",
         "category": "HackMD"
+      },
+      {
+        "command": "hackmd.model.refreshAll",
+        "title": "Refresh All Data",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.refreshTeams",
+        "title": "Refresh Teams",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.refreshHistory",
+        "title": "Refresh History",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.refreshScope",
+        "title": "Refresh Scope",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.getScopeSnapshot",
+        "title": "Get Scope Snapshot",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.getNote",
+        "title": "Get Note",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.getNoteContent",
+        "title": "Get Note Content",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.getEntityByUri",
+        "title": "Get Entity By URI",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.createNote",
+        "title": "Create Note",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.createFolder",
+        "title": "Create Folder",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.loadNoteContent",
+        "title": "Load Note Content",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.saveNoteContent",
+        "title": "Save Note Content",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.updateNoteProperties",
+        "title": "Update Note Properties",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.renameNote",
+        "title": "Rename Note",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.renameFolder",
+        "title": "Rename Folder",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.updateFolder",
+        "title": "Update Folder",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.moveNote",
+        "title": "Move Note",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.moveFolder",
+        "title": "Move Folder",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.deleteNote",
+        "title": "Delete Note",
+        "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.model.deleteFolder",
+        "title": "Delete Folder",
+        "category": "HackMD Model"
       }
     ],
     "menus": {
@@ -532,9 +632,10 @@
     "compile": "webpack --mode none",
     "watch": "webpack --mode none --progress --watch",
     "test-compile": "tsc -p ./",
-    "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts",
-    "test": "npm run test:model",
+    "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/model.ts",
+    "test": "npm run test:model && npm run test:commands",
     "test:model": "npm run test:model:compile && node --require ./test/node/registerVscodeStub.js --test ./test/node/hackmdModel.node.test.js",
+    "test:commands": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "open-in-browser": "vscode-test-web --extensionDevelopmentPath=. ."

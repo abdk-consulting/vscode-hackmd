@@ -7,12 +7,13 @@ import { solidity } from 'highlightjs-solidity';
 import * as markdownitContainer from 'markdown-it-container';
 import * as S from 'string';
 
-import { initializeAPIClient } from './api';
+import { API, initializeAPIClient } from './api';
 import { registerCommands } from './commands';
 import { NoteDragAndDropController } from './commands/treeView';
 import { ACCESS_TOKEN_KEY } from './constants';
 import { HistoryProvider } from './historyProvider';
 import { activate as activateFSProvider } from './mdFsProvider';
+import { initializeHackmdModel } from './model';
 import { MyNotesProvider } from './myNotesProvider';
 import { NoteCompletionProvider } from './noteCompletionProvider';
 import { NotePropertiesProvider } from './propertiesProvider';
@@ -338,6 +339,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   try {
     await initializeAPIClient(context);
+    if (API) {
+      initializeHackmdModel(API);
+    }
   } catch (error) {
     vscode.window.showErrorMessage('Failed to initialize HackMD API client. Please check your configuration.');
   }

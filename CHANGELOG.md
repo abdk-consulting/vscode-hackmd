@@ -24,6 +24,17 @@
 - Added model test scripts:
   - `test:model:compile` to compile model-only sources.
   - `test:model` to run model tests with a lightweight VS Code runtime stub.
+- Added an interactive command-palette layer (`src/commands/model.ts`) exposing all 20 `hackmd.model.*` commands:
+  - All pickers are sync-only (no in-picker API fetches); unloaded scopes show a hint linking to "HackMD Model: Refresh Scope".
+  - Every picker includes a `Custom…` fallback so users can enter IDs/paths manually.
+  - `createNote` and `createFolder` use location-first UX: scope → parent folder → name/title/content.
+  - `deleteNote` / `deleteFolder` require explicit confirmation unless `force: true` is passed programmatically.
+  - The commands layer has zero direct `api` imports; it depends only on the model singleton.
+- Added comprehensive pure-Node test suite for the commands layer (`test/node/modelCommands.node.test.js`):
+  - 59 tests covering all 20 commands, full interactive picker flows, cancellation at every step, `force` flag, and all custom-input fallback paths.
+  - Uses a dedicated `registerModelCommandsStub.js` that monkey-patches `Module._load` for both `vscode` and the model module, with a queue-based `Interactions` helper for controlling picker/input responses.
+  - Added `test:commands` script; `test` script now runs both `test:model` and `test:commands`.
+- Model is now initialized eagerly in `extension.ts` immediately after the API client, and `registerModelCommands` is wired into the main command registration in `src/commands/index.ts`.
 
 ### Changed
 

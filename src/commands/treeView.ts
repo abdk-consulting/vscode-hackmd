@@ -125,6 +125,48 @@ async function exportFolderNotesRecursively(options: {
   return { exportedCount, exportRootUri };
 }
 
+async function exportTeamNotes(options: {
+  teamPath: string;
+  teamName: string;
+  destinationParentUri: vscode.Uri;
+}): Promise<{ exportedCount: number; exportRootUri: vscode.Uri }> {
+  const { teamPath, teamName, destinationParentUri } = options;
+  const notes = await recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }));
+
+  const exportRootUri = vscode.Uri.joinPath(destinationParentUri, sanitizePathSegment(teamName));
+  await vscode.workspace.fs.createDirectory(exportRootUri);
+
+  const usedNamesByDirectory = new Map<string, Set<string>>();
+  let exportedCount = 0;
+
+  for (const note of notes) {
+    const folderPaths = ((note as any).folderPaths || []) as any[];
+    let targetDirectory = exportRootUri;
+
+    for (const folder of folderPaths) {
+      targetDirectory = vscode.Uri.joinPath(targetDirectory, sanitizePathSegment(folder.name || 'Folder'));
+      await vscode.workspace.fs.createDirectory(targetDirectory);
+    }
+
+    const targetDirectoryKey = targetDirectory.toString();
+    let usedNames = usedNamesByDirectory.get(targetDirectoryKey);
+    if (!usedNames) {
+      usedNames = await getUsedNamesForDirectory(targetDirectory);
+      usedNamesByDirectory.set(targetDirectoryKey, usedNames);
+    }
+
+    const baseName = note.title || note.shortId || 'Untitled';
+    const fileName = getUniqueMarkdownFileName(baseName, usedNames);
+
+    const noteWithContent = await recordUsage(API.getNote(note.id, { unwrapData: false }));
+    const fileUri = vscode.Uri.joinPath(targetDirectory, fileName);
+    await vscode.workspace.fs.writeFile(fileUri, Buffer.from(noteWithContent.content || '', 'utf8'));
+    exportedCount += 1;
+  }
+
+  return { exportedCount, exportRootUri };
+}
+
 async function pickMarkdownImportData(): Promise<{ title: string; content: string } | undefined> {
   const selection = await vscode.window.showOpenDialog({
     canSelectMany: false,
@@ -1426,6 +1468,62 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         await createNoteInScope(importData, { teamPath, openEditor: false });
       } catch (error: any) {
         vscode.window.showErrorMessage(`Failed to import team note: ${error.message}`);
+      } finally {
+        provider?.clearPendingContainer(containerId);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.team.openOnHackMD', async (node: any) => {
+      if (!node) {
+        return;
+      }
+      const teamPath = node.team?.path;
+      if (!teamPath) {
+        vscode.window.showErrorMessage('Team path not found');
+        return;
+      }
+      vscode.env.openExternal(vscode.Uri.parse(`https://hackmd.io/team/${teamPath}`));
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.team.exportNotes', async (node: any) => {
+      if (!node) {
+        return;
+      }
+      const teamPath = node.team?.path;
+      const teamName = node.team?.name || teamPath || 'Team';
+      if (!teamPath) {
+        vscode.window.showErrorMessage('Team path not found');
+        return;
+      }
+
+      const selection = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Export Team Notes',
+      });
+
+      const destinationParentUri = selection?.[0];
+      if (!destinationParentUri) {
+        return;
+      }
+
+      const provider = getTeamNotesProvider();
+      const teamId = provider?.getTeamIdFromPath(teamPath);
+      const containerId = `team-${teamId}`;
+      provider?.setPendingContainer(containerId);
+
+      try {
+        const result = await exportTeamNotes({ teamPath, teamName, destinationParentUri });
+        vscode.window.showInformationMessage(
+          `Exported ${result.exportedCount} note${result.exportedCount === 1 ? '' : 's'} to ${result.exportRootUri.fsPath}`
+        );
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to export team notes: ${error.message}`);
       } finally {
         provider?.clearPendingContainer(containerId);
       }

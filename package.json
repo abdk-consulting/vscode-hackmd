@@ -179,11 +179,11 @@
       },
       {
         "command": "HackMD.team.createNote",
-        "title": "Create Team Note",
+        "title": "New Note",
         "category": "HackMD",
         "icon": {
-          "light": "images/icon/light/new-file.svg",
-          "dark": "images/icon/dark/new-file.svg"
+          "light": "images/icon/light/new-note.svg",
+          "dark": "images/icon/dark/new-note.svg"
         }
       },
       {
@@ -194,6 +194,16 @@
           "light": "images/icon/light/cloud-upload.svg",
           "dark": "images/icon/dark/cloud-upload.svg"
         }
+      },
+      {
+        "command": "HackMD.team.openOnHackMD",
+        "title": "Open on HackMD",
+        "category": "HackMD"
+      },
+      {
+        "command": "HackMD.team.exportNotes",
+        "title": "Export...",
+        "category": "HackMD"
       },
       {
         "command": "HackMD.folder.openOnWeb",
@@ -423,16 +433,33 @@
         },
         {
           "command": "HackMD.team.createNote",
-          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)"
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
+          "group": "1_teamMain@1"
         },
         {
-          "command": "HackMD.team.importNote",
-          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)"
+          "command": "HackMD.team.openOnHackMD",
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
+          "group": "1_teamMain@2"
+        },
+        {
+          "command": "treeView.refreshSelectedTeam",
+          "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
+          "group": "1_teamMain@3"
         },
         {
           "command": "treeView.refreshSelectedTeam",
           "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
           "group": "inline@3"
+        },
+        {
+          "command": "HackMD.team.importNote",
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
+          "group": "2_teamTransfer@1"
+        },
+        {
+          "command": "HackMD.team.exportNotes",
+          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
+          "group": "2_teamTransfer@2"
         }
       ]
     }

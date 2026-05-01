@@ -4,8 +4,19 @@
 
 ## Recent Changes (Unreleased)
 
+### Changed
+
+- Rename and Move operations now close all open tabs for the affected note before proceeding, including markdown preview tabs, not just text editor tabs.
+- Unified tab-closing logic into a single `closeTabsForNote` helper that matches any tab type (editor, preview, etc.) by checking whether the tab's URI contains the note URI.
+- Removed redundant `API.getNote` content-validation fetch from the Side-by-Side fallback path in the editor command.
+
 ### Added
 
+- Added "Open on HackMD", "Export...", and improved inline buttons to team entries in the Team Notes tree view.
+  - Inline buttons on team rows: New Note, Import..., and Refresh (Refresh visible only after team notes are loaded).
+  - Context menu groups: primary actions (New Note, Open on HackMD, Refresh) and a transfer group (Import..., Export...) separated by a divider.
+  - "Export..." downloads all notes from the team and recreates the folder hierarchy on disk, mirroring the folder Export behavior.
+  - "Open on HackMD" opens `https://hackmd.io/team/{teamPath}` in the browser.
 - Added note-link completion inside HackMD editors when typing `[`.
   - Suggests cached personal and team notes whose titles or permalinks match the typed query.
   - Inserts links in the form `[Note Title](/@scope/permalink-or-id)`.

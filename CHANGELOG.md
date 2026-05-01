@@ -30,10 +30,19 @@
   - `createNote` and `createFolder` use location-first UX: scope → parent folder → name/title/content.
   - `deleteNote` / `deleteFolder` require explicit confirmation unless `force: true` is passed programmatically.
   - The commands layer has zero direct `api` imports; it depends only on the model singleton.
+- Added a second command layer (`src/commands/ui.ts`) with `hackmd.ui.*` commands that glue model operations to VS Code UI actions:
+  - `hackmd.ui.edit`, `hackmd.ui.preview`, `hackmd.ui.sideBySide`, `hackmd.ui.openOnHackMD`, `hackmd.ui.import`, and `hackmd.ui.export`.
+  - Export supports programmatic multi-entity input (`notes` + `folders`) and interactive single-entity selection from Command Palette.
+  - Picker/data selection paths are sync-only against model cache, with async calls used only for operation execution.
+  - UI command handlers have zero direct `api` imports and use the model layer exclusively.
 - Added comprehensive pure-Node test suite for the commands layer (`test/node/modelCommands.node.test.js`):
   - 59 tests covering all 20 commands, full interactive picker flows, cancellation at every step, `force` flag, and all custom-input fallback paths.
   - Uses a dedicated `registerModelCommandsStub.js` that monkey-patches `Module._load` for both `vscode` and the model module, with a queue-based `Interactions` helper for controlling picker/input responses.
   - Added `test:commands` script; `test` script now runs both `test:model` and `test:commands`.
+- Added shared picker utilities in `src/commands/pickers.ts` (scope/folder/note/entity pickers and prompt helpers), extracted from `src/commands/model.ts` and reused by UI commands.
+- Added a comprehensive pure-Node UI commands test suite (`test/node/uiCommands.node.test.js`) with a dedicated `registerUiCommandsStub.js` runtime mock:
+  - 19 tests covering all `hackmd.ui.*` commands, programmatic + interactive flows, cancellation paths, recursive folder export, and sync-only picker guarantees.
+  - Command tests are now split into `test:commands:model` and `test:commands:ui`, with `test:commands` orchestrating both suites.
 - Model is now initialized eagerly in `extension.ts` immediately after the API client, and `registerModelCommands` is wired into the main command registration in `src/commands/index.ts`.
 
 ### Changed
@@ -45,7 +54,7 @@
 - Model refresh/update flow now applies patch-style updates over existing state, preserving object identity for unchanged entities and suppressing redundant upsert events.
 - Async model getters/refresh methods now deduplicate concurrent requests by caching in-flight promises per scope/entity/URI.
 - `hackmd:` URI parsing now requires `noteId` in query params; legacy note-ID-in-fragment fallback was removed.
-- Project `test` command now points to the model Node test suite.
+- Project test flow now compiles `src/commands/pickers.ts` and `src/commands/ui.ts` as part of `test:model:compile` and runs command tests as two dedicated suites (`model` and `ui`).
 
 ### Fixed
 

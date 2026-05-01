@@ -423,6 +423,36 @@
         "command": "hackmd.model.deleteFolder",
         "title": "Delete Folder",
         "category": "HackMD Model"
+      },
+      {
+        "command": "hackmd.ui.edit",
+        "title": "Edit",
+        "category": "HackMD UI"
+      },
+      {
+        "command": "hackmd.ui.preview",
+        "title": "Preview",
+        "category": "HackMD UI"
+      },
+      {
+        "command": "hackmd.ui.sideBySide",
+        "title": "Side by Side",
+        "category": "HackMD UI"
+      },
+      {
+        "command": "hackmd.ui.openOnHackMD",
+        "title": "Open on HackMD",
+        "category": "HackMD UI"
+      },
+      {
+        "command": "hackmd.ui.import",
+        "title": "Import",
+        "category": "HackMD UI"
+      },
+      {
+        "command": "hackmd.ui.export",
+        "title": "Export",
+        "category": "HackMD UI"
       }
     ],
     "menus": {
@@ -632,10 +662,12 @@
     "compile": "webpack --mode none",
     "watch": "webpack --mode none --progress --watch",
     "test-compile": "tsc -p ./",
-    "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/model.ts",
+    "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/commands/model.ts src/commands/ui.ts",
     "test": "npm run test:model && npm run test:commands",
     "test:model": "npm run test:model:compile && node --require ./test/node/registerVscodeStub.js --test ./test/node/hackmdModel.node.test.js",
-    "test:commands": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
+    "test:commands:model": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
+    "test:commands:ui": "npm run test:model:compile && node --require ./test/node/registerUiCommandsStub.js --test ./test/node/uiCommands.node.test.js",
+    "test:commands": "npm run test:commands:model && npm run test:commands:ui",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "open-in-browser": "vscode-test-web --extensionDevelopmentPath=. ."

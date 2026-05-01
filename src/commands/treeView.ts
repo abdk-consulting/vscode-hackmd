@@ -33,6 +33,98 @@ function getExportFileName(note: Note): string {
   return baseName.toLowerCase().endsWith('.md') ? baseName : `${baseName}.md`;
 }
 
+function sanitizePathSegment(name: string): string {
+  const sanitized = (name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+  return sanitized || 'Untitled';
+}
+
+function normalizeFolderId(rawFolderId: unknown): string | undefined {
+  if (!rawFolderId) {
+    return undefined;
+  }
+
+  const value = String(rawFolderId);
+  return value.startsWith('folder-') ? value.slice('folder-'.length) : value;
+}
+
+function getUniqueMarkdownFileName(baseName: string, usedNames: Set<string>): string {
+  const safeBaseName = sanitizePathSegment(baseName);
+  let index = 1;
+  let candidate = `${safeBaseName}.md`;
+
+  while (usedNames.has(candidate.toLowerCase())) {
+    index += 1;
+    candidate = `${safeBaseName} (${index}).md`;
+  }
+
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+async function getUsedNamesForDirectory(uri: vscode.Uri): Promise<Set<string>> {
+  const usedNames = new Set<string>();
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(uri);
+    for (const [name] of entries) {
+      usedNames.add(name.toLowerCase());
+    }
+  } catch {
+    // Directory may not exist yet; callers create it before write.
+  }
+  return usedNames;
+}
+
+async function exportFolderNotesRecursively(options: {
+  folderId: string;
+  folderName: string;
+  teamPath?: string | null;
+  destinationParentUri: vscode.Uri;
+}): Promise<{ exportedCount: number; exportRootUri: vscode.Uri }> {
+  const { folderId, folderName, teamPath, destinationParentUri } = options;
+  const notes = teamPath
+    ? await recordUsage(API.getTeamNotes(teamPath, { unwrapData: false }))
+    : await recordUsage(API.getNoteList({ unwrapData: false }));
+
+  const exportRootUri = vscode.Uri.joinPath(destinationParentUri, sanitizePathSegment(folderName));
+  await vscode.workspace.fs.createDirectory(exportRootUri);
+
+  const usedNamesByDirectory = new Map<string, Set<string>>();
+  let exportedCount = 0;
+
+  for (const note of notes) {
+    const folderPaths = ((note as any).folderPaths || []) as any[];
+    const folderIndex = folderPaths.findIndex((entry) => entry.id === folderId);
+    if (folderIndex === -1) {
+      continue;
+    }
+
+    const relativeFolders = folderPaths.slice(folderIndex + 1);
+    let targetDirectory = exportRootUri;
+
+    for (const folder of relativeFolders) {
+      targetDirectory = vscode.Uri.joinPath(targetDirectory, sanitizePathSegment(folder.name || 'Folder'));
+      await vscode.workspace.fs.createDirectory(targetDirectory);
+    }
+
+    const targetDirectoryKey = targetDirectory.toString();
+    let usedNames = usedNamesByDirectory.get(targetDirectoryKey);
+    if (!usedNames) {
+      usedNames = await getUsedNamesForDirectory(targetDirectory);
+      usedNamesByDirectory.set(targetDirectoryKey, usedNames);
+    }
+
+    const baseName = note.title || note.shortId || 'Untitled';
+    const fileName = getUniqueMarkdownFileName(baseName, usedNames);
+
+    const noteWithContent = await recordUsage(API.getNote(note.id, { unwrapData: false }));
+    const fileUri = vscode.Uri.joinPath(targetDirectory, fileName);
+    await vscode.workspace.fs.writeFile(fileUri, Buffer.from(noteWithContent.content || '', 'utf8'));
+    exportedCount += 1;
+  }
+
+  return { exportedCount, exportRootUri };
+}
+
 async function pickMarkdownImportData(): Promise<{ title: string; content: string } | undefined> {
   const selection = await vscode.window.showOpenDialog({
     canSelectMany: false,
@@ -95,8 +187,7 @@ async function createNoteInScope(
 
   if (openEditor) {
     const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-    const doc = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(doc, { preview: false });
+    await openNoteEditorByUri(uri);
   }
 
   if (noteNode) {
@@ -117,55 +208,24 @@ function isSameNoteUri(uri: vscode.Uri, noteId: string, teamPath?: string | null
   return uriNoteId === noteId && (uriTeamPath || null) === (teamPath || null);
 }
 
-/**
- * Check if a note is already open in an editor. If so, switch to it instead of opening a new one.
- * @returns true if note was already open (and we switched to it), false if not open
- */
-async function switchToNoteIfAlreadyOpen(note: Note): Promise<boolean> {
-  const noteId = note.id;
-  const visibleEditors = vscode.window.visibleTextEditors;
-
-  for (const editor of visibleEditors) {
-    if (editor.document.uri.scheme === 'hackmd' && getNoteIdFromFragment(editor.document.uri.fragment) === noteId) {
-      // Note is already open, switch to it
-      await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
-      return true;
-    }
-  }
-
-  // Also check non-visible editors (in background tabs)
-  const allDocuments = vscode.workspace.textDocuments;
-  for (const doc of allDocuments) {
-    if (doc.uri.scheme === 'hackmd' && getNoteIdFromFragment(doc.uri.fragment) === noteId) {
-      // Note is open in a background tab, bring it to front
-      await vscode.window.showTextDocument(doc, { preview: false });
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function closeOpenEditorsForNote(note: Note): Promise<boolean> {
+async function closeTabsForNote(note: Note): Promise<boolean> {
+  const targetUri = generateResourceUri(note.title || (note as any).shortId || 'Untitled', note.id, note.teamPath, (note as any).folderPaths);
+  const targetUriString = targetUri.toString();
   const tabsToClose: vscode.Tab[] = [];
+
+  console.log('[closeTabsForNote] targetUri:', targetUriString);
 
   for (const tabGroup of vscode.window.tabGroups.all) {
     for (const tab of tabGroup.tabs) {
-      if (tab.input instanceof vscode.TabInputText && isSameNoteUri(tab.input.uri, note.id, note.teamPath)) {
+      const input = tab.input as any;
+      if (input.viewType === "mainThreadWebview-markdown.preview"
+        || input?.uri?.toString() === targetUriString) {
         tabsToClose.push(tab);
       }
     }
   }
 
-  for (const tab of tabsToClose) {
-    const closed = await vscode.window.tabGroups.close(tab);
-    if (!closed) {
-      // User canceled from the save/discard/cancel prompt.
-      return false;
-    }
-  }
-
-  return true;
+  return await vscode.window.tabGroups.close(tabsToClose);
 }
 
 // Helper function to reveal and select a note after creation
@@ -180,6 +240,33 @@ async function revealNote(treeView: vscode.TreeView<any> | undefined, noteNode: 
   } catch (error) {
     console.error('Failed to reveal note:', error);
   }
+}
+
+async function openNoteEditorByUri(uri: vscode.Uri): Promise<vscode.TextEditor> {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  return vscode.window.showTextDocument(doc, {
+    preview: false,
+    preserveFocus: false,
+    viewColumn: vscode.ViewColumn.One,
+  });
+}
+
+async function openMarkdownPreview(uri: vscode.Uri): Promise<void> {
+  await vscode.commands.executeCommand(
+    'markdown.showPreview',
+    uri
+  );
+}
+
+async function openSideBySideForUri(uri: vscode.Uri): Promise<void> {
+  // Let VS Code decide editor tab placement/reuse naturally.
+  await openNoteEditorByUri(uri);
+
+  // Open preview beside and let VS Code handle preview-tab behavior.
+  await vscode.commands.executeCommand(
+    'markdown.showPreviewToSide',
+    uri
+  );
 }
 
 interface MoveTargetQuickPickItem extends vscode.QuickPickItem {
@@ -315,42 +402,6 @@ function hydrateDraggedNote(note: Note): Note {
       ? note.folderPaths
       : ((cached as any).folderPaths || []),
   } as Note;
-}
-
-function normalizeDraggedNotes(raw: any): Note[] {
-  if (raw && Array.isArray(raw.notes)) {
-    return normalizeDraggedNotes(raw.notes);
-  }
-
-  if (raw && Array.isArray(raw.items)) {
-    return normalizeDraggedNotes(raw.items);
-  }
-
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-
-  const notes: Note[] = [];
-
-  for (const entry of raw) {
-    if (!entry) {
-      continue;
-    }
-
-    // Custom payload stores Note objects directly.
-    if (entry.id) {
-      notes.push(entry as Note);
-      continue;
-    }
-
-    // Built-in tree payload usually stores serialized tree nodes.
-    if (entry.type === 'note' && entry.note?.id) {
-      notes.push(entry.note as Note);
-      continue;
-    }
-  }
-
-  return notes;
 }
 
 async function getDraggedNotesFromDataTransfer(dataTransfer: vscode.DataTransfer): Promise<Note[]> {
@@ -524,7 +575,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
         continue;
       }
 
-      const canProceed = await closeOpenEditorsForNote(note);
+      const canProceed = await closeTabsForNote(note);
       if (!canProceed) {
         continue;
       }
@@ -599,8 +650,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             const note = await recordUsage(API.createNote({}, { unwrapData: false }));
 
             const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-            const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, { preview: false });
+            await openNoteEditorByUri(uri);
 
             if (provider) {
               const noteNode = await provider.addNoteToCache(note);
@@ -649,25 +699,15 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const noteId = note.id;
         const currentTitle = note.title || note.shortId || 'Unnamed';
 
-        const matchingEditors = vscode.window.visibleTextEditors.filter((editor) =>
-          isSameNoteUri(editor.document.uri, noteId, note.teamPath)
-        );
+        const oldUriForRename = generateResourceUri(currentTitle, noteId, note.teamPath, (note as any).folderPaths);
 
-        const oldUriForRename = matchingEditors[0]?.document.uri || generateResourceUri(currentTitle, noteId, note.teamPath, (note as any).folderPaths);
-
-        // Close all visible editors for this note first. If user cancels close, abort rename.
-        for (const editor of matchingEditors) {
-          await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
-          await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-
-          const stillVisible = vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === editor.document.uri.toString());
-          if (stillVisible) {
-            // User likely selected "Cancel" on save/discard/cancel prompt.
-            return;
-          }
+        // Close all open tabs (editors and previews) for this note first. If user cancels, abort rename.
+        const canClose = await closeTabsForNote(note);
+        if (!canClose) {
+          return;
         }
 
-        // Ask for the new name only after open editors are successfully closed.
+        // Ask for the new name only after open tabs are successfully closed.
         const newTitle = await vscode.window.showInputBox({
           prompt: 'Enter new note name',
           value: currentTitle,
@@ -787,12 +827,67 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         return;
       }
 
-      const canProceed = await closeOpenEditorsForNote(note);
+      const canProceed = await closeTabsForNote(note);
       if (!canProceed) {
         return;
       }
 
       await performMove(note, selected.folderId, selected.folderPaths);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.duplicateNote', async (node: any) => {
+      if (!node || node.type !== 'note') {
+        return;
+      }
+
+      const sourceNote = node.note as Note;
+      const teamPath = sourceNote.teamPath || null;
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+
+      const fetchedNote = await recordUsage(API.getNote(sourceNote.id, { unwrapData: false }));
+      const folderPaths = ((fetchedNote as any).folderPaths || (sourceNote as any).folderPaths || []) as any[];
+      const parentFolderId = folderPaths.length > 0
+        ? normalizeFolderId(folderPaths[folderPaths.length - 1].id)
+        : undefined;
+
+      const payload: Record<string, any> = {
+        title: sourceNote.title || fetchedNote.title || 'Untitled',
+        content: fetchedNote.content || '',
+      };
+
+      if (parentFolderId) {
+        payload.parentFolderId = parentFolderId;
+      }
+
+      let containerId: string | undefined;
+      if (parentFolderId) {
+        containerId = `folder-${parentFolderId}`;
+      } else if (teamPath) {
+        const teamId = teamNotesProvider?.getTeamIdFromPath(teamPath);
+        if (teamId) {
+          containerId = `team-${teamId}`;
+        }
+      } else {
+        containerId = 'root';
+      }
+
+      const provider = teamPath ? teamNotesProvider : myNotesProvider;
+      if (containerId) {
+        provider?.setPendingContainer(containerId);
+      }
+
+      try {
+        await createNoteInScope(payload, { teamPath, openEditor: false });
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to duplicate note: ${error.message}`);
+      } finally {
+        if (containerId) {
+          provider?.clearPendingContainer(containerId);
+        }
+      }
     })
   );
 
@@ -842,19 +937,8 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             await recordUsage(API.deleteNote(noteId, { unwrapData: false }));
           }
 
-          // Close the editor if it's open
-          const label = node.note.title || node.note.shortId || 'Unnamed';
-          const uri = generateResourceUri(label, noteId, teamPath, (node.note as any).folderPaths);
-
-          // Find and close the tab
-          for (const tabGroup of vscode.window.tabGroups.all) {
-            for (const tab of tabGroup.tabs) {
-              if (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString()) {
-                await vscode.window.tabGroups.close(tab);
-                break;
-              }
-            }
-          }
+          // Close all open tabs (editors and previews) for this note.
+          await closeTabsForNote(node.note);
 
           // After successful deletion, remove from caches
           // (removeNoteFromCache will also fire tree change events)
@@ -899,8 +983,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
         try {
           const uri = generateResourceUri(label, noteId, note.teamPath, (note as any).folderPaths);
-          const doc = await vscode.workspace.openTextDocument(uri);
-          await vscode.window.showTextDocument(doc, { preview: false });
+          await openNoteEditorByUri(uri);
         } finally {
           // Clear pending state
           if (note.teamPath) {
@@ -918,16 +1001,28 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.editNote', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
+        const myNotesProvider = getMyNotesProvider();
+        const teamNotesProvider = getTeamNotesProvider();
+        const historyProvider = getHistoryProvider();
 
-        // Check if note is already open and switch to it
-        const alreadyOpen = await switchToNoteIfAlreadyOpen(note);
-        if (alreadyOpen) {
-          return;
+        if (note.teamPath) {
+          teamNotesProvider?.setPendingNote(note.id, note);
+        } else {
+          myNotesProvider?.setPendingNote(note.id, note);
         }
+        historyProvider?.setPendingNote(note.id, note);
 
-        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preview: false });
+        try {
+          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+          await openNoteEditorByUri(uri);
+        } finally {
+          if (note.teamPath) {
+            teamNotesProvider?.clearPendingNote(note.id, note);
+          } else {
+            myNotesProvider?.clearPendingNote(note.id, note);
+          }
+          historyProvider?.clearPendingNote(note.id, note);
+        }
       }
     })
   );
@@ -1019,8 +1114,28 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.showPreview', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
-        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-        vscode.commands.executeCommand('markdown.showPreview', uri);
+        const myNotesProvider = getMyNotesProvider();
+        const teamNotesProvider = getTeamNotesProvider();
+        const historyProvider = getHistoryProvider();
+
+        if (note.teamPath) {
+          teamNotesProvider?.setPendingNote(note.id, note);
+        } else {
+          myNotesProvider?.setPendingNote(note.id, note);
+        }
+        historyProvider?.setPendingNote(note.id, note);
+
+        try {
+          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+          await openMarkdownPreview(uri);
+        } finally {
+          if (note.teamPath) {
+            teamNotesProvider?.clearPendingNote(note.id, note);
+          } else {
+            myNotesProvider?.clearPendingNote(note.id, note);
+          }
+          historyProvider?.clearPendingNote(note.id, note);
+        }
       } else {
         const editor = vscode.window.activeTextEditor;
         if (!checkEditorExist(editor)) {
@@ -1035,7 +1150,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         const lastIndex = editor.document.fileName.lastIndexOf('.');
         const fileName = editor.document.fileName.slice(0, lastIndex + 1);
         const uri = generateResourceUri(fileName, noteId);
-        vscode.commands.executeCommand('markdown.showPreview', uri);
+        await openMarkdownPreview(uri);
       }
     })
   );
@@ -1044,18 +1159,28 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.showPreviewAndEditor', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
+        const myNotesProvider = getMyNotesProvider();
+        const teamNotesProvider = getTeamNotesProvider();
+        const historyProvider = getHistoryProvider();
 
-        // Check if note is already open and switch to it
-        const alreadyOpen = await switchToNoteIfAlreadyOpen(note);
-        if (!alreadyOpen) {
-          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-          const doc = await vscode.workspace.openTextDocument(uri);
-          await vscode.window.showTextDocument(doc, { preview: false });
+        if (note.teamPath) {
+          teamNotesProvider?.setPendingNote(note.id, note);
+        } else {
+          myNotesProvider?.setPendingNote(note.id, note);
         }
+        historyProvider?.setPendingNote(note.id, note);
 
-        // Show preview alongside the editor
-        const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-        vscode.commands.executeCommand('markdown.showPreviewToSide', uri);
+        try {
+          const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
+          await openSideBySideForUri(uri);
+        } finally {
+          if (note.teamPath) {
+            teamNotesProvider?.clearPendingNote(note.id, note);
+          } else {
+            myNotesProvider?.clearPendingNote(note.id, note);
+          }
+          historyProvider?.clearPendingNote(note.id, note);
+        }
       } else {
         const editor = vscode.window.activeTextEditor;
         if (!checkEditorExist(editor)) {
@@ -1067,17 +1192,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
           return;
         }
 
-        const { content } = await recordUsage(API.getNote(noteId, { unwrapData: false }));
-        if (!checkNoteExist(content)) {
-          return;
-        }
-
         const lastIndex = editor.document.fileName.lastIndexOf('.');
         const fileName = editor.document.fileName.slice(0, lastIndex + 1);
         const uri = generateResourceUri(fileName, noteId);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preview: false });
-        vscode.commands.executeCommand('markdown.showPreviewToSide', uri);
+        await openSideBySideForUri(uri);
       }
     })
   );
@@ -1107,11 +1225,11 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         let folderId, teamPath;
 
         if (node.type === 'folder') {
-          folderId = node.id;
+          folderId = normalizeFolderId(node.id);
           teamPath = node.teamPath;
         } else {
           // Fallback for React tree nodes
-          folderId = node.value?.context?.folderId || node.folderId;
+          folderId = normalizeFolderId(node.value?.context?.folderId || node.folderId || node.id);
           teamPath = node.value?.context?.teamPath || node.teamPath;
         }
         const payload = folderId ? { parentFolderId: folderId } : {};
@@ -1145,10 +1263,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       let folderId, teamPath;
 
       if (node.type === 'folder') {
-        folderId = node.id;
+        folderId = normalizeFolderId(node.id);
         teamPath = node.teamPath;
       } else {
-        folderId = node.value?.context?.folderId || node.folderId;
+        folderId = normalizeFolderId(node.value?.context?.folderId || node.folderId || node.id);
         teamPath = node.value?.context?.teamPath || node.teamPath;
       }
 
@@ -1178,12 +1296,75 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       if (treeItem) {
         // For React tree nodes, context is in value.context
         // For TreeDataProvider nodes, properties are directly on the item
-        const folderId = treeItem.value?.context?.folderId || treeItem.folderId;
+        const folderClientId = treeItem.value?.context?.folderClientId || treeItem.folderClientId || treeItem.clientId;
+        const teamPath = treeItem.value?.context?.teamPath || treeItem.teamPath;
 
-        if (folderId) {
-          // Open HackMD - the exact URL structure for folders may need to be adjusted
-          vscode.env.openExternal(vscode.Uri.parse('https://hackmd.io'));
+        if (folderClientId) {
+          const url = teamPath
+            ? `https://hackmd.io/team/${teamPath}/folders/${folderClientId}`
+            : `https://hackmd.io/folders/${folderClientId}`;
+          vscode.env.openExternal(vscode.Uri.parse(url));
+        } else {
+          vscode.window.showErrorMessage('Folder client ID not found');
         }
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('HackMD.folder.exportNote', async (node: any) => {
+      if (!node) {
+        return;
+      }
+
+      const folderId = node.type === 'folder'
+        ? normalizeFolderId(node.id)
+        : normalizeFolderId(node.value?.context?.folderId || node.folderId || node.id);
+      const folderName = node.type === 'folder'
+        ? node.name
+        : (node.value?.context?.name || node.name || 'Folder');
+      const teamPath = node.type === 'folder'
+        ? node.teamPath
+        : (node.value?.context?.teamPath || node.teamPath);
+
+      if (!folderId) {
+        vscode.window.showErrorMessage('Folder ID not found');
+        return;
+      }
+
+      const selection = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Export Folder',
+      });
+
+      const destinationParentUri = selection?.[0];
+      if (!destinationParentUri) {
+        return;
+      }
+
+      const containerId = `folder-${folderId}`;
+      const myNotesProvider = getMyNotesProvider();
+      const teamNotesProvider = getTeamNotesProvider();
+      const provider = teamPath ? teamNotesProvider : myNotesProvider;
+      provider?.setPendingContainer(containerId);
+
+      try {
+        const result = await exportFolderNotesRecursively({
+          folderId,
+          folderName,
+          teamPath,
+          destinationParentUri,
+        });
+
+        vscode.window.showInformationMessage(
+          `Exported ${result.exportedCount} note${result.exportedCount === 1 ? '' : 's'} to ${result.exportRootUri.fsPath}`
+        );
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to export folder: ${error.message}`);
+      } finally {
+        provider?.clearPendingContainer(containerId);
       }
     })
   );
@@ -1270,11 +1451,4 @@ const checkNoteIdExist = (noteId) => {
   }
 };
 
-const checkNoteExist = (content) => {
-  if (content) {
-    return true;
-  } else {
-    vscode.window.showInformationMessage("Can't find the note from HackMD. Make sure it's still exist.");
-    return false;
-  }
-};
+

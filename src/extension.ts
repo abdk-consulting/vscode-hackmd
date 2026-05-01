@@ -55,6 +55,33 @@ export function getPropertiesProvider(): NotePropertiesProvider | undefined {
   return propertiesProvider;
 }
 
+function isSelectedNoteNode(node: any): boolean {
+  return node?.type === 'note' && !!node.note?.id;
+}
+
+function updateTreeSelectionContexts(prefix: string, selection: readonly any[]): void {
+  const hasSelection = selection.length > 0;
+  const hasMixedSelection = selection.length > 1 && selection.some((node) => !isSelectedNoteNode(node));
+  const hasMultiNoteSelection = selection.length > 1 && selection.every(isSelectedNoteNode);
+  const hasSameScopeMultiNoteSelection = hasMultiNoteSelection && selection.every(
+    (node) => (node.note?.teamPath || null) === (selection[0].note?.teamPath || null)
+  );
+
+  void vscode.commands.executeCommand('setContext', `${prefix}.hasSelection`, hasSelection);
+  void vscode.commands.executeCommand('setContext', `${prefix}.hasMixedSelection`, hasMixedSelection);
+  void vscode.commands.executeCommand('setContext', `${prefix}.hasMultiNoteSelection`, hasMultiNoteSelection);
+  void vscode.commands.executeCommand('setContext', `${prefix}.hasSameScopeMultiNoteSelection`, hasSameScopeMultiNoteSelection);
+}
+
+function bindTreeSelectionContexts(treeView: vscode.TreeView<any>, prefix: string, context: vscode.ExtensionContext): void {
+  updateTreeSelectionContexts(prefix, treeView.selection);
+  context.subscriptions.push(
+    treeView.onDidChangeSelection((event) => {
+      updateTreeSelectionContexts(prefix, event.selection);
+    })
+  );
+}
+
 if (process.env.RUNTIME !== 'browser') {
   Prism = require('prismjs');
 }
@@ -293,24 +320,30 @@ export async function activate(context: vscode.ExtensionContext) {
 
   myNotesProvider = new MyNotesProvider(context.extensionPath);
   myNotesTreeView = vscode.window.createTreeView('hackmd.tree.my-notes', {
+    canSelectMany: true,
     treeDataProvider: myNotesProvider,
     dragAndDropController,
   });
   context.subscriptions.push(myNotesTreeView);
+  bindTreeSelectionContexts(myNotesTreeView, 'hackmd.myNotesSelection', context);
 
   historyProvider = new HistoryProvider(context.extensionPath);
   historyTreeView = vscode.window.createTreeView('hackmd.tree.recent-notes', {
+    canSelectMany: true,
     treeDataProvider: historyProvider,
     dragAndDropController: noDropDragAndDropController,
   });
   context.subscriptions.push(historyTreeView);
+  bindTreeSelectionContexts(historyTreeView, 'hackmd.historySelection', context);
 
   teamNotesProvider = new TeamNotesProvider(context.extensionPath);
   teamNotesTreeView = vscode.window.createTreeView('hackmd.tree.team-notes', {
+    canSelectMany: true,
     treeDataProvider: teamNotesProvider,
     dragAndDropController,
   });
   context.subscriptions.push(teamNotesTreeView);
+  bindTreeSelectionContexts(teamNotesTreeView, 'hackmd.teamNotesSelection', context);
 
   // Register properties webview provider
   propertiesProvider = new NotePropertiesProvider(context.extensionUri);

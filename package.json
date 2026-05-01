@@ -328,67 +328,67 @@
       "view/item/context": [
         {
           "command": "HackMD.editNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@1"
         },
         {
           "command": "HackMD.editNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "inline@1"
         },
         {
           "command": "HackMD.showPreview",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@2"
         },
         {
           "command": "HackMD.showPreview",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "inline@2"
         },
         {
           "command": "HackMD.showPreviewAndEditor",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@3"
         },
         {
           "command": "HackMD.showPreviewAndEditor",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "inline@3"
         },
         {
           "command": "HacKMD.openNoteOnHackMD",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@4"
         },
         {
           "command": "HackMD.renameNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@2"
         },
         {
           "command": "HackMD.openNoteProperties",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@1"
         },
         {
           "command": "HackMD.moveNoteTo",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && (!hackmd.myNotesSelection.hasMultiNoteSelection || hackmd.myNotesSelection.hasSameScopeMultiNoteSelection)) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && (!hackmd.teamNotesSelection.hasMultiNoteSelection || hackmd.teamNotesSelection.hasSameScopeMultiNoteSelection)) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && (!hackmd.historySelection.hasMultiNoteSelection || hackmd.historySelection.hasSameScopeMultiNoteSelection)))",
           "group": "2_noteActions@3"
         },
         {
           "command": "HackMD.duplicateNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@4"
         },
         {
           "command": "HackMD.exportNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection))",
           "group": "2_noteActions@5"
         },
         {
           "command": "HackMD.deleteMyNote",
-          "when": "view =~ /hackmd.tree/ && viewItem == file",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection))",
           "group": "3_noteDanger@1"
         },
         {

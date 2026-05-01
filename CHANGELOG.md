@@ -7,6 +7,18 @@
 ### Changed
 
 - Import actions now support selecting multiple `.md` files at once; each selected file is created as a separate note.
+- Tree views now support multi-selection for note actions.
+  - Batch actions are available for selected notes: Move, Delete, and Export.
+  - Single-note actions (Edit, Preview, Rename, Duplicate, etc.) are hidden during multi-note selection.
+  - Mixed selections (notes + folders/teams) suppress note batch actions.
+  - Move is only shown for multi-note selections within the same scope/team.
+  - Context-menu targeting now matches VS Code Explorer behavior for selected vs non-selected right-clicked items.
+- Batch note operations now execute in parallel to improve UX.
+  - Multi-note Delete runs API requests concurrently and reports aggregated failures.
+  - Multi-note drag-and-drop Move runs note moves concurrently after validation/tab-close checks.
+- Note Export now supports multi-note selection.
+  - Single-note export keeps Save dialog behavior.
+  - Multi-note export prompts for a target directory and writes one Markdown file per note with conflict-safe filenames.
 - Rename and Move operations now close all open tabs for the affected note before proceeding, including markdown preview tabs, not just text editor tabs.
 - Unified tab-closing logic into a single `closeTabsForNote` helper that matches any tab type (editor, preview, etc.) by checking whether the tab's URI contains the note URI.
 - Removed redundant `API.getNote` content-validation fetch from the Side-by-Side fallback path in the editor command.

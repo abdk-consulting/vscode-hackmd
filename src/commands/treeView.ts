@@ -17,25 +17,10 @@ function unwrapApiData<T>(responseOrData: any): T {
   return responseOrData as T;
 }
 
-function getLegacyNoteIdFromFragment(fragment: string): string {
-  if (!fragment) {
-    return '';
-  }
-  const questionIndex = fragment.indexOf('?');
-  if (questionIndex >= 0) {
-    return fragment.slice(0, questionIndex);
-  }
-  const encodedQuestionIndex = fragment.toLowerCase().indexOf('%3f');
-  if (encodedQuestionIndex >= 0) {
-    return fragment.slice(0, encodedQuestionIndex);
-  }
-  return fragment;
-}
-
 function getUriParams(uri: vscode.Uri): { noteId: string; folderId: string; teamPath: string | null } {
   const params = new URLSearchParams(uri.query || '');
   return {
-    noteId: params.get('noteId') || getLegacyNoteIdFromFragment(uri.fragment),
+    noteId: params.get('noteId') || '',
     folderId: params.get('folderId') || '',
     teamPath: params.get('teamPath'),
   };

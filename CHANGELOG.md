@@ -19,12 +19,22 @@
 - Added progress indicator in My Notes and Team Notes tree view headers while a folder is being created at root level, matching note-creation UX.
 - Added spinner on folders during drag-and-drop and command-based move operations, matching the note-drag pending-state behavior.
 - Notes and folders in the My Notes and Team Notes trees are now sorted alphabetically. Within each container, folders appear first (sorted by name), followed by notes (sorted by title). Sorting is case-insensitive, with a case-sensitive tiebreaker when names differ only in case. Team workspaces at the root of Team Notes are also sorted by name.
+- Added a UI-agnostic HackMD model layer with stable entity objects (`team`/`folder`/`note`), sync state getters, change events, URI conversion/lookup helpers, and asynchronous operations for refresh/create/update/move/delete/content loading.
+- Added comprehensive pure Node tests for the model layer using built-in `node:test` + `node:assert` and an in-memory mock HackMD API implementation (no Jest/Mocha).
+- Added model test scripts:
+  - `test:model:compile` to compile model-only sources.
+  - `test:model` to run model tests with a lightweight VS Code runtime stub.
 
 ### Changed
 
 - "New Folder..." actions everywhere now use the `new-folder` codicon instead of the custom folder SVG icon.
 - Moved HackMD API domain types (`Note`, `Team`, `HackMdFolder`, `NotePublishType`) from global ambient declarations to named exports in the local API client module.
 - Updated note-related providers and tree commands to import API domain types explicitly from the local API client.
+- Model layer no longer depends on the global API singleton; it now requires an injected `HackMdApiClient` instance.
+- Model refresh/update flow now applies patch-style updates over existing state, preserving object identity for unchanged entities and suppressing redundant upsert events.
+- Async model getters/refresh methods now deduplicate concurrent requests by caching in-flight promises per scope/entity/URI.
+- `hackmd:` URI parsing now requires `noteId` in query params; legacy note-ID-in-fragment fallback was removed.
+- Project `test` command now points to the model Node test suite.
 
 ### Fixed
 
@@ -138,6 +148,7 @@
 ### Removed
 
 - Removed redundant `viewsWelcome` entries that duplicated API token prompts.
+- Removed legacy placeholder extension test harness (`src/test/**`) and related Mocha/`vscode-test` dependencies.
 - Removed publish mode from Note Properties editor.
 - Removed disruptive save/discard/cancel prompt that appeared whenever VS Code lost window focus.
 

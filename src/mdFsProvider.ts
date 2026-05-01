@@ -51,24 +51,9 @@ function getTeamPathFromUri(uri: vscode.Uri): string | null {
   return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
 }
 
-function getLegacyNoteIdFromFragment(fragment: string): string {
-  if (!fragment) {
-    return '';
-  }
-  const questionIndex = fragment.indexOf('?');
-  if (questionIndex >= 0) {
-    return fragment.slice(0, questionIndex);
-  }
-  const encodedQuestionIndex = fragment.toLowerCase().indexOf('%3f');
-  if (encodedQuestionIndex >= 0) {
-    return fragment.slice(0, encodedQuestionIndex);
-  }
-  return fragment;
-}
-
 function getNoteIdFromUri(uri: vscode.Uri): string {
   const params = new URLSearchParams(uri.query || '');
-  return params.get('noteId') || getLegacyNoteIdFromFragment(uri.fragment);
+  return params.get('noteId') || '';
 }
 
 export class HackMDFsProvider implements vscode.FileSystemProvider {

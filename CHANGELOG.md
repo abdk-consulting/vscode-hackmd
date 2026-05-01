@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Import actions now support selecting multiple `.md` files at once; each selected file is created as a separate note.
 - Rename and Move operations now close all open tabs for the affected note before proceeding, including markdown preview tabs, not just text editor tabs.
 - Unified tab-closing logic into a single `closeTabsForNote` helper that matches any tab type (editor, preview, etc.) by checking whether the tab's URI contains the note URI.
 - Removed redundant `API.getNote` content-validation fetch from the Side-by-Side fallback path in the editor command.

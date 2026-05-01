@@ -167,26 +167,26 @@ async function exportTeamNotes(options: {
   return { exportedCount, exportRootUri };
 }
 
-async function pickMarkdownImportData(): Promise<{ title: string; content: string } | undefined> {
+async function pickMarkdownImportData(): Promise<{ title: string; content: string }[]> {
   const selection = await vscode.window.showOpenDialog({
-    canSelectMany: false,
+    canSelectMany: true,
     filters: {
       Markdown: ['md'],
     },
     openLabel: 'Import Note',
   });
 
-  const sourceUri = selection?.[0];
-  if (!sourceUri) {
-    return undefined;
+  if (!selection || selection.length === 0) {
+    return [];
   }
 
-  const fileBytes = await vscode.workspace.fs.readFile(sourceUri);
-  const title = path.parse(sourceUri.fsPath).name || 'Untitled';
-  return {
-    title,
-    content: Buffer.from(fileBytes).toString('utf8'),
-  };
+  const results: { title: string; content: string }[] = [];
+  for (const sourceUri of selection) {
+    const fileBytes = await vscode.workspace.fs.readFile(sourceUri);
+    const title = path.parse(sourceUri.fsPath).name || 'Untitled';
+    results.push({ title, content: Buffer.from(fileBytes).toString('utf8') });
+  }
+  return results;
 }
 
 async function createNoteInScope(
@@ -709,8 +709,8 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.importMyNotes', async () => {
-      const importData = await pickMarkdownImportData();
-      if (!importData) {
+      const importDataList = await pickMarkdownImportData();
+      if (importDataList.length === 0) {
         return;
       }
 
@@ -721,10 +721,12 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         await vscode.window.withProgress(
           {
             location: { viewId: 'hackmd.tree.my-notes' },
-            title: 'Importing note...',
+            title: `Importing ${importDataList.length} note${importDataList.length === 1 ? '' : 's'}...`,
           },
           async () => {
-            await createNoteInScope(importData, { openEditor: false });
+            for (const importData of importDataList) {
+              await createNoteInScope(importData, { openEditor: false });
+            }
           }
         );
       } finally {
@@ -1312,12 +1314,12 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         teamPath = node.value?.context?.teamPath || node.teamPath;
       }
 
-      const importData = await pickMarkdownImportData();
-      if (!importData) {
+      const importDataList = await pickMarkdownImportData();
+      if (importDataList.length === 0) {
         return;
       }
 
-      const payload = folderId ? { ...importData, parentFolderId: folderId } : { ...importData };
+      const payload = folderId ? { parentFolderId: folderId } : {};
       const containerId = folderId ? `folder-${folderId}` : 'root';
       const myNotesProvider = getMyNotesProvider();
       const teamNotesProvider = getTeamNotesProvider();
@@ -1326,7 +1328,9 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       provider?.setPendingContainer(containerId);
 
       try {
-        await createNoteInScope(payload, { teamPath, openEditor: false });
+        for (const importData of importDataList) {
+          await createNoteInScope({ ...importData, ...payload }, { teamPath, openEditor: false });
+        }
       } finally {
         provider?.clearPendingContainer(containerId);
       }
@@ -1453,8 +1457,8 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         return;
       }
 
-      const importData = await pickMarkdownImportData();
-      if (!importData) {
+      const importDataList = await pickMarkdownImportData();
+      if (importDataList.length === 0) {
         return;
       }
 
@@ -1465,7 +1469,9 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       provider?.setPendingContainer(containerId);
 
       try {
-        await createNoteInScope(importData, { teamPath, openEditor: false });
+        for (const importData of importDataList) {
+          await createNoteInScope(importData, { teamPath, openEditor: false });
+        }
       } catch (error: any) {
         vscode.window.showErrorMessage(`Failed to import team note: ${error.message}`);
       } finally {

@@ -44,6 +44,13 @@
   - 19 tests covering all `hackmd.ui.*` commands, programmatic + interactive flows, cancellation paths, recursive folder export, and sync-only picker guarantees.
   - Command tests are now split into `test:commands:model` and `test:commands:ui`, with `test:commands` orchestrating both suites.
 - Model is now initialized eagerly in `extension.ts` immediately after the API client, and `registerModelCommands` is wired into the main command registration in `src/commands/index.ts`.
+- Migrated the virtual filesystem provider (`src/mdFsProvider.ts`) to use the model layer exclusively:
+  - Removed direct `api` and `recordUsage` imports; the provider now calls `model.getNote()`, `model.getNoteContent()`, and `model.saveNoteContent()`.
+  - A module-level `getModel()` guard maps model initialisation failures to `vscode.FileSystemError.Unavailable`, keeping `FileSystemError.FileNotFound` for read/stat paths when the model is missing.
+  - All tree-provider pending-state interactions (`setPendingNote` / `clearPendingNote`) are preserved.
+- Added comprehensive pure-Node test suite for the FS provider (`test/node/mdFsProvider.node.test.js`) with a dedicated `registerMdFsProviderStub.js` runtime mock:
+  - 25 tests covering `File`/`Directory` constructors, URI helpers, provider activation, rename, readFile, stat, writeFile (including pending-state tracking and save-failure cleanup), watch disposable, unimplemented methods, and all four operations when the model is not initialised.
+  - Added `test:fs:compile` and `test:fs:provider` scripts; the `test` script now runs `test:model`, `test:commands`, and `test:fs:provider` (112 tests total).
 
 ### Changed
 

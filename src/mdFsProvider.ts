@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 
-import { API } from './api';
 import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
-import { recordUsage } from './store';
+import { getHackmdModel } from './model';
 
 export class File implements vscode.FileStat {
   type: vscode.FileType;
@@ -56,6 +55,14 @@ function getNoteIdFromUri(uri: vscode.Uri): string {
   return params.get('noteId') || '';
 }
 
+function getModel() {
+  try {
+    return getHackmdModel();
+  } catch {
+    throw vscode.FileSystemError.Unavailable('HackMD model is not initialized. Connect your account first.');
+  }
+}
+
 export class HackMDFsProvider implements vscode.FileSystemProvider {
   createDirectory(uri: vscode.Uri): void | Thenable<void> {
     throw new Error('createDirectory Method not implemented.');
@@ -81,7 +88,11 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
       throw vscode.FileSystemError.NoPermissions('HackMD notes can only be renamed to another URI for the same note.');
     }
 
-    await recordUsage(API.getNote(oldNoteId, { unwrapData: false }));
+    const model = getModel();
+    const existing = await model.getNote(oldNoteId, oldTeamPath);
+    if (!existing) {
+      throw vscode.FileSystemError.FileNotFound();
+    }
 
     this._emitter.fire([
       { type: vscode.FileChangeType.Deleted, uri: oldUri },
@@ -99,12 +110,13 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const noteId = getNoteIdFromUri(uri);
+    const teamPath = getTeamPathFromUri(uri);
 
     try {
-      const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
-      const content = note.content;
+      const model = getModel();
+      const content = await model.getNoteContent(noteId, teamPath);
 
-      return Buffer.from(content);
+      return Buffer.from(content || '');
     } catch (e) {
       console.error(e);
       throw vscode.FileSystemError.FileNotFound();
@@ -139,13 +151,9 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const contentString = Buffer.from(content).toString();
+      const model = getModel();
 
-      // Use appropriate API method based on teamPath
-      if (teamPath) {
-        await recordUsage(API.updateTeamNote(teamPath, noteId, { content: contentString }, { unwrapData: false }));
-      } else {
-        await recordUsage(API.updateNoteContent(noteId, contentString, { unwrapData: false }));
-      }
+      await model.saveNoteContent(noteId, contentString, teamPath);
 
       // Don't block here - set up async listener to clear pending state after dirty flag clears
       // This must happen AFTER writeFile returns so VS Code can clear the dirty flag
@@ -197,12 +205,17 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
   private async _lookup(uri: vscode.Uri, silent: boolean): Promise<Entry | undefined>;
   private async _lookup(uri: vscode.Uri, silent: boolean): Promise<Entry | undefined> {
     const noteId = getNoteIdFromUri(uri);
+    const teamPath = getTeamPathFromUri(uri);
 
     try {
-      const note = await recordUsage(API.getNote(noteId, { unwrapData: false }));
+      const model = getModel();
+      const note = await model.getNote(noteId, teamPath);
+      if (!note) {
+        throw vscode.FileSystemError.FileNotFound();
+      }
 
       const file = new File(note.title || note.shortId || 'Untitled', true);
-      file.data = Buffer.from(note.content);
+      file.data = Buffer.from(note.content || '');
 
       // TODO: ctime and size
 

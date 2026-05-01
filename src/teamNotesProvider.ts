@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 
-import { Note, Team } from '@hackmd/api/dist/type';
 
 import { API } from './api';
+import { Note, Team } from './hackmdApiClient';
 import { recordUsage } from './store';
 
 // Cache ThemeIcon instances to prevent layout shifts during updates

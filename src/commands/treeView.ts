@@ -2,9 +2,9 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { Note, Team } from '@hackmd/api/dist/type';
 
 import { getHistoryProvider, getHistoryTreeView, getMyNotesProvider, getMyNotesTreeView, getPropertiesProvider, getTeamNotesProvider, getTeamNotesTreeView } from '../extension';
+import { Note, Team } from '../hackmdApiClient';
 import { generateFolderResourceUri, generateResourceUri } from '../mdFsProvider';
 import { recordUsage, teamNotesStore } from '../store';
 
@@ -580,7 +580,7 @@ function resolveCommandSelection(node: any, selectedNodes?: any[]): any[] {
   return node ? [node] : selectedNodes;
 }
 
-function getTreeSelectionForNode(node: any, selectedNodes?: any[]): any[] {
+function getTreeSelectionForNode(node: any, selectedNodes?: any[]): readonly any[] {
   const resolvedSelection = resolveCommandSelection(node, selectedNodes);
   if (resolvedSelection.length > 0) {
     return resolvedSelection;

@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 
-import { Note } from '@hackmd/api/dist/type';
-
 import { getMyNotesProvider, getTeamNotesProvider } from './extension';
+import { Note } from './hackmdApiClient';
 
 /**
  * Returns the URL path segment for a note, e.g. `/@user/permalink-or-id`.

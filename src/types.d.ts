@@ -1,3 +1,1 @@
-interface Window {
-  MathJax: any;
-}
+declare module '*.css';

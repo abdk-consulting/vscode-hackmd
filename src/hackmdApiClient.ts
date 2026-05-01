@@ -1,5 +1,44 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, Method } from 'axios';
 
+export type NotePublishType = 'view' | 'edit' | 'slide' | 'book';
+
+export interface Note {
+  id: string;
+  title: string;
+  content?: string;
+  publishLink?: string;
+  publishType?: NotePublishType;
+  permalink?: string | null;
+  shortId?: string;
+  teamPath?: string | null;
+  userPath?: string | null;
+  folderPaths?: Array<{ id: string; path: string; name?: string }>;
+  parentFolderId?: string | null;
+  /** HackMD API typo alias for parentFolderId */
+  parentForderId?: string | null;
+  readPermission?: string;
+  writePermission?: string;
+  tags?: string[];
+  createdAt?: string;
+  lastChangedAt?: string;
+}
+
+export interface Team {
+  id: string;
+  path: string;
+  name: string;
+}
+
+export interface HackMdFolder {
+  id: string;
+  name: string;
+  path?: string;
+  parentFolderId?: string | null;
+  /** HackMD API typo alias for parentFolderId */
+  parentForderId?: string | null;
+  teamPath?: string | null;
+}
+
 type ApiMethodOptions = {
   unwrapData?: boolean;
 };
@@ -23,19 +62,13 @@ export class HackMdApiClient {
     method: Method,
     url: string,
     config: AxiosRequestConfig = {},
-    options: ApiMethodOptions = {}
-  ): Promise<T | AxiosResponse<T>> {
-    const response = await this.http.request<T>({
+    _options: ApiMethodOptions = {}
+  ): Promise<AxiosResponse<T>> {
+    return this.http.request<T>({
       method,
       url,
       ...config,
     });
-
-    if (options.unwrapData === false) {
-      return response;
-    }
-
-    return response.data;
   }
 
   // Profile
@@ -45,46 +78,46 @@ export class HackMdApiClient {
 
   // Teams
   getTeams(options?: ApiMethodOptions) {
-    return this.request<any[]>('GET', 'teams', {}, options);
+    return this.request<Team[]>('GET', 'teams', {}, options);
   }
 
   // History
   getHistory(options?: ApiMethodOptions) {
-    return this.request<any[]>('GET', 'history', {}, options);
+    return this.request<Note[]>('GET', 'history', {}, options);
   }
 
   // User notes
   getNoteList(options?: ApiMethodOptions) {
-    return this.request<any[]>('GET', 'notes', {}, options);
+    return this.request<Note[]>('GET', 'notes', {}, options);
   }
 
   getNote(noteId: string, options?: ApiMethodOptions) {
-    return this.request<any>('GET', `notes/${encodeURIComponent(noteId)}`, {}, options);
+    return this.request<Note>('GET', `notes/${encodeURIComponent(noteId)}`, {}, options);
   }
 
   createNote(payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>('POST', 'notes', { data: payload }, options);
+    return this.request<Note>('POST', 'notes', { data: payload }, options);
   }
 
   updateNote(noteId: string, payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>('PATCH', `notes/${encodeURIComponent(noteId)}`, { data: payload }, options);
+    return this.request<Note>('PATCH', `notes/${encodeURIComponent(noteId)}`, { data: payload }, options);
   }
 
   updateNoteContent(noteId: string, content: string, options?: ApiMethodOptions) {
-    return this.request<any>('PATCH', `notes/${encodeURIComponent(noteId)}`, { data: { content } }, options);
+    return this.request<Note>('PATCH', `notes/${encodeURIComponent(noteId)}`, { data: { content } }, options);
   }
 
   deleteNote(noteId: string, options?: ApiMethodOptions) {
-    return this.request<any>('DELETE', `notes/${encodeURIComponent(noteId)}`, {}, options);
+    return this.request<void>('DELETE', `notes/${encodeURIComponent(noteId)}`, {}, options);
   }
 
   // Team notes
   getTeamNotes(teamPath: string, options?: ApiMethodOptions) {
-    return this.request<any[]>('GET', `teams/${encodeURIComponent(teamPath)}/notes`, {}, options);
+    return this.request<Note[]>('GET', `teams/${encodeURIComponent(teamPath)}/notes`, {}, options);
   }
 
   getTeamNote(teamPath: string, noteId: string, options?: ApiMethodOptions) {
-    return this.request<any>(
+    return this.request<Note>(
       'GET',
       `teams/${encodeURIComponent(teamPath)}/notes/${encodeURIComponent(noteId)}`,
       {},
@@ -93,11 +126,11 @@ export class HackMdApiClient {
   }
 
   createTeamNote(teamPath: string, payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>('POST', `teams/${encodeURIComponent(teamPath)}/notes`, { data: payload }, options);
+    return this.request<Note>('POST', `teams/${encodeURIComponent(teamPath)}/notes`, { data: payload }, options);
   }
 
   updateTeamNote(teamPath: string, noteId: string, payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>(
+    return this.request<Note>(
       'PATCH',
       `teams/${encodeURIComponent(teamPath)}/notes/${encodeURIComponent(noteId)}`,
       { data: payload },
@@ -106,7 +139,7 @@ export class HackMdApiClient {
   }
 
   deleteTeamNote(teamPath: string, noteId: string, options?: ApiMethodOptions) {
-    return this.request<any>(
+    return this.request<void>(
       'DELETE',
       `teams/${encodeURIComponent(teamPath)}/notes/${encodeURIComponent(noteId)}`,
       {},
@@ -116,23 +149,23 @@ export class HackMdApiClient {
 
   // User folders
   getFolders(options?: ApiMethodOptions) {
-    return this.request<any[]>('GET', 'folders', {}, options);
+    return this.request<HackMdFolder[]>('GET', 'folders', {}, options);
   }
 
   createFolder(payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>('POST', 'folders', { data: payload }, options);
+    return this.request<HackMdFolder>('POST', 'folders', { data: payload }, options);
   }
 
   getFolder(folderId: string, options?: ApiMethodOptions) {
-    return this.request<any>('GET', `folders/${encodeURIComponent(folderId)}`, {}, options);
+    return this.request<HackMdFolder>('GET', `folders/${encodeURIComponent(folderId)}`, {}, options);
   }
 
   updateFolder(folderId: string, payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>('PATCH', `folders/${encodeURIComponent(folderId)}`, { data: payload }, options);
+    return this.request<HackMdFolder>('PATCH', `folders/${encodeURIComponent(folderId)}`, { data: payload }, options);
   }
 
   deleteFolder(folderId: string, options?: ApiMethodOptions) {
-    return this.request<any>('DELETE', `folders/${encodeURIComponent(folderId)}`, {}, options);
+    return this.request<void>('DELETE', `folders/${encodeURIComponent(folderId)}`, {}, options);
   }
 
   getFolderOrder(options?: ApiMethodOptions) {
@@ -145,15 +178,15 @@ export class HackMdApiClient {
 
   // Team folders
   getTeamFolders(teamPath: string, options?: ApiMethodOptions) {
-    return this.request<any[]>('GET', `teams/${encodeURIComponent(teamPath)}/folders`, {}, options);
+    return this.request<HackMdFolder[]>('GET', `teams/${encodeURIComponent(teamPath)}/folders`, {}, options);
   }
 
   createTeamFolder(teamPath: string, payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>('POST', `teams/${encodeURIComponent(teamPath)}/folders`, { data: payload }, options);
+    return this.request<HackMdFolder>('POST', `teams/${encodeURIComponent(teamPath)}/folders`, { data: payload }, options);
   }
 
   getTeamFolder(teamPath: string, folderId: string, options?: ApiMethodOptions) {
-    return this.request<any>(
+    return this.request<HackMdFolder>(
       'GET',
       `teams/${encodeURIComponent(teamPath)}/folders/${encodeURIComponent(folderId)}`,
       {},
@@ -162,7 +195,7 @@ export class HackMdApiClient {
   }
 
   updateTeamFolder(teamPath: string, folderId: string, payload: AnyObject, options?: ApiMethodOptions) {
-    return this.request<any>(
+    return this.request<HackMdFolder>(
       'PATCH',
       `teams/${encodeURIComponent(teamPath)}/folders/${encodeURIComponent(folderId)}`,
       { data: payload },
@@ -171,7 +204,7 @@ export class HackMdApiClient {
   }
 
   deleteTeamFolder(teamPath: string, folderId: string, options?: ApiMethodOptions) {
-    return this.request<any>(
+    return this.request<void>(
       'DELETE',
       `teams/${encodeURIComponent(teamPath)}/folders/${encodeURIComponent(folderId)}`,
       {},

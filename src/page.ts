@@ -1,20 +1,20 @@
 // page renderer script
 
 import 'bootstrap3/dist/css/bootstrap.min.css';
-import './mermaid.css';
-import './github-gist.css';
-import 'prismjs/themes/prism.css';
 import 'katex/dist/katex.css';
+import 'prismjs/themes/prism.css';
+import './github-gist.css';
+import './mermaid.css';
 
+import './font-awesome.min.css';
 import './markdown.css';
 import './style.css';
-import './font-awesome.min.css';
 
 import * as abcjs from 'abcjs';
 import * as flowchart from 'flowchart.js';
+import 'js-sequence-diagrams';
 import * as katex from 'katex';
 import mermaid from 'mermaid';
-import 'js-sequence-diagrams';
 import * as S from 'string';
 import Viz from 'viz.js';
 import { Module, render } from 'viz.js/full.render.js';
@@ -45,11 +45,11 @@ function updateLineNumbers() {
     if ($(linenumberdivs[i]).hasClass('continue')) {
       const startnumber = linenumberdivs[i - 1]
         ? parseInt(
-            $(linenumberdivs[i - 1])
-              .find('> span')
-              .last()
-              .attr('data-linenumber')
-          )
+          $(linenumberdivs[i - 1])
+            .find('> span')
+            .last()
+            .attr('data-linenumber')
+        )
         : 0;
       $(linenumberdivs[i])
         .find('> span')
@@ -151,7 +151,7 @@ function updateFlowcharts() {
       chart.drawSVG(value, {
         'line-width': 2,
         fill: 'none',
-        'font-size': '16px',
+        'font-size': 16,
         'font-family': "'Andale Mono', monospace",
       });
       $ele.addClass('flow-chart');

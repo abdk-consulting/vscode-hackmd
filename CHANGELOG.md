@@ -8,6 +8,7 @@
 
 - Upgraded ESLint to `^10.2.1` and migrated lint configuration from legacy `.eslintrc.js` to ESLint flat config (`eslint.config.js`).
   - Removed `eslint-plugin-import` and `eslint-import-resolver-typescript` (incompatible with ESLint 10 peer requirements).
+- Aligned ESLint rules with current extension code style by disabling `@typescript-eslint/no-var-requires` for TypeScript sources.
 - Upgraded TypeScript to `^6.0.3`.
 - Upgraded `glob` to `^13.0.6` and migrated call sites to the async Promise API.
 - Upgraded `jquery` to `^4.0.0` and `@types/jquery` to `^4.0.0`.
@@ -21,9 +22,12 @@
 ### Changed
 
 - "New Folder..." actions everywhere now use the `new-folder` codicon instead of the custom folder SVG icon.
+- Moved HackMD API domain types (`Note`, `Team`, `HackMdFolder`, `NotePublishType`) from global ambient declarations to named exports in the local API client module.
+- Updated note-related providers and tree commands to import API domain types explicitly from the local API client.
 
 ### Fixed
 
+- Removed stale `Window.MathJax` global typing from `src/types.d.ts`; math rendering remains KaTeX-based and does not use a `window.MathJax` runtime global.
 - Fixed folder hierarchy rendering when the HackMD folder API returns `null` for a folder's parent despite the note paths showing it has a parent.
   - Parent relationships inferred from note `folderPaths` now take precedence over the API-returned `parentFolderId`.
   - Defensive fallback added for the API typo field `parentForderId`.

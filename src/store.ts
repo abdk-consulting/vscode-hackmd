@@ -22,7 +22,7 @@ export const teamNotesStore = createStore<TeamNoteState>((set) => ({
 }));
 
 type UserState = {
-  user: Awaited<ReturnType<typeof API.getMe>>;
+  user: any;
   refreshLogin: () => Promise<void>;
 };
 

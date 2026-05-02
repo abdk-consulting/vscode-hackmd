@@ -511,7 +511,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     let teamPath = args?.teamPath ?? null;
 
     if (!noteId) {
-      const picked = await pickNote(model, teamPath ?? undefined);
+      const picked = await pickNote(model, teamPath ?? undefined, { allowCustom: false });
       if (!picked) {
         return;
       }

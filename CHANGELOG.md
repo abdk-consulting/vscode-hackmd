@@ -77,7 +77,14 @@
 - Added pure-Node test suite for the note completion provider (`test/node/noteCompletionProvider.node.test.js`):
   - 36 tests covering `findOpenBracketIndex` (open/closed/nested brackets), `collectCachedNotes` (uninitialized model, personal/team scope presence and absence, multi-scope combination), filtering (empty query, title/permalink matching, exclusions, mid-string match, offset bracket position), `noteLinkPath` (all six `teamPath`/`userPath` × `permalink`/`id` combinations), completion item properties (`insertText`, `detail`, `sortText`, `filterText`, `kind`, `documentation`), replace range (bracket column, cursor end, auto-inserted `]` consumption), and untitled-note fallback label.
   - Uses a dedicated `registerNoteCompletionProviderStub.js` that stubs `vscode` (`CompletionItem`, `CompletionItemKind`, `Range`, `MarkdownString`) and the model module; `src/commands/pickers.ts` loads as real compiled code.
-- Added `test:completion:compile` and `test:completion` scripts; `test` script now runs all five suites (184 tests total).
+- Added picker customization options (`allowCustom`) for note/folder entity pickers so commands can disable manual ID entry when they require cache-only behavior.
+- Extended UI command tests with cache-only properties picker regressions:
+  - Verifies that `hackmd.ui.properties` interactive note picker does not expose `Custom Note ID...`.
+  - Verifies that when no local notes are available, properties flow shows an informational message and exits without opening the panel.
+- Added model regressions for note-content cache semantics:
+  - Verifies list/snapshot payload note `content` fields do not mark content as loaded.
+  - Verifies `lastChangedAt` updates from scope refresh evict cached content so next read re-fetches full note content.
+- Added `test:completion:compile` and `test:completion` scripts; `test` script now runs all five suites (188 tests total).
 
 ### Changed
 
@@ -89,6 +96,7 @@
 - Async model getters/refresh methods now deduplicate concurrent requests by caching in-flight promises per scope/entity/URI.
 - `hackmd:` URI parsing now requires `noteId` in query params; legacy note-ID-in-fragment fallback was removed.
 - Project test flow now compiles `src/commands/pickers.ts` and `src/commands/ui.ts` as part of `test:model:compile` and runs command tests as two dedicated suites (`model` and `ui`).
+- `hackmd.ui.properties` now invokes the note picker in cache-only mode (no custom/manual note ID path), aligning interactive behavior with its sync-only `getNoteSync` resolution.
 
 ### Fixed
 
@@ -97,6 +105,10 @@
   - Parent relationships inferred from note `folderPaths` now take precedence over the API-returned `parentFolderId`.
   - Defensive fallback added for the API typo field `parentForderId`.
   - String `"null"` is now treated as no parent when returned by the API.
+- Fixed note-content cache loading semantics in the model:
+  - Full note content is now marked as loaded only for explicit full-note reads/writes (`getNote`/`getTeamNote` fetch path and save-content responses), not from scope/list refresh payloads.
+  - Cached content is preserved across scope refreshes that do not include full content.
+  - Cached content is evicted when `lastChangedAt` changes during refresh so stale content is reloaded on next content read.
 
 ### Changed
 

@@ -614,6 +614,64 @@ test('properties: interactive picker selects note from personal scope', async ()
   assert.equal(openNoteArg.id, 'n1');
 });
 
+test('properties: interactive note picker does not allow custom note ID', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let openNoteArg;
+  stub.setPropertiesProvider({
+    async openNote(note) { openNoteArg = note; return true; },
+  });
+
+  let quickPickCall = 0;
+  stub.window.showQuickPick = async (items) => {
+    const resolved = await Promise.resolve(items);
+    quickPickCall += 1;
+    if (quickPickCall === 1) {
+      return resolved.find((it) => it.label === 'My Notes');
+    }
+    if (quickPickCall === 2) {
+      assert.equal(
+        resolved.some((it) => it.label === 'Custom Note ID...'),
+        false,
+        'properties picker should be cache-only and not allow custom note IDs'
+      );
+      return resolved.find((it) => it.note?.id === 'n1');
+    }
+    return undefined;
+  };
+
+  await invoke('hackmd.ui.properties');
+
+  assert.ok(openNoteArg);
+  assert.equal(openNoteArg.id, 'n1');
+});
+
+test('properties: no local notes shows info and returns without opening', async () => {
+  const model = new MockUiModel();
+  model.personalSnapshot = { scope: null, rootFolders: [], rootNotes: [] };
+  stub.setModel(model);
+
+  let openNoteCalled = false;
+  stub.setPropertiesProvider({
+    async openNote() { openNoteCalled = true; return true; },
+  });
+
+  let infoMessage;
+  stub.window.showInformationMessage = async (msg) => { infoMessage = msg; };
+
+  new Interactions().qp('My Notes').install();
+
+  await invoke('hackmd.ui.properties');
+
+  assert.ok(
+    infoMessage
+    && (infoMessage.includes('No local note data') || infoMessage.includes('No notes found in this scope.'))
+  );
+  assert.equal(openNoteCalled, false);
+  assert.equal(stub.commandsState.executeCalls.length, 0);
+});
+
 test('properties: interactive picker cancellation returns without opening', async () => {
   const model = new MockUiModel();
   stub.setModel(model);

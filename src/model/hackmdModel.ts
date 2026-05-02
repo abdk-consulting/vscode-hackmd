@@ -638,7 +638,7 @@ export class HackmdModel {
       ? await recordUsage(this.api.updateTeamNote(scope, noteId, { content }, { unwrapData: false }))
       : await recordUsage(this.api.updateNote(noteId, { content }, { unwrapData: false }));
 
-    const entity = this.upsertNote(scope, note);
+    const entity = this.upsertNote(scope, note, true);
     await this.refreshScope({ teamPath: scope });
     return entity;
   }
@@ -944,7 +944,7 @@ export class HackmdModel {
     return entity;
   }
 
-  private upsertNote(teamPath: string | null, note: Note): ModelNote {
+  private upsertNote(teamPath: string | null, note: Note, markContentLoaded = false): ModelNote {
     const map = this.getNoteScopeMap(teamPath);
     let entity = map.get(note.id);
 
@@ -956,7 +956,7 @@ export class HackmdModel {
         title: note.title,
         shortId: note.shortId,
         teamPath,
-        content: note.content,
+        content: markContentLoaded ? note.content : undefined,
         publishLink: note.publishLink,
         publishType: note.publishType,
         permalink: note.permalink,
@@ -987,7 +987,7 @@ export class HackmdModel {
         entity.teamPath = teamPath;
         changed = true;
       }
-      if (entity.content !== note.content) {
+      if (markContentLoaded && entity.content !== note.content) {
         entity.content = note.content;
         changed = true;
       }
@@ -1040,6 +1040,12 @@ export class HackmdModel {
       if (entity.lastChangedAt !== note.lastChangedAt) {
         entity.lastChangedAt = note.lastChangedAt;
         changed = true;
+        // The server reports a newer modification time but the list API doesn't
+        // carry content.  Evict the cached content so the next getNoteContent
+        // call re-fetches it instead of returning stale data.
+        if (!markContentLoaded) {
+          this.getContentLoadedSet(teamPath).delete(note.id);
+        }
       }
 
       if (changed) {
@@ -1047,7 +1053,7 @@ export class HackmdModel {
       }
     }
 
-    if (note.content !== undefined) {
+    if (markContentLoaded) {
       this.getContentLoadedSet(teamPath).add(note.id);
     }
 
@@ -1123,7 +1129,7 @@ export class HackmdModel {
       const note = teamPath
         ? await recordUsage(this.api.getTeamNote(teamPath, noteId, { unwrapData: false }))
         : await recordUsage(this.api.getNote(noteId, { unwrapData: false }));
-      return this.upsertNote(teamPath, note);
+      return this.upsertNote(teamPath, note, true);
     })();
 
     this.noteFetchPromises.set(key, promise);

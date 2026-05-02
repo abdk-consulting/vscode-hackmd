@@ -390,6 +390,41 @@ test('supports note content sync/async getters with lazy loading', async () => {
   assert.equal(model.getNoteContentSync('pn1', null), '# personal content 1');
 });
 
+test('scope list content does not mark note content as loaded', async () => {
+  const { api, model } = createModelAndApi();
+  api.personalNotes[0].content = '';
+
+  await model.refreshScope({ teamPath: null });
+
+  // Even if list payload includes an empty content string, content is not
+  // considered loaded until a full note fetch happens.
+  assert.equal(model.getNoteContentSync('pn1', null), null);
+
+  const content = await model.getNoteContent('pn1', null);
+  assert.equal(content, '# personal content 1');
+  assert.equal(api.calls.getNote, 1);
+});
+
+test('scope refresh evicts cached content when lastChangedAt changes', async () => {
+  const { api, model } = createModelAndApi();
+  api.personalNotes[0].lastChangedAt = '2024-01-01T00:00:00.000Z';
+
+  await model.refreshScope({ teamPath: null });
+  await model.getNoteContent('pn1', null);
+  assert.equal(model.getNoteContentSync('pn1', null), '# personal content 1');
+  assert.equal(api.calls.getNote, 1);
+
+  // Simulate an out-of-band server update reflected by scope refresh metadata.
+  api.personalNotes[0].lastChangedAt = '2024-01-03T00:00:00.000Z';
+  await model.refreshScope({ teamPath: null });
+
+  assert.equal(model.getNoteContentSync('pn1', null), null);
+
+  const content = await model.getNoteContent('pn1', null);
+  assert.equal(content, '# personal content 1');
+  assert.equal(api.calls.getNote, 2);
+});
+
 test('note/folder/team URI conversion and sync lookup', async () => {
   const { model } = createModelAndApi();
 

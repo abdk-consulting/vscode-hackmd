@@ -28,6 +28,10 @@ export type NoteQuickPickItem = {
   isCustom?: boolean;
 };
 
+export type EntityPickerOptions = {
+  allowCustom?: boolean;
+};
+
 export type PickedEntity =
   | { kind: 'note'; noteId: string; teamPath: ModelScope; note?: ModelNote }
   | { kind: 'folder'; folderId: string; teamPath: ModelScope; name: string };
@@ -134,8 +138,10 @@ export async function pickFolder(
   model: ReturnType<typeof getHackmdModel>,
   teamPath: ModelScope,
   placeHolder: string,
-  includeRoot = false
+  includeRoot = false,
+  options: EntityPickerOptions = {}
 ): Promise<{ folderId: string | null; teamPath: ModelScope } | undefined> {
+  const allowCustom = options.allowCustom ?? true;
   const snapshot = model.getScopeSnapshotSync(teamPath);
   const folders = snapshot ? collectFolders(snapshot.rootFolders) : [];
 
@@ -160,19 +166,29 @@ export async function pickFolder(
     });
   }
 
-  items.push({
-    label: 'Custom Folder ID...',
-    description: 'Enter a folder ID manually',
-    detail: customDetail,
-    isCustom: true,
-  });
+  if (allowCustom) {
+    items.push({
+      label: 'Custom Folder ID...',
+      description: 'Enter a folder ID manually',
+      detail: customDetail,
+      isCustom: true,
+    });
+  }
 
-  if (items.length === 1 && !includeRoot) {
+  if (allowCustom && items.length === 1 && !includeRoot) {
     const customFolderId = await promptRequiredInput('Folder ID');
     if (!customFolderId) {
       return undefined;
     }
     return { folderId: customFolderId, teamPath };
+  }
+
+  if (!allowCustom && items.length === 0) {
+    const message = scopeNotLoaded
+      ? `No local folder data. ${REFRESH_HINT}`
+      : 'No folders found in this scope.';
+    vscode.window.showInformationMessage(message);
+    return undefined;
   }
 
   const selected = await vscode.window.showQuickPick<FolderQuickPickItem>(items, {
@@ -203,8 +219,10 @@ export async function pickFolder(
 
 export async function pickNote(
   model: ReturnType<typeof getHackmdModel>,
-  requestedScope?: ModelScope
+  requestedScope?: ModelScope,
+  options: EntityPickerOptions = {}
 ): Promise<{ noteId: string; teamPath: ModelScope; note?: ModelNote } | undefined> {
+  const allowCustom = options.allowCustom ?? true;
   let scope = requestedScope;
   if (scope === undefined) {
     scope = await pickScope(model, 'Choose scope for note operation');
@@ -228,12 +246,22 @@ export async function pickNote(
     description: note.id,
     note,
   }));
-  items.push({
-    label: 'Custom Note ID...',
-    description: 'Enter a note ID manually',
-    detail: customNoteDetail,
-    isCustom: true,
-  });
+  if (allowCustom) {
+    items.push({
+      label: 'Custom Note ID...',
+      description: 'Enter a note ID manually',
+      detail: customNoteDetail,
+      isCustom: true,
+    });
+  }
+
+  if (!allowCustom && items.length === 0) {
+    const message = scopeNotLoaded
+      ? `No local note data. ${REFRESH_HINT}`
+      : 'No notes found in this scope.';
+    vscode.window.showInformationMessage(message);
+    return undefined;
+  }
 
   const selected = await vscode.window.showQuickPick<NoteQuickPickItem>(items, {
     placeHolder: 'Choose a note',

@@ -1,40 +1,40 @@
 import * as vscode from 'vscode';
 
-import { getMyNotesProvider, getTeamNotesProvider } from './extension';
-import { Note } from './hackmdApiClient';
+import { collectNotes } from './commands/pickers';
+import { getHackmdModel, ModelNote } from './model';
 
 /**
  * Returns the URL path segment for a note, e.g. `/@user/permalink-or-id`.
  */
-function noteLinkPath(note: Note): string {
+function noteLinkPath(note: ModelNote): string {
   const scope = note.teamPath ?? note.userPath;
   const slug = note.permalink ?? note.id;
   return scope ? `/@${scope}/${slug}` : `/${slug}`;
 }
 
 /**
- * Collects all notes visible in the cached providers.
+ * Collects all notes from every loaded scope in the model cache.
+ * Purely synchronous — no network requests are made.
  */
-function collectCachedNotes(): Note[] {
-  const notes: Note[] = [];
-
-  const myNotes = getMyNotesProvider();
-  if (myNotes) {
-    // getAllCachedNotes is a thin accessor we expose below; fall back to a
-    // cast to any to avoid a circular-import helper file.
-    const cached = (myNotes as any).notesCache as Note[] | null;
-    if (cached) {
-      notes.push(...cached);
-    }
+function collectCachedNotes(): ModelNote[] {
+  let model: ReturnType<typeof getHackmdModel>;
+  try {
+    model = getHackmdModel();
+  } catch {
+    return [];
   }
 
-  const teamNotes = getTeamNotesProvider();
-  if (teamNotes) {
-    const cacheMap = (teamNotes as any).teamNotesCache as Map<string, Note[]>;
-    if (cacheMap) {
-      for (const noteList of cacheMap.values()) {
-        notes.push(...noteList);
-      }
+  const notes: ModelNote[] = [];
+
+  const personal = model.getScopeSnapshotSync(null);
+  if (personal) {
+    notes.push(...collectNotes(personal.rootFolders, personal.rootNotes));
+  }
+
+  for (const team of model.getTeams()) {
+    const snapshot = model.getScopeSnapshotSync(team.path);
+    if (snapshot) {
+      notes.push(...collectNotes(snapshot.rootFolders, snapshot.rootNotes));
     }
   }
 

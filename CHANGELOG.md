@@ -69,6 +69,15 @@
 - Added comprehensive pure-Node test suite for the FS provider (`test/node/mdFsProvider.node.test.js`) with a dedicated `registerMdFsProviderStub.js` runtime mock:
   - 25 tests covering `File`/`Directory` constructors, URI helpers, provider activation, rename, readFile, stat, writeFile (including pending-state tracking and save-failure cleanup), watch disposable, unimplemented methods, and all four operations when the model is not initialised.
   - Added `test:fs:compile` and `test:fs:provider` scripts; the `test` script now runs `test:model`, `test:commands`, and `test:fs:provider` (112 tests total).
+- Migrated the note editor completion provider (`src/noteCompletionProvider.ts`) to use the model layer exclusively:
+  - Removed direct imports of `getMyNotesProvider`, `getTeamNotesProvider`, and the old `Note` type; replaced with `getHackmdModel()` + `ModelNote`.
+  - `collectCachedNotes()` now reads `getScopeSnapshotSync(null)` for personal notes and iterates `getTeams()` + `getScopeSnapshotSync(team.path)` for team notes via the shared `collectNotes()` utility from `src/commands/pickers.ts`.
+  - Zero async operations — the provider remains purely synchronous and performs no network requests.
+  - Zero `as any` casts; all note data is accessed through the typed model interfaces.
+- Added pure-Node test suite for the note completion provider (`test/node/noteCompletionProvider.node.test.js`):
+  - 36 tests covering `findOpenBracketIndex` (open/closed/nested brackets), `collectCachedNotes` (uninitialized model, personal/team scope presence and absence, multi-scope combination), filtering (empty query, title/permalink matching, exclusions, mid-string match, offset bracket position), `noteLinkPath` (all six `teamPath`/`userPath` × `permalink`/`id` combinations), completion item properties (`insertText`, `detail`, `sortText`, `filterText`, `kind`, `documentation`), replace range (bracket column, cursor end, auto-inserted `]` consumption), and untitled-note fallback label.
+  - Uses a dedicated `registerNoteCompletionProviderStub.js` that stubs `vscode` (`CompletionItem`, `CompletionItemKind`, `Range`, `MarkdownString`) and the model module; `src/commands/pickers.ts` loads as real compiled code.
+- Added `test:completion:compile` and `test:completion` scripts; `test` script now runs all five suites (184 tests total).
 
 ### Changed
 

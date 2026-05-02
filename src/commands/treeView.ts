@@ -750,9 +750,7 @@ async function performMove(note: Note, targetFolderId: string, targetFolderPaths
     } else {
       if (oldNote) myProv?.emitMoveChangeEvents(oldNote, updatedNote);
     }
-    getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote);
-
-    // 4) Reveal + select moved note at the new location.
+    getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote as any);
     await revealNote(treeView, { type: 'note', note: updatedNote });
   } catch (error: any) {
     vscode.window.showErrorMessage(`Failed to move note: ${error.message || 'Unknown error'}`);
@@ -1342,7 +1340,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
             myNotesProvider?.updateNoteInCache(noteId, updatedNote);
           }
           historyProvider?.updateNoteInCache(noteId, updatedNote);
-          getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote);
+          getPropertiesProvider()?.updateCurrentNote(noteId, updatedNote as any);
 
           // Perform virtual FS rename to move URI identity to the new title path.
           const newUri = generateResourceUri(trimmedNewTitle, noteId, note.teamPath, (note as any).folderPaths);
@@ -1686,14 +1684,12 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       if (!noteNode || noteNode.type !== 'note') {
         return;
       }
-
-      const propertiesProvider = getPropertiesProvider();
-      if (!propertiesProvider) {
+      const noteId: string = noteNode.note?.id;
+      const teamPath: string | null = noteNode.note?.teamPath || null;
+      if (!noteId) {
         return;
       }
-
-      await vscode.commands.executeCommand('hackmd.properties.focus');
-      await propertiesProvider.openNote(noteNode.note, noteNode.note.id, noteNode.note.teamPath || null);
+      await vscode.commands.executeCommand('hackmd.ui.properties', { noteId, teamPath });
     })
   );
 

@@ -1,13 +1,10 @@
 import * as vscode from 'vscode';
 
 
-import { API } from './api';
-import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
-import { Note, NotePublishType } from './hackmdApiClient';
-import { recordUsage } from './store';
+import { getHackmdModel, ModelNote, UpdateNoteInput } from './model';
 
 interface NoteProperties {
-  publishType?: NotePublishType;
+  publishType?: ModelNote['publishType'];
   permalink: string | null;
   readPermission: string;
   writePermission: string;
@@ -17,7 +14,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hackmd.properties';
 
   private _view?: vscode.WebviewView;
-  private _currentNote?: Note;
+  private _currentNote?: ModelNote;
   private _currentNoteId?: string;
   private _currentTeamPath?: string | null;
   private _pendingChanges: Partial<NoteProperties> = {};
@@ -66,7 +63,9 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     this._fullRenderWebview();
   }
 
-  public async openNote(note: Note, noteId: string, teamPath?: string | null): Promise<boolean> {
+  public async openNote(note: ModelNote): Promise<boolean> {
+    const noteId = note.id;
+    const teamPath = note.teamPath;
     if (this._currentNoteId && this._currentNoteId !== noteId && this.hasPendingChanges()) {
       const selection = await vscode.window.showWarningMessage(
         'You have unsaved property changes. What would you like to do?',
@@ -121,7 +120,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     return false;
   }
 
-  public updateCurrentNote(noteId: string, updatedNote: Note): void {
+  public updateCurrentNote(noteId: string, updatedNote: ModelNote): void {
     if (this._currentNoteId === noteId && this._currentNote) {
       this._currentNote = updatedNote;
       this._fullRenderWebview();
@@ -216,40 +215,27 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
     const noteId = this._currentNoteId;
     const teamPath = this._currentTeamPath;
-    const myNotesProvider = getMyNotesProvider();
-    const teamNotesProvider = getTeamNotesProvider();
-    const historyProvider = getHistoryProvider();
 
-    if (teamPath) {
-      teamNotesProvider?.setPendingNote(noteId, this._currentNote);
-    } else {
-      myNotesProvider?.setPendingNote(noteId, this._currentNote);
+    let model: ReturnType<typeof getHackmdModel> | undefined;
+    try {
+      model = getHackmdModel();
+    } catch {
+      vscode.window.showErrorMessage('HackMD is not connected. Please configure your API key first.');
+      this._isSaving = false;
+      this._fullRenderWebview();
+      return false;
     }
-    historyProvider?.setPendingNote(noteId, this._currentNote);
 
     try {
-      const payload: Record<string, any> = {
+      const input: UpdateNoteInput = {
         readPermission: merged.readPermission,
         writePermission: merged.writePermission,
       };
       if ('permalink' in this._pendingChanges) {
-        payload.permalink = merged.permalink;
+        input.permalink = merged.permalink ?? undefined;
       }
 
-      if (teamPath) {
-        await recordUsage(API.updateTeamNote(teamPath, noteId, payload as any, { unwrapData: false }));
-      } else {
-        await recordUsage(API.updateNote(noteId, payload as any, { unwrapData: false }));
-      }
-
-      const updatedNote = { ...this._currentNote, ...payload } as Note;
-
-      if (teamPath) {
-        teamNotesProvider?.updateNoteInCache(noteId, updatedNote, teamPath);
-      } else {
-        myNotesProvider?.updateNoteInCache(noteId, updatedNote);
-      }
-      historyProvider?.updateNoteInCache(noteId, updatedNote);
+      await model.updateNoteProperties(noteId, input, teamPath);
 
       this.reset();
       return true;
@@ -269,13 +255,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       this._isSaving = false;
       this._fullRenderWebview();
       return false;
-    } finally {
-      if (teamPath) {
-        teamNotesProvider?.clearPendingNote(noteId, this._currentNote);
-      } else {
-        myNotesProvider?.clearPendingNote(noteId, this._currentNote);
-      }
-      historyProvider?.clearPendingNote(noteId, this._currentNote);
     }
   }
 

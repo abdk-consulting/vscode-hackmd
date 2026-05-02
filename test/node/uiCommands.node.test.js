@@ -166,6 +166,13 @@ class MockUiModel {
       ['null:n1', { id: 'n1', title: 'Root Note', publishLink: 'https://hackmd.io/@user/n1', teamPath: null }],
       ['null:missing', { id: 'missing', title: 'Missing', publishLink: 'https://hackmd.io/@user/missing', teamPath: null }],
     ]);
+
+    this.syncNotes = new Map([
+      ['null:n1', { type: 'note', id: 'n1', title: 'Root Note', shortId: 'n1', teamPath: null, readPermission: 'guest', writePermission: 'signed_in', publishType: 'view', permalink: null, publishLink: 'https://hackmd.io/@user/n1' }],
+      ['null:n2', { type: 'note', id: 'n2', title: 'Folder Note', shortId: 'n2', teamPath: null, readPermission: 'signed_in', writePermission: 'owner', publishType: 'view', permalink: null }],
+      ['null:n3', { type: 'note', id: 'n3', title: 'Nested Note', shortId: 'n3', teamPath: null, readPermission: 'signed_in', writePermission: 'owner', publishType: 'view', permalink: null }],
+      ['acme:tn1', { type: 'note', id: 'tn1', title: 'Team Note', shortId: 'tn1', teamPath: 'acme', readPermission: 'signed_in', writePermission: 'owner', publishType: 'view', permalink: null }],
+    ]);
   }
 
   _k(teamPath, id) {
@@ -203,6 +210,11 @@ class MockUiModel {
     return this.fetchedNotes.get(this._k(teamPath ?? null, noteId)) || { id: noteId, teamPath: teamPath ?? null };
   }
 
+  getNoteSync(noteId, teamPath) {
+    this._record('getNoteSync', [noteId, teamPath]);
+    return this.syncNotes.get(this._k(teamPath ?? null, noteId)) || null;
+  }
+
   async getNoteContent(noteId, teamPath) {
     this._record('getNoteContent', [noteId, teamPath]);
     return this.noteContentByKey.get(this._k(teamPath ?? null, noteId)) || '';
@@ -235,6 +247,7 @@ test('registers all hackmd.ui commands', async () => {
   assert.ok(stub.registeredHandlers.has('hackmd.ui.openOnHackMD'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.import'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.export'));
+  assert.ok(stub.registeredHandlers.has('hackmd.ui.properties'));
 });
 
 test('edit: uninitialized model shows connection error', async () => {
@@ -523,4 +536,130 @@ test('picker flows use sync model APIs only (no async snapshot methods)', async 
   await invoke('hackmd.ui.export');
 
   assert.equal(asyncSnapshotTouched, false);
+});
+
+// ---------------------------------------------------------------------------
+// hackmd.ui.properties
+// ---------------------------------------------------------------------------
+
+test('properties: uninitialized model shows connection error', async () => {
+  let err;
+  stub.window.showErrorMessage = async (msg) => { err = msg; };
+
+  await invoke('hackmd.ui.properties', { noteId: 'n1', teamPath: null });
+
+  assert.equal(err, 'HackMD is not connected. Please configure your API key first.');
+});
+
+test('properties: programmatic noteId uses getNoteSync and opens properties panel', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let openNoteArg;
+  stub.setPropertiesProvider({
+    async openNote(note) { openNoteArg = note; return true; },
+  });
+
+  await invoke('hackmd.ui.properties', { noteId: 'n1', teamPath: null });
+
+  assert.equal((model.calls.getNoteSync || []).length, 1);
+  assert.equal((model.calls.getNote || []).length, 0, 'should not use async getNote');
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.properties.focus');
+  assert.ok(openNoteArg, 'openNote should have been called');
+  assert.equal(openNoteArg.id, 'n1');
+});
+
+test('properties: note not in sync cache shows error message', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let err;
+  stub.window.showErrorMessage = async (msg) => { err = msg; };
+
+  await invoke('hackmd.ui.properties', { noteId: 'unknown', teamPath: null });
+
+  assert.ok(err && err.includes('unknown'), 'error message should mention note id');
+  assert.equal(stub.commandsState.executeCalls.length, 0, 'focus should not be called');
+});
+
+test('properties: no propertiesProvider returns without error', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+  // propertiesProvider stays null (clearPropertiesProvider was called in beforeEach via resetState)
+
+  await invoke('hackmd.ui.properties', { noteId: 'n1', teamPath: null });
+
+  // No error thrown, focus command not executed since provider is null
+  assert.equal(stub.commandsState.executeCalls.length, 0);
+});
+
+test('properties: interactive picker selects note from personal scope', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let openNoteArg;
+  stub.setPropertiesProvider({
+    async openNote(note) { openNoteArg = note; return true; },
+  });
+
+  new Interactions()
+    .qp('My Notes')
+    .qp((it) => it.note?.id === 'n1')
+    .install();
+
+  await invoke('hackmd.ui.properties');
+
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.properties.focus');
+  assert.ok(openNoteArg);
+  assert.equal(openNoteArg.id, 'n1');
+});
+
+test('properties: interactive picker cancellation returns without opening', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let openNoteCalled = false;
+  stub.setPropertiesProvider({
+    async openNote() { openNoteCalled = true; return true; },
+  });
+
+  new Interactions().qp(null).install();
+
+  await invoke('hackmd.ui.properties');
+
+  assert.equal(openNoteCalled, false);
+  assert.equal(stub.commandsState.executeCalls.length, 0);
+});
+
+test('properties: sync-only — getNoteSync called, getNote never called', async () => {
+  const model = new MockUiModel();
+  let asyncGetNoteTouched = false;
+  model.getNote = async () => {
+    asyncGetNoteTouched = true;
+    return null;
+  };
+  stub.setModel(model);
+  stub.setPropertiesProvider({ async openNote() { return true; } });
+
+  await invoke('hackmd.ui.properties', { noteId: 'n1', teamPath: null });
+
+  assert.equal(asyncGetNoteTouched, false);
+  assert.equal((model.calls.getNoteSync || []).length, 1);
+});
+
+test('properties: team note uses teamPath from args', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let openNoteArg;
+  stub.setPropertiesProvider({
+    async openNote(note) { openNoteArg = note; return true; },
+  });
+
+  await invoke('hackmd.ui.properties', { noteId: 'tn1', teamPath: 'acme' });
+
+  assert.ok(openNoteArg);
+  assert.equal(openNoteArg.id, 'tn1');
+  assert.equal(openNoteArg.teamPath, 'acme');
+  assert.deepEqual(model.calls.getNoteSync[0], ['tn1', 'acme']);
 });

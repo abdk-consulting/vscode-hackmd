@@ -104,6 +104,7 @@ export interface UpdateNoteInput {
   title?: string;
   content?: string;
   publishType?: Note['publishType'];
+  permalink?: string | null;
   readPermission?: string;
   writePermission?: string;
   tags?: string[];

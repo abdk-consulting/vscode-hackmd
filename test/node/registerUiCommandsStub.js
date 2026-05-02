@@ -161,6 +161,13 @@ const modelModule = {
 };
 
 const MODEL_INDEX_PATH = nodePath.resolve(__dirname, '../../out/model/index.js');
+const EXTENSION_PATH = nodePath.resolve(__dirname, '../../out/extension.js');
+
+let _propertiesProvider = null;
+
+const extensionModule = {
+  getPropertiesProvider() { return _propertiesProvider; },
+};
 
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === 'vscode') {
@@ -170,6 +177,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
     const resolved = Module._resolveFilename(request, parent, isMain);
     if (resolved === MODEL_INDEX_PATH) {
       return modelModule;
+    }
+    if (resolved === EXTENSION_PATH) {
+      return extensionModule;
     }
   } catch (_) {
     // Ignore resolution errors and use original loader.
@@ -199,6 +209,7 @@ function resetState() {
 
   commandsState.executeCalls.length = 0;
   env.openExternalCalls.length = 0;
+  _propertiesProvider = null;
 }
 
 module.exports = {
@@ -211,6 +222,8 @@ module.exports = {
   registeredHandlers,
   setModel(mock) { _currentModel = mock; },
   clearModel() { _currentModel = null; },
+  setPropertiesProvider(mock) { _propertiesProvider = mock; },
+  clearPropertiesProvider() { _propertiesProvider = null; },
   resetState,
   makeUri,
 };

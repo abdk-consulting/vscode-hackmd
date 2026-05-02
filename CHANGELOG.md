@@ -48,6 +48,24 @@
   - Removed direct `api` and `recordUsage` imports; the provider now calls `model.getNote()`, `model.getNoteContent()`, and `model.saveNoteContent()`.
   - A module-level `getModel()` guard maps model initialisation failures to `vscode.FileSystemError.Unavailable`, keeping `FileSystemError.FileNotFound` for read/stat paths when the model is missing.
   - All tree-provider pending-state interactions (`setPendingNote` / `clearPendingNote`) are preserved.
+- Migrated the Note Properties panel (`src/propertiesProvider.ts`) to use the model layer exclusively:
+  - Removed all direct `api`, `recordUsage`, and tree-provider imports; the provider now calls `model.updateNoteProperties()` only.
+  - `openNote(note: ModelNote)` replaces the old separate `noteId`/`teamPath` arguments.
+  - Unsaved-changes guard (`openNote`, `cancelEditing`) prompts Save / Discard / Cancel before switching notes.
+  - `updateCurrentNote(noteId, updatedNote)` allows external callers (e.g. tree views) to refresh the displayed note without re-opening the panel.
+  - HTTP error codes 400 / 403 / 409 are mapped to user-friendly messages.
+- Added `permalink?: string | null` to the `UpdateNoteInput` interface in `src/model/hackmdModel.ts`.
+- Added `hackmd.ui.properties` command in `src/commands/ui.ts`:
+  - Accepts optional `{ noteId, teamPath }` args for programmatic invocation (e.g. from tree-view context menus).
+  - When called without args, presents a sync-only scope + note picker (no network calls in picker path).
+  - Resolves the note via `model.getNoteSync()` (cache only); shows an error if the note is not loaded yet.
+  - Focuses the Properties panel via `hackmd.properties.focus` then calls `propertiesProvider.openNote()`.
+- `HackMD.openNoteProperties` tree-view command now delegates entirely to `hackmd.ui.properties`, eliminating duplicate pick logic.
+- Added pure-Node test suite for the Note Properties provider (`test/node/propertiesProvider.node.test.js`):
+  - 28 tests covering `openNote` flows (Save / Discard / Cancel on pending changes), `hasPendingChanges`, permission normalization/clamping, `cancelEditing`, `updateCurrentNote`, `saveCurrentProperties` (success, invalid permalink, HTTP 400/403/409/generic, `_isSaving` guard, model-uninitialized guard), and webview messages (`copyShareUrl`, `ready`).
+  - Uses a dedicated `registerPropertiesProviderStub.js` that stubs `vscode` and the model module; a `makeWebviewView()` helper captures `postMessage` output and lets tests fire inbound messages.
+- Extended `uiCommands.node.test.js` with 7 new `hackmd.ui.properties` tests (27 total); added `getNoteSync` to `MockUiModel`.
+- Added `test:properties:compile` and `test:properties` scripts; `test` script now runs all four suites (model, commands, FS provider, properties provider).
 - Added comprehensive pure-Node test suite for the FS provider (`test/node/mdFsProvider.node.test.js`) with a dedicated `registerMdFsProviderStub.js` runtime mock:
   - 25 tests covering `File`/`Directory` constructors, URI helpers, provider activation, rename, readFile, stat, writeFile (including pending-state tracking and save-failure cleanup), watch disposable, unimplemented methods, and all four operations when the model is not initialised.
   - Added `test:fs:compile` and `test:fs:provider` scripts; the `test` script now runs `test:model`, `test:commands`, and `test:fs:provider` (112 tests total).

@@ -2,6 +2,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { getPropertiesProvider } from '../extension';
 import { getHackmdModel, ModelFolder, ModelNote, ModelScope } from '../model';
 import { collectNotes, pickEntity, pickFolder, pickNote, pickScope } from './pickers';
 
@@ -495,5 +496,41 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     } catch (error: any) {
       vscode.window.showErrorMessage(`Export failed: ${error.message ?? 'Unknown error'}`);
     }
+  });
+
+  // ── hackmd.ui.properties ─────────────────────────────────────────────────
+  // Opens the Properties panel for a given note.
+  // Args: { noteId?, teamPath? } — interactive picker when noteId is absent.
+  register('hackmd.ui.properties', async (args?: { noteId?: string; teamPath?: string | null }) => {
+    const model = getModel();
+    if (!model) {
+      return;
+    }
+
+    let noteId = args?.noteId;
+    let teamPath = args?.teamPath ?? null;
+
+    if (!noteId) {
+      const picked = await pickNote(model, teamPath ?? undefined);
+      if (!picked) {
+        return;
+      }
+      noteId = picked.noteId;
+      teamPath = picked.teamPath;
+    }
+
+    const note = model.getNoteSync(noteId, teamPath);
+    if (!note) {
+      vscode.window.showErrorMessage(`Note "${noteId}" is not loaded. Please refresh the scope first.`);
+      return;
+    }
+
+    const propertiesProvider = getPropertiesProvider();
+    if (!propertiesProvider) {
+      return;
+    }
+
+    await vscode.commands.executeCommand('hackmd.properties.focus');
+    await propertiesProvider.openNote(note);
   });
 }

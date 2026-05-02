@@ -453,6 +453,11 @@
         "command": "hackmd.ui.export",
         "title": "Export",
         "category": "HackMD UI"
+      },
+      {
+        "command": "hackmd.ui.properties",
+        "title": "Properties...",
+        "category": "HackMD UI"
       }
     ],
     "menus": {
@@ -663,13 +668,15 @@
     "watch": "webpack --mode none --progress --watch",
     "test-compile": "tsc -p ./",
     "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/commands/model.ts src/commands/ui.ts",
-    "test": "npm run test:model && npm run test:commands && npm run test:fs:provider",
+    "test": "npm run test:model && npm run test:commands && npm run test:fs:provider && npm run test:properties",
     "test:model": "npm run test:model:compile && node --require ./test/node/registerVscodeStub.js --test ./test/node/hackmdModel.node.test.js",
     "test:commands:model": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
     "test:commands:ui": "npm run test:model:compile && node --require ./test/node/registerUiCommandsStub.js --test ./test/node/uiCommands.node.test.js",
     "test:commands": "npm run test:commands:model && npm run test:commands:ui",
     "test:fs:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/mdFsProvider.ts",
     "test:fs:provider": "npm run test:fs:compile && node --require ./test/node/registerMdFsProviderStub.js --test ./test/node/mdFsProvider.node.test.js",
+    "test:properties:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/propertiesProvider.ts",
+    "test:properties": "npm run test:properties:compile && node --require ./test/node/registerPropertiesProviderStub.js --test ./test/node/propertiesProvider.node.test.js",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "open-in-browser": "vscode-test-web --extensionDevelopmentPath=. ."

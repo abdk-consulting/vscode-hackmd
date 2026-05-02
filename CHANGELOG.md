@@ -84,7 +84,16 @@
 - Added model regressions for note-content cache semantics:
   - Verifies list/snapshot payload note `content` fields do not mark content as loaded.
   - Verifies `lastChangedAt` updates from scope refresh evict cached content so next read re-fetches full note content.
-- Added `test:completion:compile` and `test:completion` scripts; `test` script now runs all five suites (188 tests total).
+- Added model-level pending-operation state and events for tree-view spinner support:
+  - Added per-entity `pendingOperation` flags on `ModelTeam`, `ModelFolder`, and `ModelNote`.
+  - Added container pending flags for My Notes and Team Notes.
+  - Added `onDidChangePending` event stream with typed payloads for container/team/folder/note pending transitions.
+  - Added model pending-state query helpers (`isMyNotesPendingOperation`, `isTeamNotesPendingOperation`, `isTeamPendingOperation`, `isFolderPendingOperation`, `isNotePendingOperation`).
+- Added model regressions for pending-operation semantics:
+  - Verifies personal-scope refresh toggles My Notes pending state and emits pending start/finish events.
+  - Verifies team-scope refresh toggles Team Notes container and per-team pending states and emits events.
+  - Verifies note-content load toggles per-note pending state and emits events.
+- Added `test:completion:compile` and `test:completion` scripts; `test` script now runs all five suites (191 tests total).
 
 ### Changed
 

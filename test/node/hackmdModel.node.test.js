@@ -390,6 +390,86 @@ test('supports note content sync/async getters with lazy loading', async () => {
   assert.equal(model.getNoteContentSync('pn1', null), '# personal content 1');
 });
 
+test('refreshScope(personal) toggles My Notes pending flag and emits pending events', async () => {
+  const { api, model } = createModelAndApi();
+  api.setDelay('getNoteList', 30);
+  api.setDelay('getFolders', 30);
+
+  const pendingEvents = [];
+  const d = model.onDidChangePending((event) => pendingEvents.push(event));
+
+  const inflight = model.refreshScope({ teamPath: null });
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(model.isMyNotesPendingOperation(), true);
+
+  await inflight;
+  assert.equal(model.isMyNotesPendingOperation(), false);
+
+  const myNotesEvents = pendingEvents.filter((e) => e.targetType === 'container' && e.container === 'my-notes');
+  assert.equal(myNotesEvents.length, 2);
+  assert.equal(myNotesEvents[0].pending, true);
+  assert.equal(myNotesEvents[1].pending, false);
+  d.dispose();
+});
+
+test('refreshScope(team) toggles Team Notes container and team pending flags', async () => {
+  const { api, model } = createModelAndApi();
+  await model.refreshTeams();
+  api.setDelay('getTeamNotes', 30);
+  api.setDelay('getTeamFolders', 30);
+
+  const pendingEvents = [];
+  const d = model.onDidChangePending((event) => pendingEvents.push(event));
+
+  const inflight = model.refreshScope({ teamPath: 'abdk' });
+  await new Promise((resolve) => setTimeout(resolve, 1));
+
+  assert.equal(model.isTeamNotesPendingOperation(), true);
+  assert.equal(model.isTeamPendingOperation('abdk'), true);
+
+  await inflight;
+
+  assert.equal(model.isTeamNotesPendingOperation(), false);
+  assert.equal(model.isTeamPendingOperation('abdk'), false);
+
+  const teamContainerEvents = pendingEvents.filter((e) => e.targetType === 'container' && e.container === 'team-notes');
+  const teamEvents = pendingEvents.filter((e) => e.targetType === 'team' && e.scope === 'abdk');
+  assert.equal(teamContainerEvents.length, 2);
+  assert.equal(teamContainerEvents[0].pending, true);
+  assert.equal(teamContainerEvents[1].pending, false);
+  assert.equal(teamEvents.length, 2);
+  assert.equal(teamEvents[0].pending, true);
+  assert.equal(teamEvents[1].pending, false);
+  d.dispose();
+});
+
+test('loadNoteContent toggles per-note pending flag and emits pending events', async () => {
+  const { api, model } = createModelAndApi();
+  await model.refreshScope({ teamPath: null });
+  api.setDelay('getNote', 30);
+
+  const pendingEvents = [];
+  const d = model.onDidChangePending((event) => pendingEvents.push(event));
+
+  const inflight = model.getNoteContent('pn1', null);
+  await new Promise((resolve) => setTimeout(resolve, 1));
+
+  assert.equal(model.isNotePendingOperation('pn1', null), true);
+
+  await inflight;
+
+  assert.equal(model.isNotePendingOperation('pn1', null), false);
+  const note = model.getNoteById('pn1', null);
+  assert.ok(note);
+  assert.equal(note.pendingOperation, false);
+
+  const noteEvents = pendingEvents.filter((e) => e.targetType === 'note' && e.id === 'pn1');
+  assert.equal(noteEvents.length, 2);
+  assert.equal(noteEvents[0].pending, true);
+  assert.equal(noteEvents[1].pending, false);
+  d.dispose();
+});
+
 test('scope list content does not mark note content as loaded', async () => {
   const { api, model } = createModelAndApi();
   api.personalNotes[0].content = '';

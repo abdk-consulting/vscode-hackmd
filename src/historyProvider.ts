@@ -1,9 +1,6 @@
 import * as vscode from 'vscode';
 
-
-import { API } from './api';
-import { Note } from './hackmdApiClient';
-import { recordUsage } from './store';
+import { getHackmdModel, ModelNote } from './model';
 
 // Cache ThemeIcon instances to prevent layout shifts during updates
 const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
@@ -13,7 +10,7 @@ type TreeNode = NoteNode | PlaceholderNode;
 
 interface NoteNode {
   type: 'note';
-  note: Note;
+  note: ModelNote;
 }
 
 interface PlaceholderNode {
@@ -24,60 +21,91 @@ interface PlaceholderNode {
 export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-  private notesCache: Note[] | null = null;
-  // Track pending operations
-  private pendingNotes = new Set<string>(); // Note IDs being opened/deleted/saved
+  private loadingPromise: Promise<void> | null = null;
+  private loaded = false;
+  private lastError: string | null = null;
+  private readonly model: ReturnType<typeof getHackmdModel> | null;
 
-  constructor(private extensionPath: string) { }
+  constructor(private extensionPath: string) {
+    try {
+      this.model = getHackmdModel();
+      this.model.onDidChangeState((event) => {
+        if (event.reason === 'refreshHistory' || event.reason === 'refreshScope') {
+          this._onDidChangeTreeData.fire(undefined);
+        }
+      });
+      this.model.onDidChangeEntity((event) => {
+        if (event.entityType === 'note') {
+          this._onDidChangeTreeData.fire(undefined);
+        }
+      });
+      this.model.onDidChangePending((event) => {
+        if (event.targetType === 'note') {
+          this._onDidChangeTreeData.fire(undefined);
+        }
+      });
+    } catch {
+      this.model = null;
+    }
+  }
+
+  private async ensureHistoryLoaded(force = false): Promise<void> {
+    if (!this.model) {
+      return;
+    }
+    if (!force && this.loaded) {
+      return;
+    }
+    if (this.loadingPromise) {
+      return this.loadingPromise;
+    }
+
+    this.loadingPromise = (async () => {
+      try {
+        await this.model!.refreshHistory();
+        this.loaded = true;
+        this.lastError = null;
+      } catch (error: any) {
+        this.lastError = error?.message || 'Unknown error';
+      } finally {
+        this.loadingPromise = null;
+      }
+    })();
+
+    return this.loadingPromise;
+  }
 
   refresh(): void {
-    this.notesCache = null;
+    this.loaded = false;
+    void this.ensureHistoryLoaded(true);
     this._onDidChangeTreeData.fire(undefined);
   }
 
   removeNoteFromCache(noteId: string): void {
-    if (this.notesCache) {
-      const index = this.notesCache.findIndex(n => n.id === noteId);
-      if (index !== -1) {
-        this.notesCache.splice(index, 1);
-        // Fire onChange to refresh the tree
-        this._onDidChangeTreeData.fire(undefined);
-      }
-    }
+    this._onDidChangeTreeData.fire(undefined);
   }
 
-  updateNoteInCache(noteId: string, updatedNote: Note, emitEvent = true): void {
-    if (this.notesCache) {
-      const index = this.notesCache.findIndex(n => n.id === noteId);
-      if (index !== -1) {
-        this.notesCache[index] = updatedNote;
-        if (emitEvent) {
-          // Fire onChange to refresh the tree
-          this._onDidChangeTreeData.fire(undefined);
-        }
-      }
+  updateNoteInCache(noteId: string, updatedNote: any, emitEvent = true): void {
+    if (emitEvent) {
+      this._onDidChangeTreeData.fire(undefined);
     }
   }
 
   // Find a note in cache and return it
-  findNoteInCache(noteId: string): Note | undefined {
-    if (!this.notesCache) {
+  findNoteInCache(noteId: string): ModelNote | undefined {
+    if (!this.model) {
       return undefined;
     }
-    return this.notesCache.find(n => n.id === noteId);
+    return this.model.getHistoryNotes().find(n => n.id === noteId);
   }
 
   // Pending operation management
-  setPendingNote(noteId: string, noteObject?: Note): void {
-    this.pendingNotes.add(noteId);
-    // Fire event on root to trigger refresh (all history notes are at root level)
+  setPendingNote(noteId: string, noteObject?: any): void {
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  clearPendingNote(noteId: string, noteObject?: Note, emitEvent = true): void {
-    this.pendingNotes.delete(noteId);
+  clearPendingNote(noteId: string, noteObject?: any, emitEvent = true): void {
     if (emitEvent) {
-      // Fire event on root to trigger refresh (all history notes are at root level)
       this._onDidChangeTreeData.fire(undefined);
     }
   }
@@ -94,12 +122,17 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   async getChildren(element?: TreeNode): Promise<TreeNode[]> {
     if (!element) {
       // Root level - show history notes
+      if (!this.model) {
+        return [{ type: 'placeholder', message: 'HackMD is not connected.' }];
+      }
+
       try {
-        let notes = this.notesCache;
-        if (!notes) {
-          notes = await recordUsage(API.getHistory({ unwrapData: false }));
-          this.notesCache = notes;
+        await this.ensureHistoryLoaded();
+        if (this.lastError) {
+          return [{ type: 'placeholder', message: `Error: ${this.lastError}` }];
         }
+
+        const notes = this.model.getHistoryNotes();
 
         if (notes.length === 0) {
           return [{ type: 'placeholder', message: 'No history' }];
@@ -122,13 +155,13 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.id = `note-${note.id}`; // Stable ID for VS Code to track this item
 
-    const isPending = this.pendingNotes.has(note.id);
+    const isPending = !!note.pendingOperation;
 
     if (!isPending) {
       item.command = {
-        command: 'clickTreeItem',
+        command: 'hackmd.ui.edit',
         title: 'Open Note',
-        arguments: [note], // Pass the note object directly
+        arguments: [{ noteId: note.id, teamPath: note.teamPath || null }],
       };
     }
 

@@ -393,6 +393,10 @@ function isNoteNode(node: any): node is { type: 'note'; note: Note } {
   return node?.type === 'note' && !!node.note?.id;
 }
 
+function isRecentModelNoteNode(node: any): boolean {
+  return isNoteNode(node) && (node.note as any)?.type === 'note';
+}
+
 type ResolvedFolderSelection = {
   id: string;
   name: string;
@@ -1277,6 +1281,13 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.renameNote', async (node: any) => {
       if (node && node.type === 'note') {
         const note = node.note;
+        if (isRecentModelNoteNode(node)) {
+          await vscode.commands.executeCommand('hackmd.model.renameNote', {
+            noteId: note.id,
+            teamPath: note.teamPath || null,
+          });
+          return;
+        }
         const noteId = note.id;
         const currentTitle = note.title || note.shortId || 'Unnamed';
 
@@ -1455,6 +1466,24 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       }
 
       const sourceNote = node.note as Note;
+      if (isRecentModelNoteNode(node)) {
+        try {
+          const content = await vscode.commands.executeCommand('hackmd.model.getNoteContent', {
+            noteId: sourceNote.id,
+            teamPath: sourceNote.teamPath || null,
+          });
+          await vscode.commands.executeCommand('hackmd.model.createNote', {
+            teamPath: sourceNote.teamPath || null,
+            title: sourceNote.title || sourceNote.shortId || 'Untitled',
+            content: (content as string) || '',
+            parentFolderId: (sourceNote as any).parentFolderId || undefined,
+          });
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`Failed to duplicate note: ${error.message || 'Unknown error'}`);
+        }
+        return;
+      }
+
       const teamPath = sourceNote.teamPath || null;
       const myNotesProvider = getMyNotesProvider();
       const teamNotesProvider = getTeamNotesProvider();
@@ -1501,6 +1530,32 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.deleteMyNote', async (node: any, selectedNodes?: any[]) => {
       const selection = resolveOperationSelection(node, selectedNodes);
+      if (
+        selection.folders.length === 0
+        && selection.notes.length > 0
+        && selection.notes.every((n: any) => n?.type === 'note')
+      ) {
+        const confirmRecent = await vscode.window.showWarningMessage(
+          selection.notes.length === 1
+            ? 'Delete this note?'
+            : `Delete these ${selection.notes.length} notes?`,
+          { modal: true },
+          'Delete'
+        );
+        if (confirmRecent !== 'Delete') {
+          return;
+        }
+
+        await Promise.all(selection.notes.map((note: any) =>
+          vscode.commands.executeCommand('hackmd.model.deleteNote', {
+            noteId: note.id,
+            teamPath: note.teamPath || null,
+            force: true,
+          })
+        ));
+        return;
+      }
+
       if (selection.hasUnsupportedNodes || (selection.notes.length === 0 && selection.folders.length === 0)) {
         vscode.window.showInformationMessage('Delete is only available for note and folder selections.');
         return;
@@ -1653,6 +1708,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.editNote', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
+        if (isRecentModelNoteNode(noteNode)) {
+          await vscode.commands.executeCommand('hackmd.ui.edit', { noteId: note.id, teamPath: note.teamPath || null });
+          return;
+        }
         const myNotesProvider = getMyNotesProvider();
         const teamNotesProvider = getTeamNotesProvider();
         const historyProvider = getHistoryProvider();
@@ -1696,6 +1755,21 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.exportNote', async (noteNode: any, selectedNodes?: any[]) => {
       const selection = resolveOperationSelection(noteNode, selectedNodes);
+      if (
+        selection.folders.length === 0
+        && selection.notes.length > 0
+        && selection.notes.every((n: any) => n?.type === 'note')
+      ) {
+        await vscode.commands.executeCommand('hackmd.ui.export', {
+          notes: selection.notes.map((note: any) => ({
+            type: 'note',
+            noteId: note.id,
+            teamPath: note.teamPath || null,
+          })),
+        });
+        return;
+      }
+
       if (selection.hasUnsupportedNodes || (selection.notes.length === 0 && selection.folders.length === 0)) {
         vscode.window.showInformationMessage('Export is only available for note and folder selections.');
         return;
@@ -1816,6 +1890,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.showPreview', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
+        if (isRecentModelNoteNode(noteNode)) {
+          await vscode.commands.executeCommand('hackmd.ui.preview', { noteId: note.id, teamPath: note.teamPath || null });
+          return;
+        }
         const myNotesProvider = getMyNotesProvider();
         const teamNotesProvider = getTeamNotesProvider();
         const historyProvider = getHistoryProvider();
@@ -1861,6 +1939,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HackMD.showPreviewAndEditor', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
+        if (isRecentModelNoteNode(noteNode)) {
+          await vscode.commands.executeCommand('hackmd.ui.sideBySide', { noteId: note.id, teamPath: note.teamPath || null });
+          return;
+        }
         const myNotesProvider = getMyNotesProvider();
         const teamNotesProvider = getTeamNotesProvider();
         const historyProvider = getHistoryProvider();
@@ -1906,6 +1988,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('HacKMD.openNoteOnHackMD', async (noteNode: any) => {
       if (noteNode && noteNode.type === 'note') {
         const note = noteNode.note;
+        if (isRecentModelNoteNode(noteNode)) {
+          await vscode.commands.executeCommand('hackmd.ui.openOnHackMD', { noteId: note.id, teamPath: note.teamPath || null });
+          return;
+        }
         vscode.env.openExternal(vscode.Uri.parse(note.publishLink));
       } else {
         const noteId = getNoteIdFromUri(vscode.window.activeTextEditor.document.uri);

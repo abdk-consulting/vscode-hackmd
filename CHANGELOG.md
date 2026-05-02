@@ -94,6 +94,11 @@
   - Verifies team-scope refresh toggles Team Notes container and per-team pending states and emits events.
   - Verifies note-content load toggles per-note pending state and emits events.
 - Added `test:completion:compile` and `test:completion` scripts; `test` script now runs all five suites (191 tests total).
+- Migrated Recent Notes tree provider (`src/historyProvider.ts`) to the model layer:
+  - Removed direct API calls and local note cache from the provider.
+  - History loading now uses model refresh/state (`refreshHistory` + `getHistoryNotes`).
+  - Spinner state now follows model `pendingOperation` flags on notes.
+  - Provider listens to model state/entity/pending events and refreshes reactively.
 
 ### Changed
 
@@ -106,6 +111,11 @@
 - `hackmd:` URI parsing now requires `noteId` in query params; legacy note-ID-in-fragment fallback was removed.
 - Project test flow now compiles `src/commands/pickers.ts` and `src/commands/ui.ts` as part of `test:model:compile` and runs command tests as two dedicated suites (`model` and `ui`).
 - `hackmd.ui.properties` now invokes the note picker in cache-only mode (no custom/manual note ID path), aligning interactive behavior with its sync-only `getNoteSync` resolution.
+- Recent Notes note-open now delegates directly to `hackmd.ui.edit` with `{ noteId, teamPath }` args.
+- Legacy tree view note actions now delegate to model/UI commands when invoked from model-backed Recent Notes nodes:
+  - Edit/Preview/Side-by-Side/Open on HackMD -> `hackmd.ui.*`
+  - Rename/Delete/Duplicate -> `hackmd.model.*` paths
+  - Export (notes-only selection) -> `hackmd.ui.export`
 
 ### Fixed
 

@@ -4,6 +4,25 @@
 
 ## Recent Changes (Unreleased)
 
+### Changed
+
+- Simplified tree and context-menu actions around unified model commands.
+  - Removed legacy separate move/delete command variants and routed tree interactions through the shared `hackmd.model.move` and `hackmd.model.delete` flows.
+  - Removed obsolete tree-view wrapper command registrations and kept drag-and-drop behavior in a shared utility instead of command wiring.
+- Reorganized the source tree by concern.
+  - API code now lives under `src/api`.
+  - Tree/data providers now live under `src/providers`.
+  - Preview and markdown styles now live under `src/css`.
+  - Shared helpers now live under `src/utils`.
+
+### Added
+
+- Added regression coverage for the refactor surfaces introduced by the source-tree reorganization.
+  - Added pure Node tests for shared tree drag-and-drop behavior, including unified move command routing and invalid-drop handling.
+  - Added pure Node tests for provider architecture constraints and deterministic tree ordering.
+  - Added pure Node tests for context-menu command ordering after command unification.
+- Added `test:tree:dnd` and included it in the default `npm test` run.
+
 ### Chores
 
 - Upgraded ESLint to `^10.2.1` and migrated lint configuration from legacy `.eslintrc.js` to ESLint flat config (`eslint.config.js`).

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { HackMdApiClient, HackMdFolder, Note, Team } from '../hackmdApiClient';
+import { HackMdApiClient, HackMdFolder, Note, Team } from '../api/hackmdApiClient';
 import { recordUsage } from '../store';
 
 export type ModelScope = string | null;
@@ -186,6 +186,29 @@ function replaceArrayContentsIfChanged<T>(target: T[], next: T[]): boolean {
   }
   replaceArrayContents(target, next);
   return true;
+}
+
+function reconcileArrayAsSetPreserveOrder<T>(target: T[], next: readonly T[]): boolean {
+  let changed = false;
+  const nextSet = new Set(next);
+
+  for (let i = target.length - 1; i >= 0; i -= 1) {
+    if (!nextSet.has(target[i])) {
+      target.splice(i, 1);
+      changed = true;
+    }
+  }
+
+  const currentSet = new Set(target);
+  for (const item of next) {
+    if (!currentSet.has(item)) {
+      target.push(item);
+      currentSet.add(item);
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function stringArrayEqual(a?: string[], b?: string[]): boolean {
@@ -619,8 +642,7 @@ export class HackmdModel {
         }
       });
 
-      next.sort((a, b) => compareStrings(a.title || '', b.title || ''));
-      replaceArrayContents(this.historyNotes, next);
+      reconcileArrayAsSetPreserveOrder(this.historyNotes, next);
       this.didChangeState.emit({ reason: 'refreshHistory', scope: null });
       return this.historyNotes;
     })();
@@ -850,8 +872,10 @@ export class HackmdModel {
       }
     }
 
-    const ordered = [...this.teams.values()].sort((a, b) => compareStrings(a.name, b.name));
-    replaceArrayContentsIfChanged(this.orderedTeams, ordered);
+    const desiredOrder = teams
+      .map((team) => this.teams.get(team.id))
+      .filter((team): team is ModelTeam => !!team);
+    reconcileArrayAsSetPreserveOrder(this.orderedTeams, desiredOrder);
   }
 
   private rebuildScope(teamPath: string | null, notes: Note[], folders: HackMdFolder[]): void {
@@ -890,17 +914,16 @@ export class HackmdModel {
       }
     }
 
-    for (const folder of folderMap.values()) {
-      replaceArrayContentsIfChanged(folder.children, HackmdModel.EMPTY_FOLDERS);
-      replaceArrayContentsIfChanged(folder.notes, HackmdModel.EMPTY_NOTES);
-    }
-
+    const nextChildrenByFolder = new Map<string, ModelFolder[]>();
+    const nextNotesByFolder = new Map<string, ModelNote[]>();
     const rootFolders: ModelFolder[] = [];
     for (const folder of folderMap.values()) {
       if (folder.parentId) {
         const parent = folderMap.get(folder.parentId);
         if (parent) {
-          parent.children.push(folder);
+          const nextChildren = nextChildrenByFolder.get(parent.id) || [];
+          nextChildren.push(folder);
+          nextChildrenByFolder.set(parent.id, nextChildren);
         } else {
           rootFolders.push(folder);
         }
@@ -926,7 +949,9 @@ export class HackmdModel {
       }
 
       if (parentFolder) {
-        parentFolder.notes.push(note);
+        const nextNotes = nextNotesByFolder.get(parentFolder.id) || [];
+        nextNotes.push(note);
+        nextNotesByFolder.set(parentFolder.id, nextNotes);
       } else {
         rootNotes.push(note);
       }
@@ -940,22 +965,20 @@ export class HackmdModel {
       }
     }
 
-    rootFolders.sort((a, b) => compareStrings(a.name, b.name));
-    rootNotes.sort((a, b) => compareStrings(a.title || '', b.title || ''));
     for (const folder of folderMap.values()) {
-      folder.children.sort((a, b) => compareStrings(a.name, b.name));
-      folder.notes.sort((a, b) => compareStrings(a.title || '', b.title || ''));
+      reconcileArrayAsSetPreserveOrder(folder.children, nextChildrenByFolder.get(folder.id) || HackmdModel.EMPTY_FOLDERS);
+      reconcileArrayAsSetPreserveOrder(folder.notes, nextNotesByFolder.get(folder.id) || HackmdModel.EMPTY_NOTES);
     }
 
     if (teamPath) {
       const team = this.teamsByPath.get(teamPath);
       if (team) {
-        replaceArrayContentsIfChanged(team.rootFolders, rootFolders);
-        replaceArrayContentsIfChanged(team.rootNotes, rootNotes);
+        reconcileArrayAsSetPreserveOrder(team.rootFolders, rootFolders);
+        reconcileArrayAsSetPreserveOrder(team.rootNotes, rootNotes);
       }
     } else {
-      replaceArrayContentsIfChanged(this.personalRootFolders, rootFolders);
-      replaceArrayContentsIfChanged(this.personalRootNotes, rootNotes);
+      reconcileArrayAsSetPreserveOrder(this.personalRootFolders, rootFolders);
+      reconcileArrayAsSetPreserveOrder(this.personalRootNotes, rootNotes);
     }
 
     this.loadedScopes.add(scopeKey(teamPath));

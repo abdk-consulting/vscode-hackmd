@@ -1,4 +1,4 @@
-import { HackMdApiClient } from '../hackmdApiClient';
+import { HackMdApiClient } from '../api/hackmdApiClient';
 import { HackmdModel } from './hackmdModel';
 
 let modelSingleton: HackmdModel | undefined;

@@ -13,7 +13,7 @@ const {
   getProvider,
   generateResourceUri,
   generateFolderResourceUri,
-} = require('../../out/mdFsProvider');
+} = require('../../out/providers/mdFsProvider');
 
 class MockModel {
   constructor() {

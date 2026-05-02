@@ -269,7 +269,7 @@ test('edit: programmatic note uses model.toNoteUri and opens editor', async () =
     return undefined;
   };
 
-  await invoke('hackmd.ui.edit', { noteId: 'n1', teamPath: null });
+  await invoke('hackmd.ui.edit', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(callCount(model, 'toNoteUri'), 1);
   assert.equal(stub.workspaceState.openTextDocumentCalls.length, 1);
@@ -281,7 +281,7 @@ test('edit: falls back to a hackmd URI when note is not in sync cache', async ()
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.edit', { noteId: 'unknown', teamPath: null });
+  await invoke('hackmd.ui.edit', { type: 'note', note: { id: 'unknown', teamPath: null } });
 
   assert.equal(callCount(model, 'toNoteUri'), 0);
   const opened = stub.workspaceState.openTextDocumentCalls[0];
@@ -293,7 +293,7 @@ test('preview: executes markdown.showPreview with resolved URI', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.preview', { noteId: 'n1', teamPath: null });
+  await invoke('hackmd.ui.preview', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(stub.commandsState.executeCalls[0][0], 'markdown.showPreview');
   assert.equal(callCount(model, 'toNoteUri'), 1);
@@ -303,7 +303,7 @@ test('sideBySide: opens editor and then markdown.showPreviewToSide', async () =>
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.sideBySide', { noteId: 'n1', teamPath: null });
+  await invoke('hackmd.ui.sideBySide', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(stub.workspaceState.openTextDocumentCalls.length, 1);
   assert.equal(stub.commandsState.executeCalls.length, 1);
@@ -314,7 +314,7 @@ test('openOnHackMD: uses cached publishLink without async getNote', async () => 
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.openOnHackMD', { noteId: 'n1', teamPath: null });
+  await invoke('hackmd.ui.openOnHackMD', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(callCount(model, 'getNote'), 0);
   assert.equal(stub.env.openExternalCalls.length, 1);
@@ -334,7 +334,7 @@ test('openOnHackMD: falls back to async getNote when publishLink is not cached',
   });
   stub.setModel(model);
 
-  await invoke('hackmd.ui.openOnHackMD', { noteId: 'missing', teamPath: null });
+  await invoke('hackmd.ui.openOnHackMD', { type: 'note', note: { id: 'missing', teamPath: null } });
 
   assert.equal(callCount(model, 'getNote'), 1);
   assert.equal(stub.env.openExternalCalls.length, 1);
@@ -350,7 +350,7 @@ test('openOnHackMD: shows error when publish link is unavailable', async () => {
   let err;
   stub.window.showErrorMessage = async (msg) => { err = msg; };
 
-  await invoke('hackmd.ui.openOnHackMD', { noteId: 'nolink', teamPath: null });
+  await invoke('hackmd.ui.openOnHackMD', { type: 'note', note: { id: 'nolink', teamPath: null } });
 
   assert.equal(err, 'No publish link is available for this note.');
   assert.equal(stub.env.openExternalCalls.length, 0);
@@ -360,17 +360,20 @@ test('import: programmatic files create notes and refresh personal tree', async 
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.import', {
-    teamPath: null,
-    parentFolderId: null,
-    files: [
-      { title: 'One', content: '# 1' },
-      { title: 'Two', content: '# 2' },
-    ],
-  });
+  const f1 = stub.makeUri('file', '/tmp/one.md');
+  const f2 = stub.makeUri('file', '/tmp/two.md');
+  stub.workspaceState.fileBytesByUri.set(f1.toString(), Buffer.from('# One', 'utf8'));
+  stub.workspaceState.fileBytesByUri.set(f2.toString(), Buffer.from('# Two', 'utf8'));
+
+  new Interactions()
+    .od([f1, f2])
+    .install();
+
+  await invoke('hackmd.ui.import', { type: 'folder', id: null, teamPath: null });
 
   assert.equal(callCount(model, 'createNote'), 2);
-  assert.equal(stub.commandsState.executeCalls[0][0], 'treeView.refreshMyNotes');
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
+  assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
 });
 
 test('import: interactive file picker + scope/folder pickers create notes', async () => {
@@ -397,7 +400,8 @@ test('import: interactive file picker + scope/folder pickers create notes', asyn
     content: '# first',
     parentFolderId: null,
   });
-  assert.equal(stub.commandsState.executeCalls[0][0], 'treeView.refreshMyNotes');
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
+  assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
 });
 
 test('import: open-dialog cancellation exits without creating notes', async () => {
@@ -418,9 +422,7 @@ test('export: single note uses save dialog then writes one file', async () => {
   const target = stub.makeUri('file', '/tmp/out.md');
   new Interactions().sd(target).install();
 
-  await invoke('hackmd.ui.export', {
-    targets: [{ type: 'note', noteId: 'n1', teamPath: null }],
-  });
+  await invoke('hackmd.ui.export', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(callCount(model, 'getNoteContent'), 1);
   assert.equal(stub.workspaceState.writeFileCalls.length, 1);
@@ -433,9 +435,7 @@ test('export: save dialog cancel aborts single-note export', async () => {
 
   new Interactions().sd(null).install();
 
-  await invoke('hackmd.ui.export', {
-    targets: [{ type: 'note', noteId: 'n1', teamPath: null }],
-  });
+  await invoke('hackmd.ui.export', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(callCount(model, 'getNoteContent'), 0);
   assert.equal(stub.workspaceState.writeFileCalls.length, 0);
@@ -448,12 +448,9 @@ test('export: multi-target writes note files and recursively exports folder note
   const dir = stub.makeUri('file', '/tmp/export-dir');
   new Interactions().od([dir]).install();
 
-  await invoke('hackmd.ui.export', {
-    targets: [
-      { type: 'note', noteId: 'n1', teamPath: null },
-      { type: 'folder', folderId: 'f1', name: 'FolderOne', teamPath: null },
-    ],
-  });
+  const noteNode = { type: 'note', note: { id: 'n1', teamPath: null } };
+  const folderNode = { type: 'folder', id: 'f1', name: 'FolderOne', teamPath: null };
+  await invoke('hackmd.ui.export', noteNode, [noteNode, folderNode]);
 
   assert.equal(callCount(model, 'getNoteContent'), 3);
   assert.ok(stub.workspaceState.createDirectoryCalls.length >= 2);
@@ -491,9 +488,7 @@ test('export: warns when folder scope snapshot is not loaded', async () => {
   let warning;
   stub.window.showWarningMessage = async (msg) => { warning = msg; };
 
-  await invoke('hackmd.ui.export', {
-    targets: [{ type: 'folder', folderId: 'missing', name: 'MissingFolder', teamPath: null }],
-  });
+  await invoke('hackmd.ui.export', { type: 'folder', id: 'missing', name: 'MissingFolder', teamPath: null });
 
   assert.ok(warning.includes('is not loaded'));
   assert.equal(stub.workspaceState.writeFileCalls.length, 0);
@@ -509,9 +504,7 @@ test('export: warns when folder id is missing in loaded scope', async () => {
   let warning;
   stub.window.showWarningMessage = async (msg) => { warning = msg; };
 
-  await invoke('hackmd.ui.export', {
-    targets: [{ type: 'folder', folderId: 'nope', name: 'Nope', teamPath: null }],
-  });
+  await invoke('hackmd.ui.export', { type: 'folder', id: 'nope', name: 'Nope', teamPath: null });
 
   assert.ok(warning.includes('was not found in scope'));
   assert.equal(stub.workspaceState.writeFileCalls.length, 0);
@@ -560,7 +553,7 @@ test('properties: programmatic noteId uses getNoteSync and opens properties pane
     async openNote(note) { openNoteArg = note; return true; },
   });
 
-  await invoke('hackmd.ui.properties', { noteId: 'n1', teamPath: null });
+  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal((model.calls.getNoteSync || []).length, 1);
   assert.equal((model.calls.getNote || []).length, 0, 'should not use async getNote');
@@ -576,7 +569,7 @@ test('properties: note not in sync cache shows error message', async () => {
   let err;
   stub.window.showErrorMessage = async (msg) => { err = msg; };
 
-  await invoke('hackmd.ui.properties', { noteId: 'unknown', teamPath: null });
+  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'unknown', teamPath: null } });
 
   assert.ok(err && err.includes('unknown'), 'error message should mention note id');
   assert.equal(stub.commandsState.executeCalls.length, 0, 'focus should not be called');
@@ -699,7 +692,7 @@ test('properties: sync-only — getNoteSync called, getNote never called', async
   stub.setModel(model);
   stub.setPropertiesProvider({ async openNote() { return true; } });
 
-  await invoke('hackmd.ui.properties', { noteId: 'n1', teamPath: null });
+  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(asyncGetNoteTouched, false);
   assert.equal((model.calls.getNoteSync || []).length, 1);
@@ -714,7 +707,7 @@ test('properties: team note uses teamPath from args', async () => {
     async openNote(note) { openNoteArg = note; return true; },
   });
 
-  await invoke('hackmd.ui.properties', { noteId: 'tn1', teamPath: 'acme' });
+  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'tn1', teamPath: 'acme' } });
 
   assert.ok(openNoteArg);
   assert.equal(openNoteArg.id, 'tn1');

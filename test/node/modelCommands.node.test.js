@@ -126,6 +126,22 @@ class MockHackmdModel {
           name: 'Work',
           path: '/Work',
           notes: [{ id: 'pn1', title: 'My Note', shortId: 'abc', teamPath: null, children: [], notes: [] }],
+          children: [
+            {
+              id: 'pf2',
+              name: 'Sub',
+              path: '/Work/Sub',
+              parentId: 'pf1',
+              notes: [],
+              children: [],
+            },
+          ],
+        },
+        {
+          id: 'pf3',
+          name: 'Archive',
+          path: '/Archive',
+          notes: [],
           children: [],
         },
       ],
@@ -293,6 +309,13 @@ test('refreshAll — calls model.refreshAll() and returns true', async () => {
   assert.equal(model.calls.refreshAll.length, 1);
 });
 
+test('refreshPersonalScope — calls model.refreshScope(personal) and returns true', async () => {
+  const model = setupModel();
+  const result = await invoke('hackmd.model.refreshPersonalScope');
+  assert.equal(result, true);
+  assert.deepEqual(model.calls.refreshScope[0], [null]);
+});
+
 test('refreshTeams — calls model.refreshTeams()', async () => {
   const model = setupModel();
   await invoke('hackmd.model.refreshTeams');
@@ -318,6 +341,13 @@ test('refreshScope — with explicit null teamPath', async () => {
 test('refreshScope — with explicit team path', async () => {
   const model = setupModel();
   const result = await invoke('hackmd.model.refreshScope', { teamPath: 'acme' });
+  assert.equal(result, true);
+  assert.deepEqual(model.calls.refreshScope[0], ['acme']);
+});
+
+test('refreshScope — with tree team node argument', async () => {
+  const model = setupModel();
+  const result = await invoke('hackmd.model.refreshScope', { type: 'team', team: { path: 'acme' } });
   assert.equal(result, true);
   assert.deepEqual(model.calls.refreshScope[0], ['acme']);
 });
@@ -388,7 +418,7 @@ test('getNote — note picker cancelled returns undefined', async () => {
 // ─────────────────────────────────────────────────────────────
 test('getNoteContent — with explicit noteId', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.getNoteContent', { noteId: 'pn2', teamPath: null });
+  await invoke('hackmd.model.getNoteContent', { type: 'note', note: { id: 'pn2', teamPath: null } });
   assert.deepEqual(model.calls.getNoteContent[0], ['pn2', null]);
 });
 
@@ -437,12 +467,11 @@ test('getEntityByUri — cancelled input returns undefined', async () => {
 // ─────────────────────────────────────────────────────────────
 test('createNote — with all args provided', async () => {
   const model = setupModel();
-  const result = await invoke('hackmd.model.createNote', {
-    teamPath: null,
-    parentFolderId: null,
-    title: 'Hello',
-    content: '# hi',
-  });
+  new Interactions()
+    .ib('Hello')    // title
+    .ib('# hi')     // content
+    .install();
+  const result = await invoke('hackmd.model.createNote', { type: 'folder', id: null, teamPath: null });
   assert.ok(result);
   assert.equal(model.calls.createNote[0][0].title, 'Hello');
   assert.equal(model.calls.createNote[0][0].content, '# hi');
@@ -512,11 +541,10 @@ test('createNote — custom scope input ("Custom Team Path...")', async () => {
 // ─────────────────────────────────────────────────────────────
 test('createFolder — with all args provided', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.createFolder', {
-    teamPath: null,
-    parentFolderId: null,
-    name: 'Archive',
-  });
+  new Interactions()
+    .ib('Archive')  // name
+    .install();
+  await invoke('hackmd.model.createFolder', { type: 'folder', id: null, teamPath: null });
   assert.equal(model.calls.createFolder[0][0].name, 'Archive');
 });
 
@@ -620,7 +648,10 @@ test('updateNoteProperties — prompts JSON update', async () => {
 // ─────────────────────────────────────────────────────────────
 test('renameNote — with explicit args', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.renameNote', { noteId: 'pn1', teamPath: null, newTitle: 'Renamed' });
+  new Interactions()
+    .ib('Renamed')  // new title
+    .install();
+  await invoke('hackmd.model.renameNote', { type: 'note', note: { id: 'pn1', teamPath: null, title: 'Old' } });
   assert.deepEqual(model.calls.renameNote[0], ['pn1', 'Renamed', null]);
 });
 
@@ -640,7 +671,10 @@ test('renameNote — picks note, prompts new title', async () => {
 // ─────────────────────────────────────────────────────────────
 test('renameFolder — with explicit args', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.renameFolder', { folderId: 'pf1', teamPath: null, newName: 'Archives' });
+  new Interactions()
+    .ib('Archives')  // new name
+    .install();
+  await invoke('hackmd.model.renameFolder', { type: 'folder', id: 'pf1', teamPath: null, name: 'Work' });
   assert.deepEqual(model.calls.renameFolder[0], ['pf1', 'Archives', null]);
 });
 
@@ -678,146 +712,156 @@ test('updateFolder — picks scope → folder → JSON', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// moveNote
+// move
 // ─────────────────────────────────────────────────────────────
-test('moveNote — with all args', async () => {
+test('move — active item only: asks destination and moves the item', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.moveNote', {
-    noteId: 'pn1',
-    sourceTeamPath: null,
-    targetTeamPath: null,
-    targetParentFolderId: null,
-  });
-  assert.deepEqual(model.calls.moveNote[0][0], {
-    noteId: 'pn1',
-    sourceTeamPath: null,
-    targetTeamPath: null,
-    targetParentFolderId: null,
-  });
+  new Interactions().qp('Archive').install();
+
+  await invoke('hackmd.model.move', { type: 'note', note: { id: 'pn1', teamPath: null } });
+
+  assert.equal(model.calls.moveNote[0][0].noteId, 'pn1');
+  assert.equal(model.calls.moveNote[0][0].sourceTeamPath, null);
+  assert.equal(model.calls.moveNote[0][0].targetTeamPath, null);
+  assert.equal(model.calls.moveNote[0][0].targetParentFolderId, 'pf3');
 });
 
-test('moveNote — fully interactive (source note → dest scope → dest folder)', async () => {
+test('move — selected items take precedence over active item', async () => {
+  const model = setupModel();
+  new Interactions().qp('Archive').install();
+
+  const activeItem = { type: 'note', note: { id: 'pn1', teamPath: null } };
+  const selectedItems = [{ type: 'note', note: { id: 'pn2', teamPath: null } }];
+
+  await invoke('hackmd.model.move', activeItem, selectedItems);
+
+  assert.equal(model.calls.moveNote.length, 1);
+  assert.equal(model.calls.moveNote[0][0].noteId, 'pn2');
+});
+
+test('move — command palette flow picks entity then destination', async () => {
   const model = setupModel();
   new Interactions()
-    .qp('My Notes')    // source scope picker (inside pickNote)
-    .qp('My Note')     // source note picker
-    .qp('My Notes')    // dest scope picker
-    .qp('Root')        // dest folder picker
+    .qp('My Notes')
+    .qp((it) => String(it.label || '').includes('My Note'))
+    .qp('Archive')
     .install();
-  await invoke('hackmd.model.moveNote');
+
+  await invoke('hackmd.model.move');
+
   assert.equal(model.calls.moveNote[0][0].noteId, 'pn1');
 });
 
-// ─────────────────────────────────────────────────────────────
-// moveFolder
-// ─────────────────────────────────────────────────────────────
-test('moveFolder — with all args', async () => {
+test('move — folder candidate removes descendant candidates before moving', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.moveFolder', {
-    folderId: 'pf1',
-    teamPath: null,
-    targetParentFolderId: null,
-  });
-  assert.deepEqual(model.calls.moveFolder[0][0], {
-    folderId: 'pf1',
-    teamPath: null,
-    targetParentFolderId: null,
-  });
-});
+  new Interactions().qp('Archive').install();
 
-test('moveFolder — fully interactive', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')   // scope for source folder
-    .qp('Work')       // source folder
-    .qp('Root')       // destination parent folder (includeRoot)
-    .install();
-  await invoke('hackmd.model.moveFolder');
+  const folder = { type: 'folder', id: 'pf1', teamPath: null };
+  const descendantFolder = { type: 'folder', id: 'pf2', teamPath: null, parentId: 'pf1' };
+  const descendantNote = { type: 'note', note: { id: 'pn1', teamPath: null, parentFolderId: 'pf1' } };
+
+  await invoke('hackmd.model.move', folder, [folder, descendantFolder, descendantNote]);
+
+  assert.equal(model.calls.moveFolder.length, 1);
   assert.equal(model.calls.moveFolder[0][0].folderId, 'pf1');
+  assert.equal(model.calls.moveNote ? model.calls.moveNote.length : 0, 0);
 });
 
-// ─────────────────────────────────────────────────────────────
-// deleteNote
-// ─────────────────────────────────────────────────────────────
-test('deleteNote — force=true skips confirmation', async () => {
+test('move — provided target folder skips destination picker', async () => {
   const model = setupModel();
-  const result = await invoke('hackmd.model.deleteNote', { noteId: 'pn1', teamPath: null, force: true });
-  assert.equal(result, true);
-  assert.deepEqual(model.calls.deleteNote[0], ['pn1', null]);
+  await invoke(
+    'hackmd.model.move',
+    { type: 'note', note: { id: 'pn2', teamPath: null } },
+    undefined,
+    { teamPath: null, folderId: 'pf1' }
+  );
+
+  assert.equal(model.calls.moveNote[0][0].noteId, 'pn2');
+  assert.equal(model.calls.moveNote[0][0].targetParentFolderId, 'pf1');
 });
 
-test('deleteNote — confirmation accepted deletes note', async () => {
+test('move — invalid destination for all items shows error', async () => {
+  const model = setupModel();
+  let error;
+  stub.window.showErrorMessage = async (message) => { error = message; return undefined; };
+
+  await invoke(
+    'hackmd.model.move',
+    { type: 'folder', id: 'pf1', teamPath: null },
+    undefined,
+    { teamPath: null, folderId: 'pf2' }
+  );
+
+  assert.ok(error.includes('not a valid move destination'));
+  assert.equal(model.calls.moveFolder ? model.calls.moveFolder.length : 0, 0);
+  stub.window.showErrorMessage = async () => undefined;
+});
+
+test('move — all items already in destination does nothing silently', async () => {
+  const model = setupModel();
+  await invoke(
+    'hackmd.model.move',
+    { type: 'note', note: { id: 'pn2', teamPath: null, parentFolderId: null } },
+    undefined,
+    { teamPath: null, folderId: null }
+  );
+
+  assert.equal(model.calls.moveNote ? model.calls.moveNote.length : 0, 0);
+});
+
+// ─────────────────────────────────────────────────────────────
+// delete
+// ─────────────────────────────────────────────────────────────
+test('delete — confirmation accepted deletes note', async () => {
   const model = setupModel();
   new Interactions().wm('Delete').install();
-  const result = await invoke('hackmd.model.deleteNote', { noteId: 'pn1', teamPath: null });
+  const result = await invoke('hackmd.model.delete', { type: 'note', note: { id: 'pn1', teamPath: null } });
   assert.equal(result, true);
   assert.deepEqual(model.calls.deleteNote[0], ['pn1', null]);
 });
 
-test('deleteNote — confirmation rejected returns undefined', async () => {
+test('delete — confirmation rejected returns undefined', async () => {
   setupModel();
   new Interactions().wm(undefined).install();
-  const result = await invoke('hackmd.model.deleteNote', { noteId: 'pn1', teamPath: null });
+  const result = await invoke('hackmd.model.delete', { type: 'note', note: { id: 'pn1', teamPath: null } });
   assert.equal(result, undefined);
 });
 
-test('deleteNote — fully interactive, then confirms', async () => {
+test('delete — fully interactive, then confirms', async () => {
   const model = setupModel();
   new Interactions()
     .qp('My Notes')
     .qp('My Note')
     .wm('Delete')
     .install();
-  const result = await invoke('hackmd.model.deleteNote');
+  const result = await invoke('hackmd.model.delete');
   assert.equal(result, true);
   assert.equal(model.calls.deleteNote[0][0], 'pn1');
 });
 
-test('deleteNote — fully interactive, note picker cancelled', async () => {
+test('delete — fully interactive, note picker cancelled', async () => {
   setupModel();
   new Interactions()
     .qp('My Notes')
     .qp(null)
     .install();
-  const result = await invoke('hackmd.model.deleteNote');
+  const result = await invoke('hackmd.model.delete');
   assert.equal(result, undefined);
 });
 
-// ─────────────────────────────────────────────────────────────
-// deleteFolder
-// ─────────────────────────────────────────────────────────────
-test('deleteFolder — force=true skips confirmation', async () => {
-  const model = setupModel();
-  const result = await invoke('hackmd.model.deleteFolder', { folderId: 'pf1', teamPath: null, force: true });
-  assert.equal(result, true);
-  assert.deepEqual(model.calls.deleteFolder[0], ['pf1', null]);
-});
-
-test('deleteFolder — confirmation accepted deletes folder', async () => {
+test('delete — confirmation accepted deletes folder', async () => {
   const model = setupModel();
   new Interactions().wm('Delete').install();
-  const result = await invoke('hackmd.model.deleteFolder', { folderId: 'pf1', teamPath: null });
+  const result = await invoke('hackmd.model.delete', { type: 'folder', id: 'pf1', teamPath: null });
   assert.equal(result, true);
   assert.deepEqual(model.calls.deleteFolder[0], ['pf1', null]);
 });
 
-test('deleteFolder — confirmation rejected returns undefined', async () => {
+test('delete — folder confirmation rejected returns undefined', async () => {
   setupModel();
   new Interactions().wm(undefined).install();
-  const result = await invoke('hackmd.model.deleteFolder', { folderId: 'pf1', teamPath: null });
+  const result = await invoke('hackmd.model.delete', { type: 'folder', id: 'pf1', teamPath: null });
   assert.equal(result, undefined);
-});
-
-test('deleteFolder — fully interactive (scope → folder → confirm)', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('Work')
-    .wm('Delete')
-    .install();
-  const result = await invoke('hackmd.model.deleteFolder');
-  assert.equal(result, true);
-  assert.equal(model.calls.deleteFolder[0][0], 'pf1');
 });
 
 // ─────────────────────────────────────────────────────────────

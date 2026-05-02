@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 
-import { ACCESS_TOKEN_KEY } from './constants';
+import { ACCESS_TOKEN_KEY } from '../constants';
+import { meStore } from '../store';
 import { HackMdApiClient } from './hackmdApiClient';
-import { meStore } from './store';
 
 let API: HackMdApiClient;
 

@@ -13,13 +13,11 @@
     "theme": "dark"
   },
   "activationEvents": [
-    "onCommand:HackMD.createCodeSnippet",
     "onView:hackmd.tree.my-notes",
     "onView:hackmd.tree.recent-notes",
     "onView:hackmd.tree.team-notes",
     "onCommand:HackMD.apiKey",
     "onCommand:HackMD.clearApiKey",
-    "onCommand:HackMD.createActiveEditorContentToHackMD",
     "onCommand:HacKMD.openNoteOnHackMD",
     "onFileSystem:hackmd"
   ],
@@ -87,236 +85,13 @@
     },
     "commands": [
       {
-        "command": "HackMD.createCodeSnippet",
-        "title": "HackMD: Create a code snippet"
-      },
-      {
         "command": "HackMD.apiKey",
         "title": "API Key",
         "category": "HackMD"
       },
       {
         "command": "HackMD.clearApiKey",
-        "title": "Clear API Key (for testing)",
-        "category": "HackMD"
-      },
-      {
-        "command": "treeView.refreshMyNotes",
-        "title": "Refresh",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/refresh.svg",
-          "dark": "images/icon/dark/refresh.svg"
-        }
-      },
-      {
-        "command": "treeView.createMyNotes",
-        "title": "New Note",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/new-note.svg",
-          "dark": "images/icon/dark/new-note.svg"
-        }
-      },
-      {
-        "command": "treeView.createMyFolder",
-        "title": "New Folder...",
-        "category": "HackMD",
-        "icon": "$(new-folder)"
-      },
-      {
-        "command": "treeView.refreshHistory",
-        "title": "Refresh",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/refresh.svg",
-          "dark": "images/icon/dark/refresh.svg"
-        }
-      },
-      {
-        "command": "treeView.refreshTeamNotes",
-        "title": "Refresh",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/refresh.svg",
-          "dark": "images/icon/dark/refresh.svg"
-        }
-      },
-      {
-        "command": "treeView.refreshSelectedTeam",
-        "title": "Refresh Team",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/refresh.svg",
-          "dark": "images/icon/dark/refresh.svg"
-        }
-      },
-      {
-        "command": "HackMD.folder.createNote",
-        "title": "New Note",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/new-note.svg",
-          "dark": "images/icon/dark/new-note.svg"
-        }
-      },
-      {
-        "command": "HackMD.folder.createFolder",
-        "title": "New Folder...",
-        "category": "HackMD",
-        "icon": "$(new-folder)"
-      },
-      {
-        "command": "treeView.importMyNotes",
-        "title": "Import...",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/cloud-upload.svg",
-          "dark": "images/icon/dark/cloud-upload.svg"
-        }
-      },
-      {
-        "command": "HackMD.folder.importNote",
-        "title": "Import...",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/cloud-upload.svg",
-          "dark": "images/icon/dark/cloud-upload.svg"
-        }
-      },
-      {
-        "command": "HackMD.folder.exportNote",
-        "title": "Export...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.folder.rename",
-        "title": "Rename...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.folder.delete",
-        "title": "Delete...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.team.createNote",
-        "title": "New Note",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/new-note.svg",
-          "dark": "images/icon/dark/new-note.svg"
-        }
-      },
-      {
-        "command": "HackMD.team.createFolder",
-        "title": "New Folder...",
-        "category": "HackMD",
-        "icon": "$(new-folder)"
-      },
-      {
-        "command": "HackMD.team.importNote",
-        "title": "Import...",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/cloud-upload.svg",
-          "dark": "images/icon/dark/cloud-upload.svg"
-        }
-      },
-      {
-        "command": "HackMD.team.openOnHackMD",
-        "title": "Open on HackMD",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.team.exportNotes",
-        "title": "Export...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.folder.openOnWeb",
-        "title": "Open on HackMD",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.showPreview",
-        "title": "Preview",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/preview.svg",
-          "dark": "images/icon/dark/preview.svg"
-        }
-      },
-      {
-        "command": "HackMD.showPreviewAndEditor",
-        "title": "Side-by-Side",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/split-horizontal.svg",
-          "dark": "images/icon/dark/split-horizontal.svg"
-        }
-      },
-      {
-        "command": "HackMD.createActiveEditorContentToHackMD",
-        "title": "Create note from editor",
-        "category": "HackMD"
-      },
-      {
-        "command": "HacKMD.openNoteOnHackMD",
-        "title": "Open on HackMD",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/link-external.svg",
-          "dark": "images/icon/dark/link-external.svg"
-        }
-      },
-      {
-        "command": "HackMD.renameNote",
-        "title": "Rename...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.moveNoteTo",
-        "title": "Move...",
-        "category": "HackMD",
-        "enablement": "view != hackmd.tree.recent-notes"
-      },
-      {
-        "command": "HackMD.duplicateNote",
-        "title": "Duplicate",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.deleteMyNote",
-        "title": "Delete...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.selectTeam",
-        "title": "Select Team",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/folder.svg",
-          "dark": "images/icon/dark/folder.svg"
-        }
-      },
-      {
-        "command": "HackMD.editNote",
-        "title": "Edit",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/edit.svg",
-          "dark": "images/icon/dark/edit.svg"
-        }
-      },
-      {
-        "command": "HackMD.openNoteProperties",
-        "title": "Properties...",
-        "category": "HackMD"
-      },
-      {
-        "command": "HackMD.exportNote",
-        "title": "Export...",
+        "title": "Clear API Key",
         "category": "HackMD"
       },
       {
@@ -330,19 +105,40 @@
         "category": "HackMD Model"
       },
       {
+        "command": "hackmd.model.refreshPersonalScope",
+        "title": "Refresh",
+        "category": "HackMD Model",
+        "icon": {
+          "light": "images/icon/light/refresh.svg",
+          "dark": "images/icon/dark/refresh.svg"
+        }
+      },
+      {
         "command": "hackmd.model.refreshTeams",
-        "title": "Refresh Teams",
-        "category": "HackMD Model"
+        "title": "Refresh",
+        "category": "HackMD Model",
+        "icon": {
+          "light": "images/icon/light/refresh.svg",
+          "dark": "images/icon/dark/refresh.svg"
+        }
       },
       {
         "command": "hackmd.model.refreshHistory",
-        "title": "Refresh History",
-        "category": "HackMD Model"
+        "title": "Refresh",
+        "category": "HackMD Model",
+        "icon": {
+          "light": "images/icon/light/refresh.svg",
+          "dark": "images/icon/dark/refresh.svg"
+        }
       },
       {
         "command": "hackmd.model.refreshScope",
-        "title": "Refresh Scope",
-        "category": "HackMD Model"
+        "title": "Refresh",
+        "category": "HackMD Model",
+        "icon": {
+          "light": "images/icon/light/refresh.svg",
+          "dark": "images/icon/dark/refresh.svg"
+        }
       },
       {
         "command": "hackmd.model.getScopeSnapshot",
@@ -375,6 +171,26 @@
         "category": "HackMD Model"
       },
       {
+        "command": "hackmd.model.createMyNote",
+        "title": "Create Note in My Notes",
+        "category": "HackMD"
+      },
+      {
+        "command": "hackmd.model.createTeamNote",
+        "title": "Create Note in Team",
+        "category": "HackMD"
+      },
+      {
+        "command": "hackmd.model.createMyFolder",
+        "title": "Create Folder in My Notes",
+        "category": "HackMD"
+      },
+      {
+        "command": "hackmd.model.createTeamFolder",
+        "title": "Create Folder in Team",
+        "category": "HackMD"
+      },
+      {
         "command": "hackmd.model.loadNoteContent",
         "title": "Load Note Content",
         "category": "HackMD Model"
@@ -405,23 +221,18 @@
         "category": "HackMD Model"
       },
       {
-        "command": "hackmd.model.moveNote",
-        "title": "Move Note",
+        "command": "hackmd.model.move",
+        "title": "Move",
         "category": "HackMD Model"
       },
       {
-        "command": "hackmd.model.moveFolder",
-        "title": "Move Folder",
+        "command": "hackmd.model.duplicateNote",
+        "title": "Duplicate",
         "category": "HackMD Model"
       },
       {
-        "command": "hackmd.model.deleteNote",
-        "title": "Delete Note",
-        "category": "HackMD Model"
-      },
-      {
-        "command": "hackmd.model.deleteFolder",
-        "title": "Delete Folder",
+        "command": "hackmd.model.delete",
+        "title": "Delete",
         "category": "HackMD Model"
       },
       {
@@ -450,6 +261,16 @@
         "category": "HackMD UI"
       },
       {
+        "command": "hackmd.ui.importToMyNotes",
+        "title": "Import to My Notes",
+        "category": "HackMD"
+      },
+      {
+        "command": "hackmd.ui.importToTeam",
+        "title": "Import to Team",
+        "category": "HackMD"
+      },
+      {
         "command": "hackmd.ui.export",
         "title": "Export",
         "category": "HackMD UI"
@@ -463,199 +284,204 @@
     "menus": {
       "view/title": [
         {
-          "command": "treeView.refreshMyNotes",
+          "command": "hackmd.model.refreshPersonalScope",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@3"
         },
         {
-          "command": "treeView.refreshHistory",
+          "command": "hackmd.model.refreshHistory",
           "when": "view =~ /hackmd.tree.recent-notes/",
           "group": "navigation"
         },
         {
-          "command": "treeView.refreshTeamNotes",
+          "command": "hackmd.model.refreshTeams",
           "when": "view =~ /hackmd.tree.team-notes/",
           "group": "navigation"
         },
         {
-          "command": "treeView.createMyNotes",
+          "command": "hackmd.model.createMyNote",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@1"
         },
         {
-          "command": "treeView.createMyFolder",
+          "command": "hackmd.model.createMyFolder",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@2"
         },
         {
-          "command": "treeView.importMyNotes",
+          "command": "hackmd.ui.import",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@3"
         }
       ],
       "view/item/context": [
         {
-          "command": "HackMD.editNote",
+          "command": "hackmd.ui.edit",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@1"
         },
         {
-          "command": "HackMD.editNote",
+          "command": "hackmd.ui.edit",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "inline@1"
         },
         {
-          "command": "HackMD.showPreview",
+          "command": "hackmd.ui.preview",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@2"
         },
         {
-          "command": "HackMD.showPreview",
+          "command": "hackmd.ui.preview",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "inline@2"
         },
         {
-          "command": "HackMD.showPreviewAndEditor",
+          "command": "hackmd.ui.sideBySide",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@3"
         },
         {
-          "command": "HackMD.showPreviewAndEditor",
+          "command": "hackmd.ui.sideBySide",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "inline@3"
         },
         {
-          "command": "HacKMD.openNoteOnHackMD",
+          "command": "hackmd.ui.openOnHackMD",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "1_noteMain@4"
         },
         {
-          "command": "HackMD.renameNote",
+          "command": "hackmd.model.renameNote",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@2"
         },
         {
-          "command": "HackMD.openNoteProperties",
+          "command": "hackmd.ui.properties",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@1"
         },
         {
-          "command": "HackMD.moveNoteTo",
-          "when": "((viewItem == file && ((view == hackmd.tree.my-notes && ((!hackmd.myNotesSelection.hasMixedSelection && (!hackmd.myNotesSelection.hasMultiNoteSelection || hackmd.myNotesSelection.hasSameScopeMultiNoteSelection)) || (hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection && hackmd.myNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.team-notes && ((!hackmd.teamNotesSelection.hasMixedSelection && (!hackmd.teamNotesSelection.hasMultiNoteSelection || hackmd.teamNotesSelection.hasSameScopeMultiNoteSelection)) || (hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection && hackmd.teamNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && (!hackmd.historySelection.hasMultiNoteSelection || hackmd.historySelection.hasSameScopeMultiNoteSelection)))) || ((viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && (!hackmd.myNotesSelection.hasSelection || (hackmd.myNotesSelection.hasActionableSelection && hackmd.myNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.team-notes && (!hackmd.teamNotesSelection.hasSelection || (hackmd.teamNotesSelection.hasActionableSelection && hackmd.teamNotesSelection.hasSingleScopeActionableSelection))))) )",
+          "command": "hackmd.model.move",
+          "when": "(viewItem == file && ((view == hackmd.tree.my-notes && ((!hackmd.myNotesSelection.hasMixedSelection && (!hackmd.myNotesSelection.hasMultiNoteSelection || hackmd.myNotesSelection.hasSameScopeMultiNoteSelection)) || (hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection && hackmd.myNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.team-notes && ((!hackmd.teamNotesSelection.hasMixedSelection && (!hackmd.teamNotesSelection.hasMultiNoteSelection || hackmd.teamNotesSelection.hasSameScopeMultiNoteSelection)) || (hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection && hackmd.teamNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && (!hackmd.historySelection.hasMultiNoteSelection || hackmd.historySelection.hasSameScopeMultiNoteSelection))))",
           "group": "2_noteActions@3"
         },
         {
-          "command": "HackMD.duplicateNote",
+          "command": "hackmd.model.duplicateNote",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@4"
         },
         {
-          "command": "HackMD.exportNote",
-          "when": "((viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasActionableSelection))) || ((viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection))))",
+          "command": "hackmd.ui.export",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@5"
         },
         {
-          "command": "HackMD.deleteMyNote",
-          "when": "((viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasActionableSelection))) || ((viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection))))",
-          "group": "3_noteDanger@1"
+          "command": "hackmd.model.delete",
+          "when": "(viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasActionableSelection)))",
+          "group": "9_noteDanger@1"
         },
         {
-          "command": "HackMD.folder.createNote",
+          "command": "hackmd.model.createNote",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "inline@1"
         },
         {
-          "command": "HackMD.folder.createFolder",
+          "command": "hackmd.model.createFolder",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "inline@2"
         },
         {
-          "command": "HackMD.folder.importNote",
+          "command": "hackmd.ui.import",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "inline@3"
         },
         {
-          "command": "HackMD.folder.createNote",
+          "command": "hackmd.model.createNote",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
-          "group": "1_folderActions@1"
+          "group": "1_folderMain@1"
         },
         {
-          "command": "HackMD.folder.createFolder",
+          "command": "hackmd.model.createFolder",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
-          "group": "1_folderActions@2"
+          "group": "1_folderMain@2"
         },
         {
-          "command": "HackMD.folder.openOnWeb",
+          "command": "hackmd.ui.openOnHackMD",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending)",
-          "group": "1_folderActions@3"
+          "group": "1_folderMain@3"
         },
         {
-          "command": "HackMD.folder.rename",
+          "command": "hackmd.model.renameFolder",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "2_folderManage@1"
         },
         {
-          "command": "HackMD.folder.delete",
-          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "command": "hackmd.model.move",
+          "when": "(viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && (!hackmd.myNotesSelection.hasSelection || (hackmd.myNotesSelection.hasActionableSelection && hackmd.myNotesSelection.hasSingleScopeActionableSelection))) || (view == hackmd.tree.team-notes && (!hackmd.teamNotesSelection.hasSelection || (hackmd.teamNotesSelection.hasActionableSelection && hackmd.teamNotesSelection.hasSingleScopeActionableSelection))))",
           "group": "2_folderManage@2"
         },
         {
-          "command": "HackMD.folder.importNote",
+          "command": "hackmd.ui.import",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
-          "group": "3_folderTransfer@1"
+          "group": "2_folderManage@3"
         },
         {
-          "command": "HackMD.folder.exportNote",
+          "command": "hackmd.ui.export",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
-          "group": "3_folderTransfer@2"
+          "group": "2_folderManage@4"
         },
         {
-          "command": "HackMD.team.createNote",
+          "command": "hackmd.model.delete",
+          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "3_folderDanger@1"
+        },
+        {
+          "command": "hackmd.model.createNote",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "inline@1"
         },
         {
-          "command": "HackMD.team.createFolder",
+          "command": "hackmd.model.createFolder",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "inline@2"
         },
         {
-          "command": "HackMD.team.importNote",
+          "command": "hackmd.ui.import",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "inline@3"
         },
         {
-          "command": "HackMD.team.createNote",
+          "command": "hackmd.model.createNote",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "1_teamMain@1"
         },
         {
-          "command": "HackMD.team.createFolder",
+          "command": "hackmd.model.createFolder",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "1_teamMain@2"
         },
         {
-          "command": "HackMD.team.openOnHackMD",
+          "command": "hackmd.ui.openOnHackMD",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "1_teamMain@3"
         },
         {
-          "command": "treeView.refreshSelectedTeam",
+          "command": "hackmd.model.refreshScope",
           "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
           "group": "1_teamMain@4"
         },
         {
-          "command": "treeView.refreshSelectedTeam",
+          "command": "hackmd.model.refreshScope",
           "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
           "group": "inline@4"
         },
         {
-          "command": "HackMD.team.importNote",
+          "command": "hackmd.ui.import",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "2_teamTransfer@1"
         },
         {
-          "command": "HackMD.team.exportNotes",
+          "command": "hackmd.ui.export",
           "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
           "group": "2_teamTransfer@2"
         }
@@ -668,19 +494,22 @@
     "watch": "webpack --mode none --progress --watch",
     "test-compile": "tsc -p ./",
     "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/commands/model.ts src/commands/ui.ts",
-    "test": "npm run test:model && npm run test:commands && npm run test:treeview && npm run test:fs:provider && npm run test:properties && npm run test:completion",
+    "test": "npm run test:model && npm run test:commands && npm run test:tree:dnd && npm run test:fs:provider && npm run test:properties && npm run test:completion && npm run test:providers && npm run test:menus",
     "test:model": "npm run test:model:compile && node --require ./test/node/registerVscodeStub.js --test ./test/node/hackmdModel.node.test.js",
     "test:commands:model": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
     "test:commands:ui": "npm run test:model:compile && node --require ./test/node/registerUiCommandsStub.js --test ./test/node/uiCommands.node.test.js",
     "test:commands": "npm run test:commands:model && npm run test:commands:ui",
-    "test:treeview:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/commands/treeView.ts",
-    "test:treeview": "npm run test:treeview:compile && node --require ./test/node/registerTreeViewCommandsStub.js --test ./test/node/treeViewCommands.node.test.js",
-    "test:fs:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/mdFsProvider.ts",
+    "test:tree:dnd:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/utils/treeDragAndDrop.ts",
+    "test:tree:dnd": "npm run test:tree:dnd:compile && node --require ./test/node/registerTreeDragAndDropStub.js --test ./test/node/treeDragAndDrop.node.test.js",
+    "test:fs:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/providers/mdFsProvider.ts",
     "test:fs:provider": "npm run test:fs:compile && node --require ./test/node/registerMdFsProviderStub.js --test ./test/node/mdFsProvider.node.test.js",
-    "test:properties:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/propertiesProvider.ts",
+    "test:properties:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/providers/propertiesProvider.ts",
     "test:properties": "npm run test:properties:compile && node --require ./test/node/registerPropertiesProviderStub.js --test ./test/node/propertiesProvider.node.test.js",
-    "test:completion:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/noteCompletionProvider.ts",
+    "test:completion:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/providers/noteCompletionProvider.ts",
     "test:completion": "npm run test:completion:compile && node --require ./test/node/registerNoteCompletionProviderStub.js --test ./test/node/noteCompletionProvider.node.test.js",
+    "test:providers:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/providers/myNotesProvider.ts src/providers/teamNotesProvider.ts src/providers/historyProvider.ts",
+    "test:providers": "npm run test:providers:compile && node --require ./test/node/registerProvidersStub.js --test ./test/node/providers.node.test.js",
+    "test:menus": "node --test ./test/node/contextMenus.node.test.js",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "open-in-browser": "vscode-test-web --extensionDevelopmentPath=. ."

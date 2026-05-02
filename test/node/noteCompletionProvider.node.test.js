@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const stub = require('./registerNoteCompletionProviderStub');
 
-const { NoteCompletionProvider } = require('../../out/noteCompletionProvider');
+const { NoteCompletionProvider } = require('../../out/providers/noteCompletionProvider');
 
 // ---------------------------------------------------------------------------
 // Helpers

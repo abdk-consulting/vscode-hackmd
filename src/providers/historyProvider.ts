@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { getHackmdModel, ModelNote } from './model';
+import { getHackmdModel, ModelNote } from '../model';
 
 // Cache ThemeIcon instances to prevent layout shifts during updates
 const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
@@ -18,6 +18,24 @@ interface PlaceholderNode {
   message: string;
 }
 
+function compareStrings(a: string, b: string): number {
+  const ci = (a || '').localeCompare(b || '', undefined, { sensitivity: 'base' });
+  return ci !== 0 ? ci : (a || '').localeCompare(b || '');
+}
+
+function getLastUpdateTimestamp(note: ModelNote): number {
+  const ts = Date.parse(note.lastChangedAt || note.createdAt || '');
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function compareHistoryNotes(a: ModelNote, b: ModelNote): number {
+  const byUpdatedAtDesc = getLastUpdateTimestamp(b) - getLastUpdateTimestamp(a);
+  if (byUpdatedAtDesc !== 0) {
+    return byUpdatedAtDesc;
+  }
+  return (a.id || '').localeCompare(b.id || '');
+}
+
 export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -25,6 +43,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private loaded = false;
   private lastError: string | null = null;
   private readonly model: ReturnType<typeof getHackmdModel> | null;
+  private lastOrderSignature = '';
 
   constructor(private extensionPath: string) {
     try {
@@ -35,6 +54,10 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       });
       this.model.onDidChangeEntity((event) => {
+        if (event.entityType === 'note' && event.changeType === 'upsert' && this.loaded) {
+          this.fireIfOrderChanged();
+          return;
+        }
         if (event.entityType === 'note') {
           this._onDidChangeTreeData.fire(undefined);
         }
@@ -64,6 +87,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       try {
         await this.model!.refreshHistory();
         this.loaded = true;
+        this.lastOrderSignature = this.computeOrderSignature();
         this.lastError = null;
       } catch (error: any) {
         this.lastError = error?.message || 'Unknown error';
@@ -77,8 +101,27 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
 
   refresh(): void {
     this.loaded = false;
+    this.lastOrderSignature = '';
     void this.ensureHistoryLoaded(true);
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  private computeOrderSignature(): string {
+    if (!this.model) {
+      return '';
+    }
+    const ids = [...this.model.getHistoryNotes()]
+      .sort(compareHistoryNotes)
+      .map((note) => note.id);
+    return ids.join('|');
+  }
+
+  private fireIfOrderChanged(): void {
+    const next = this.computeOrderSignature();
+    if (next !== this.lastOrderSignature) {
+      this.lastOrderSignature = next;
+      this._onDidChangeTreeData.fire(undefined);
+    }
   }
 
   removeNoteFromCache(noteId: string): void {
@@ -132,7 +175,8 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
           return [{ type: 'placeholder', message: `Error: ${this.lastError}` }];
         }
 
-        const notes = this.model.getHistoryNotes();
+        const notes = [...this.model.getHistoryNotes()].sort(compareHistoryNotes);
+        this.lastOrderSignature = notes.map((note) => note.id).join('|');
 
         if (notes.length === 0) {
           return [{ type: 'placeholder', message: 'No history' }];

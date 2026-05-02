@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const stub = require('./registerPropertiesProviderStub');
 
-const { NotePropertiesProvider } = require('../../out/propertiesProvider');
+const { NotePropertiesProvider } = require('../../out/providers/propertiesProvider');
 
 // ---------------------------------------------------------------------------
 // Helpers

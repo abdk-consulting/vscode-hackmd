@@ -3,12 +3,12 @@
 import 'bootstrap3/dist/css/bootstrap.min.css';
 import 'katex/dist/katex.css';
 import 'prismjs/themes/prism.css';
-import './github-gist.css';
-import './mermaid.css';
+import './css/github-gist.css';
+import './css/mermaid.css';
 
-import './font-awesome.min.css';
-import './markdown.css';
-import './style.css';
+import './css/font-awesome.min.css';
+import './css/markdown.css';
+import './css/style.css';
 
 import * as abcjs from 'abcjs';
 import * as flowchart from 'flowchart.js';

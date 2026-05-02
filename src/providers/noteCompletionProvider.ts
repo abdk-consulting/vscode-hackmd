@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
-import { collectNotes } from './commands/pickers';
-import { getHackmdModel, ModelNote } from './model';
+import { collectNotes } from '../commands/pickers';
+import { getHackmdModel, ModelNote } from '../model';
 
 /**
  * Returns the URL path segment for a note, e.g. `/@user/permalink-or-id`.

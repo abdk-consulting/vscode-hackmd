@@ -9,15 +9,15 @@ import * as S from 'string';
 
 import { API, initializeAPIClient } from './api';
 import { registerCommands } from './commands';
-import { NoteDragAndDropController } from './commands/treeView';
 import { ACCESS_TOKEN_KEY } from './constants';
-import { HistoryProvider } from './historyProvider';
-import { activate as activateFSProvider } from './mdFsProvider';
 import { initializeHackmdModel } from './model';
-import { MyNotesProvider } from './myNotesProvider';
-import { NoteCompletionProvider } from './noteCompletionProvider';
-import { NotePropertiesProvider } from './propertiesProvider';
-import { TeamNotesProvider } from './teamNotesProvider';
+import { HistoryProvider } from './providers/historyProvider';
+import { activate as activateFSProvider } from './providers/mdFsProvider';
+import { MyNotesProvider } from './providers/myNotesProvider';
+import { NoteCompletionProvider } from './providers/noteCompletionProvider';
+import { NotePropertiesProvider } from './providers/propertiesProvider';
+import { TeamNotesProvider } from './providers/teamNotesProvider';
+import { NoteDragAndDropController } from './utils/treeDragAndDrop';
 
 let Prism;
 let teamNotesProvider: TeamNotesProvider | undefined;

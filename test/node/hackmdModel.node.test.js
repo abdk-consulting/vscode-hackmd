@@ -28,8 +28,8 @@ class MockHackmdApi {
     this.delays = {};
 
     this.teams = [
-      { id: 't2', path: 'tornado', name: 'Tornado' },
-      { id: 't1', path: 'abdk', name: 'ABDK' },
+      { id: 't2', path: 'bar-team', name: 'Bar' },
+      { id: 't1', path: 'foo-team', name: 'Foo' },
     ];
 
     this.personalFolders = [
@@ -51,32 +51,32 @@ class MockHackmdApi {
     ];
 
     this.teamFoldersByPath = {
-      abdk: [
-        { id: 'tf1', name: 'Babylon Labs' },
+      'foo-team': [
+        { id: 'tf1', name: 'Folder Alpha' },
         { id: 'tf2', name: 'Foo' },
       ],
-      tornado: [],
+      'bar-team': [],
     };
 
     this.teamNotesByPath = {
-      abdk: [
+      'foo-team': [
         {
           id: 'tn1',
-          title: 'Processing Sensitive Information',
-          teamPath: 'abdk',
+          title: 'Team Note One',
+          teamPath: 'foo-team',
           folderPaths: [{ id: 'tf2', path: '/Foo', name: 'Foo' }],
         },
         {
           id: 'tn2',
-          title: 'Glow Notes',
-          teamPath: 'abdk',
+          title: 'Team Note Two',
+          teamPath: 'foo-team',
         },
       ],
-      tornado: [
+      'bar-team': [
         {
           id: 'tn3',
-          title: 'Tornado Intro',
-          teamPath: 'tornado',
+          title: 'Bar Intro',
+          teamPath: 'bar-team',
         },
       ],
     };
@@ -86,7 +86,7 @@ class MockHackmdApi {
       pn2: '# personal content 2',
       tn1: '# team content 1',
       tn2: '# team content 2',
-      tn3: '# tornado content',
+      tn3: '# bar content',
     };
   }
 
@@ -333,7 +333,7 @@ function createModelAndApi() {
   return { api, model };
 }
 
-test('scope snapshot sync/async loading and team sorting', async () => {
+test('scope snapshot sync/async loading without model-level team sorting', async () => {
   const { model } = createModelAndApi();
 
   assert.equal(model.getScopeSnapshotSync(null), null);
@@ -344,7 +344,7 @@ test('scope snapshot sync/async loading and team sorting', async () => {
 
   await model.refreshTeams();
   const teamNames = model.getTeams().map((t) => t.name);
-  assert.deepEqual(teamNames, ['ABDK', 'Tornado']);
+  assert.deepEqual(teamNames, ['Bar', 'Foo']);
 });
 
 test('dedupes concurrent refreshScope requests by scope', async () => {
@@ -421,19 +421,19 @@ test('refreshScope(team) toggles Team Notes container and team pending flags', a
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.refreshScope({ teamPath: 'abdk' });
+  const inflight = model.refreshScope({ teamPath: 'foo-team' });
   await new Promise((resolve) => setTimeout(resolve, 1));
 
   assert.equal(model.isTeamNotesPendingOperation(), true);
-  assert.equal(model.isTeamPendingOperation('abdk'), true);
+  assert.equal(model.isTeamPendingOperation('foo-team'), true);
 
   await inflight;
 
   assert.equal(model.isTeamNotesPendingOperation(), false);
-  assert.equal(model.isTeamPendingOperation('abdk'), false);
+  assert.equal(model.isTeamPendingOperation('foo-team'), false);
 
   const teamContainerEvents = pendingEvents.filter((e) => e.targetType === 'container' && e.container === 'team-notes');
-  const teamEvents = pendingEvents.filter((e) => e.targetType === 'team' && e.scope === 'abdk');
+  const teamEvents = pendingEvents.filter((e) => e.targetType === 'team' && e.scope === 'foo-team');
   assert.equal(teamContainerEvents.length, 2);
   assert.equal(teamContainerEvents[0].pending, true);
   assert.equal(teamContainerEvents[1].pending, false);
@@ -509,9 +509,9 @@ test('note/folder/team URI conversion and sync lookup', async () => {
   const { model } = createModelAndApi();
 
   await model.refreshTeams();
-  await model.refreshScope({ teamPath: 'abdk' });
+  await model.refreshScope({ teamPath: 'foo-team' });
 
-  const team = model.getTeamByPath('abdk');
+  const team = model.getTeamByPath('foo-team');
   const teamUri = model.toTeamUri(team);
   assert.strictEqual(model.getEntityByUriSync(teamUri), team);
 
@@ -528,8 +528,8 @@ test('async URI lookup fetches entities not yet loaded', async () => {
   const { api, model } = createModelAndApi();
   const uri = {
     scheme: 'hackmd',
-    path: '/Teams/abdk/Processing',
-    query: 'noteId=tn1&teamPath=abdk',
+    path: '/Teams/foo-team/Team-Note-One',
+    query: 'noteId=tn1&teamPath=foo-team',
     fragment: '',
     toString() {
       return `${this.scheme}:${this.path}?${this.query}`;
@@ -557,6 +557,53 @@ test('refresh with unchanged data does not emit upsert events', async () => {
   disposable.dispose();
 });
 
+test('refreshTeams keeps existing order on reorder-only backend changes and emits no entity events', async () => {
+  const { api, model } = createModelAndApi();
+  const events = [];
+  const disposable = model.onDidChangeEntity((event) => events.push(event));
+
+  await model.refreshTeams();
+  const initialOrder = model.getTeams().map((t) => t.path);
+  assert.deepEqual(initialOrder, ['bar-team', 'foo-team']);
+
+  events.length = 0;
+  api.teams = [
+    { id: 't1', path: 'foo-team', name: 'Foo' },
+    { id: 't2', path: 'bar-team', name: 'Bar' },
+  ];
+
+  await model.refreshTeams();
+
+  const finalOrder = model.getTeams().map((t) => t.path);
+  assert.deepEqual(finalOrder, ['bar-team', 'foo-team']);
+  assert.equal(events.length, 0);
+  disposable.dispose();
+});
+
+test('refreshScope keeps existing root note order on reorder-only backend changes and emits no entity events', async () => {
+  const { api, model } = createModelAndApi();
+
+  // Make both notes root-level so order can be asserted directly.
+  api.personalNotes[0].folderPaths = undefined;
+
+  const events = [];
+  const disposable = model.onDidChangeEntity((event) => events.push(event));
+
+  await model.refreshScope({ teamPath: null });
+  const initialRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
+  assert.deepEqual(initialRootOrder, ['pn1', 'pn2']);
+
+  events.length = 0;
+  api.personalNotes = [api.personalNotes[1], api.personalNotes[0]];
+
+  await model.refreshScope({ teamPath: null });
+
+  const finalRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
+  assert.deepEqual(finalRootOrder, ['pn1', 'pn2']);
+  assert.equal(events.length, 0);
+  disposable.dispose();
+});
+
 test('create, update, move, and delete note workflow', async () => {
   const { model } = createModelAndApi();
 
@@ -568,11 +615,11 @@ test('create, update, move, and delete note workflow', async () => {
   const renamed = await model.renameNote(created.id, 'Renamed Note');
   assert.equal(renamed.title, 'Renamed Note');
 
-  const moved = await model.moveNote({ noteId: created.id, sourceTeamPath: null, targetTeamPath: 'abdk' });
-  assert.equal(moved.teamPath, 'abdk');
+  const moved = await model.moveNote({ noteId: created.id, sourceTeamPath: null, targetTeamPath: 'foo-team' });
+  assert.equal(moved.teamPath, 'foo-team');
 
-  await model.deleteNote(moved.id, 'abdk');
-  const deleted = await model.getNote(moved.id, 'abdk');
+  await model.deleteNote(moved.id, 'foo-team');
+  const deleted = await model.getNote(moved.id, 'foo-team');
   assert.equal(deleted, null);
 });
 
@@ -585,5 +632,5 @@ test('model index requires explicit initialization with injected API', async () 
   assert.strictEqual(getHackmdModel(), model);
 
   await model.refreshTeams();
-  assert.deepEqual(model.getTeams().map((t) => t.name), ['ABDK', 'Tornado']);
+  assert.deepEqual(model.getTeams().map((t) => t.name), ['Bar', 'Foo']);
 });

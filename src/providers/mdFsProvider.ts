@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
-import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from './extension';
-import { getHackmdModel } from './model';
+import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from '../extension';
+import { getHackmdModel } from '../model';
 
 export class File implements vscode.FileStat {
   type: vscode.FileType;

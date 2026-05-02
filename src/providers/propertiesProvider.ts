@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 
-import { getHackmdModel, ModelNote, UpdateNoteInput } from './model';
+import { getHackmdModel, ModelNote, UpdateNoteInput } from '../model';
 
 interface NoteProperties {
   publishType?: ModelNote['publishType'];

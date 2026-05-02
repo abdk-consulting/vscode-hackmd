@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { getHackmdModel, ModelFolder, ModelNote, ModelScopeSnapshot } from './model';
+import { getHackmdModel, ModelFolder, ModelNote, ModelScopeSnapshot } from '../model';
 
 const ICON_FOLDER = new vscode.ThemeIcon('folder');
 const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
@@ -33,6 +33,39 @@ interface PlaceholderNode {
   message: string;
 }
 
+function compareStrings(a: string, b: string): number {
+  const ci = (a || '').localeCompare(b || '', undefined, { sensitivity: 'base' });
+  return ci !== 0 ? ci : (a || '').localeCompare(b || '');
+}
+
+function compareFolderEntities(a: ModelFolder, b: ModelFolder): number {
+  const byName = compareStrings(a.name || '', b.name || '');
+  if (byName !== 0) {
+    return byName;
+  }
+  return (a.id || '').localeCompare(b.id || '');
+}
+
+function getNoteDisplayName(note: ModelNote): string {
+  return note.title || note.shortId || '';
+}
+
+function compareNoteEntities(a: ModelNote, b: ModelNote): number {
+  const byName = compareStrings(getNoteDisplayName(a), getNoteDisplayName(b));
+  if (byName !== 0) {
+    return byName;
+  }
+  return (a.id || '').localeCompare(b.id || '');
+}
+
+function sortedFolders(folders: readonly ModelFolder[]): ModelFolder[] {
+  return [...folders].sort(compareFolderEntities);
+}
+
+function sortedNotes(notes: readonly ModelNote[]): ModelNote[] {
+  return [...notes].sort(compareNoteEntities);
+}
+
 export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -49,6 +82,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly folderParentById = new Map<string, string | null>();
   private readonly noteById = new Map<string, ModelNote>();
   private readonly noteParentFolderById = new Map<string, string | null>();
+  private readonly childOrderSignatureByParent = new Map<string, string>();
 
   constructor(private extensionPath: string) {
     try {
@@ -60,6 +94,10 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       });
       this.model.onDidChangeEntity((event) => {
+        if (event.scope === null && event.changeType === 'upsert' && this.loaded) {
+          this.handleEntityUpsert(event.entityType, event.id);
+          return;
+        }
         if (event.scope === null) {
           this._onDidChangeTreeData.fire(undefined);
         }
@@ -137,6 +175,99 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     for (const note of snapshot.rootNotes) {
       this.noteById.set(note.id, note);
       this.noteParentFolderById.set(note.id, null);
+    }
+
+    this.rebuildAllChildOrderSignatures();
+  }
+
+  private getParentSignatureKey(parentFolderId: string | null): string {
+    return parentFolderId ? `folder:${parentFolderId}` : 'root';
+  }
+
+  private computeChildOrderSignature(parentFolderId: string | null): string {
+    const root = !parentFolderId;
+    const folder = parentFolderId ? this.folderById.get(parentFolderId) : undefined;
+    const folders = root
+      ? sortedFolders(this.currentSnapshot?.rootFolders || [])
+      : sortedFolders(folder?.children || []);
+    const notes = root
+      ? sortedNotes(this.currentSnapshot?.rootNotes || [])
+      : sortedNotes(folder?.notes || []);
+
+    const parts = [
+      ...folders.map((f) => `folder:${f.id}`),
+      ...notes.map((n) => `note:${n.id}`),
+    ];
+    return parts.join('|');
+  }
+
+  private rebuildAllChildOrderSignatures(): void {
+    this.childOrderSignatureByParent.clear();
+    this.childOrderSignatureByParent.set('root', this.computeChildOrderSignature(null));
+    for (const folderId of this.folderById.keys()) {
+      this.childOrderSignatureByParent.set(this.getParentSignatureKey(folderId), this.computeChildOrderSignature(folderId));
+    }
+  }
+
+  private refreshSnapshotAndIndexes(): void {
+    if (!this.model) {
+      return;
+    }
+    this.currentSnapshot = this.model.getScopeSnapshotSync(null);
+    this.rebuildIndexes(this.currentSnapshot);
+  }
+
+  private fireParentRefresh(parentFolderId: string | null): void {
+    if (!parentFolderId) {
+      this._onDidChangeTreeData.fire(undefined);
+      return;
+    }
+
+    const parentFolder = this.folderById.get(parentFolderId);
+    this._onDidChangeTreeData.fire(parentFolder ? this.toFolderNode(parentFolder) : undefined);
+  }
+
+  private handleEntityUpsert(entityType: 'team' | 'folder' | 'note', entityId: string): void {
+    const previousNoteParent = this.noteParentFolderById.get(entityId) || null;
+    const previousFolderParent = this.folderParentById.get(entityId) || null;
+    const parentCandidates = new Set<string | null>();
+
+    if (entityType === 'note') {
+      parentCandidates.add(previousNoteParent);
+    }
+    if (entityType === 'folder') {
+      parentCandidates.add(previousFolderParent);
+    }
+
+    const previousByParent = new Map<string, string>();
+    for (const parentId of parentCandidates) {
+      const key = this.getParentSignatureKey(parentId);
+      previousByParent.set(key, this.childOrderSignatureByParent.get(key) || '');
+    }
+
+    this.refreshSnapshotAndIndexes();
+
+    if (!this.model) {
+      return;
+    }
+
+    if (entityType === 'note') {
+      const currentParent = this.model.getNoteById(entityId, null)?.parentFolderId || null;
+      parentCandidates.add(currentParent);
+    }
+    if (entityType === 'folder') {
+      const currentParent = this.model.getFolderById(entityId, null)?.parentId || null;
+      parentCandidates.add(currentParent);
+    }
+
+    for (const parentId of parentCandidates) {
+      const key = this.getParentSignatureKey(parentId);
+      const previous = previousByParent.get(key) || '';
+      const next = this.computeChildOrderSignature(parentId);
+      this.childOrderSignatureByParent.set(key, next);
+      if (previous !== next) {
+        this.fireParentRefresh(parentId);
+      }
     }
   }
 
@@ -229,7 +360,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  async addNoteToCache(note: ModelNote): Promise<NoteNode> {
+  async addNoteToCache(note: any): Promise<NoteNode> {
     this._onDidChangeTreeData.fire(undefined);
     return { type: 'note', source: 'model', note };
   }
@@ -238,7 +369,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  updateNoteInCache(_noteId: string, _updatedNote: any, emitEvents = true): ModelNote | undefined {
+  updateNoteInCache(_noteId: string, _updatedNote: any, emitEvents = true): any {
     if (emitEvents) {
       this._onDidChangeTreeData.fire(undefined);
     }
@@ -295,8 +426,8 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     if (!element) {
-      const rootFolders = snapshot.rootFolders.map((folder) => this.toFolderNode(folder));
-      const rootNotes = snapshot.rootNotes.map((note) => ({ type: 'note', source: 'model', note } as NoteNode));
+      const rootFolders = sortedFolders(snapshot.rootFolders).map((folder) => this.toFolderNode(folder));
+      const rootNotes = sortedNotes(snapshot.rootNotes).map((note) => ({ type: 'note', source: 'model', note } as NoteNode));
       if (rootFolders.length === 0 && rootNotes.length === 0) {
         return [{ type: 'placeholder', message: 'No notes' }];
       }
@@ -309,8 +440,8 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         return [];
       }
       const children: TreeNode[] = [];
-      children.push(...folder.children.map((child) => this.toFolderNode(child)));
-      children.push(...folder.notes.map((note) => ({ type: 'note', source: 'model', note } as NoteNode)));
+      children.push(...sortedFolders(folder.children).map((child) => this.toFolderNode(child)));
+      children.push(...sortedNotes(folder.notes).map((note) => ({ type: 'note', source: 'model', note } as NoteNode)));
       return children;
     }
 

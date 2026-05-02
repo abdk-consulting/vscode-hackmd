@@ -16,6 +16,8 @@
 
 ### Added
 
+- Added pure-Node tests for tree-view command delegation (`test/node/treeViewCommands.node.test.js`) with a dedicated VS Code/runtime stub (`test/node/registerTreeViewCommandsStub.js`).
+- Added `test:treeview:compile` and `test:treeview` scripts; `test` now runs the tree-view command suite in addition to model, command, FS, properties, and completion suites.
 - Added progress indicator in My Notes and Team Notes tree view headers while a folder is being created at root level, matching note-creation UX.
 - Added spinner on folders during drag-and-drop and command-based move operations, matching the note-drag pending-state behavior.
 - Notes and folders in the My Notes and Team Notes trees are now sorted alphabetically. Within each container, folders appear first (sorted by name), followed by notes (sorted by title). Sorting is case-insensitive, with a case-sensitive tiebreaker when names differ only in case. Team workspaces at the root of Team Notes are also sorted by name.
@@ -102,6 +104,16 @@
 
 ### Changed
 
+- Migrated My Notes tree provider (`src/myNotesProvider.ts`) to the model layer:
+  - Removed direct API reads and local note/folder caches from the provider.
+  - Tree rendering now uses personal-scope model snapshots and model pending-operation flags.
+  - Note-open behavior delegates to `hackmd.ui.edit`.
+- Migrated My Notes tree actions in `src/commands/treeView.ts` to command-layer delegation:
+  - `treeView.createMyNotes` -> `hackmd.model.createNote` + `hackmd.ui.edit`.
+  - `treeView.createMyFolder` -> `hackmd.model.createFolder`.
+  - `treeView.importMyNotes` -> `hackmd.ui.import`.
+  - My Notes folder context actions (`create note/folder`, `import`, `export`, `rename`, `delete`) now delegate to `hackmd.model.*` / `hackmd.ui.*` for model-backed nodes.
+- Drag-and-drop note moves now route through the Move command path (`HackMD.moveNoteTo`) with resolved destination payloads, and model-backed nodes use `hackmd.model.moveNote` / `hackmd.model.moveFolder`.
 - "New Folder..." actions everywhere now use the `new-folder` codicon instead of the custom folder SVG icon.
 - Moved HackMD API domain types (`Note`, `Team`, `HackMdFolder`, `NotePublishType`) from global ambient declarations to named exports in the local API client module.
 - Updated note-related providers and tree commands to import API domain types explicitly from the local API client.

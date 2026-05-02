@@ -397,6 +397,10 @@ function isRecentModelNoteNode(node: any): boolean {
   return isNoteNode(node) && (node.note as any)?.type === 'note';
 }
 
+function isModelFolderNode(node: any): boolean {
+  return node?.type === 'folder' && (node?.source === 'model' || node?.value?.context?.source === 'model');
+}
+
 type ResolvedFolderSelection = {
   id: string;
   name: string;
@@ -1156,15 +1160,24 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
       return;
     }
 
-    await Promise.all(notesToMove.map((note) =>
-      performMove(note, resolvedTarget.folderId as string, resolvedTarget.folderPaths)
-    ));
+    const selectedNodes = notesToMove.map((note) => ({ type: 'note', note }));
+    await vscode.commands.executeCommand(
+      'HackMD.moveNoteTo',
+      selectedNodes[0],
+      selectedNodes,
+      {
+        folderId: resolvedTarget.folderId,
+        folderPaths: resolvedTarget.folderPaths,
+        teamPath: resolvedTarget.teamPath,
+      }
+    );
   }
 }
 
 export async function registerTreeViewCommands(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.refreshMyNotes', async () => {
+      await vscode.commands.executeCommand('hackmd.model.refreshScope', { teamPath: null });
       const provider = getMyNotesProvider();
       if (provider) {
         provider.refresh();
@@ -1212,67 +1225,23 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.createMyNotes', async () => {
-      const provider = getMyNotesProvider();
-
-      // Set pending on "My Notes" root
-      provider?.setPendingContainer('root');
-
-      try {
-        await vscode.window.withProgress(
-          {
-            location: { viewId: 'hackmd.tree.my-notes' },
-            title: 'Creating note...',
-          },
-          async () => {
-            const note = await recordUsage(API.createNote({}, { unwrapData: false }));
-
-            const uri = generateResourceUri(note.title, note.id, note.teamPath, (note as any).folderPaths);
-            await openNoteEditorByUri(uri);
-
-            if (provider) {
-              const noteNode = await provider.addNoteToCache(note);
-              await revealNote(getMyNotesTreeView(), noteNode);
-            }
-          }
-        );
-      } finally {
-        // Clear pending state
-        provider?.clearPendingContainer('root');
+      const created = await vscode.commands.executeCommand('hackmd.model.createNote', { teamPath: null });
+      const note = created as any;
+      if (note?.id) {
+        await vscode.commands.executeCommand('hackmd.ui.edit', { noteId: note.id, teamPath: null });
       }
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.createMyFolder', async () => {
-      await createFolderInScope({});
+      await vscode.commands.executeCommand('hackmd.model.createFolder', { teamPath: null });
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('treeView.importMyNotes', async () => {
-      const importDataList = await pickMarkdownImportData();
-      if (importDataList.length === 0) {
-        return;
-      }
-
-      const provider = getMyNotesProvider();
-      provider?.setPendingContainer('root');
-
-      try {
-        await vscode.window.withProgress(
-          {
-            location: { viewId: 'hackmd.tree.my-notes' },
-            title: `Importing ${importDataList.length} note${importDataList.length === 1 ? '' : 's'}...`,
-          },
-          async () => {
-            for (const importData of importDataList) {
-              await createNoteInScope(importData, { openEditor: false });
-            }
-          }
-        );
-      } finally {
-        provider?.clearPendingContainer('root');
-      }
+      await vscode.commands.executeCommand('hackmd.ui.import', { teamPath: null, parentFolderId: null });
     })
   );
 
@@ -1374,7 +1343,7 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('HackMD.moveNoteTo', async (node: any, selectedNodes?: any[]) => {
+    vscode.commands.registerCommand('HackMD.moveNoteTo', async (node: any, selectedNodes?: any[], selectedTarget?: { folderId: string; folderPaths: any[]; teamPath?: string | null }) => {
       const selection = resolveOperationSelection(node, selectedNodes);
       if (selection.hasUnsupportedNodes || (selection.notes.length === 0 && selection.folders.length === 0)) {
         vscode.window.showInformationMessage('Move is only available for note and folder selections.');
@@ -1415,19 +1384,28 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         return;
       }
 
-      const pickerItems: MoveTargetQuickPickItem[] = filteredTargets.map((target) => ({
-        label: target.label,
-        folderId: target.folderId,
-        folderPaths: target.folderPaths,
-      }));
+      let selected: MoveTargetQuickPickItem | undefined;
+      if (selectedTarget?.folderId) {
+        selected = {
+          label: selectedTarget.folderPaths?.map((entry: any) => entry?.name).filter(Boolean).join(' / ') || 'Folder',
+          folderId: selectedTarget.folderId,
+          folderPaths: selectedTarget.folderPaths || [],
+        };
+      } else {
+        const pickerItems: MoveTargetQuickPickItem[] = filteredTargets.map((target) => ({
+          label: target.label,
+          folderId: target.folderId,
+          folderPaths: target.folderPaths,
+        }));
 
-      const selected = await vscode.window.showQuickPick(pickerItems, {
-        placeHolder: 'Move note to...',
-        ignoreFocusOut: true,
-      });
+        selected = await vscode.window.showQuickPick(pickerItems, {
+          placeHolder: 'Move note to...',
+          ignoreFocusOut: true,
+        });
 
-      if (!selected) {
-        return;
+        if (!selected) {
+          return;
+        }
       }
 
       const notesToMove = selectedNotes.filter((selectedNote) => getNoteFolderId(selectedNote) !== selected.folderId);
@@ -1442,6 +1420,15 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       }
 
       for (const selectedNote of notesToMove) {
+        if ((selectedNote as any)?.type === 'note') {
+          await vscode.commands.executeCommand('hackmd.model.moveNote', {
+            noteId: selectedNote.id,
+            sourceTeamPath: selectedNote.teamPath || null,
+            targetTeamPath: teamPath,
+            targetParentFolderId: selected.folderId,
+          });
+          continue;
+        }
         const canProceed = await closeTabsForNote(selectedNote);
         if (!canProceed) {
           return;
@@ -1451,7 +1438,17 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
       if (foldersToMove.length > 0) {
         try {
-          await Promise.all(foldersToMove.map((folder) => performFolderMove(folder, selected.folderId)));
+          await Promise.all(foldersToMove.map((folder) => {
+            if ((folder as any)?.source === 'model') {
+              return vscode.commands.executeCommand('hackmd.model.moveFolder', {
+                folderId: folder.id,
+                sourceTeamPath: folder.teamPath || null,
+                targetTeamPath: teamPath,
+                targetParentFolderId: selected!.folderId,
+              });
+            }
+            return performFolderMove(folder, selected!.folderId);
+          }));
         } catch (error: any) {
           vscode.window.showErrorMessage(`Failed to move folder: ${error.message || 'Unknown error'}`);
         }
@@ -2022,6 +2019,18 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         }
         const payload = folderId ? { parentFolderId: folderId } : {};
 
+        if (isModelFolderNode(node) && !teamPath) {
+          const created = await vscode.commands.executeCommand('hackmd.model.createNote', {
+            teamPath: null,
+            parentFolderId: folderId,
+          });
+          const note = created as any;
+          if (note?.id) {
+            await vscode.commands.executeCommand('hackmd.ui.edit', { noteId: note.id, teamPath: null });
+          }
+          return;
+        }
+
         // Determine container ID for pending state
         const containerId = folderId ? `folder-${folderId}` : 'root';
 
@@ -2045,6 +2054,13 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.folder.createFolder', async (node: any) => {
       const { folderId, teamPath } = resolveFolderCommandContext(node);
+      if (isModelFolderNode(node) && !teamPath) {
+        await vscode.commands.executeCommand('hackmd.model.createFolder', {
+          teamPath: null,
+          parentFolderId: folderId,
+        });
+        return;
+      }
       await createFolderInScope({ teamPath, parentFolderId: folderId });
     })
   );
@@ -2063,6 +2079,14 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       } else {
         folderId = normalizeFolderId(node.value?.context?.folderId || node.folderId || node.id);
         teamPath = node.value?.context?.teamPath || node.teamPath;
+      }
+
+      if (isModelFolderNode(node) && !teamPath) {
+        await vscode.commands.executeCommand('hackmd.ui.import', {
+          teamPath: null,
+          parentFolderId: folderId || null,
+        });
+        return;
       }
 
       const importDataList = await pickMarkdownImportData();
@@ -2090,6 +2114,10 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('HackMD.folder.openOnWeb', async (treeItem: any) => {
+      if (isModelFolderNode(treeItem)) {
+        vscode.window.showInformationMessage('Open on HackMD is not available for this folder.');
+        return;
+      }
       if (treeItem) {
         // For React tree nodes, context is in value.context
         // For TreeDataProvider nodes, properties are directly on the item
@@ -2126,6 +2154,13 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
 
       if (!folderId) {
         vscode.window.showErrorMessage('Folder ID not found');
+        return;
+      }
+
+      if (isModelFolderNode(node) && !teamPath) {
+        await vscode.commands.executeCommand('hackmd.ui.export', {
+          folders: [{ type: 'folder', folderId, name: folderName || 'Folder', teamPath: null }],
+        });
         return;
       }
 
@@ -2174,6 +2209,14 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
         return;
       }
 
+      if (isModelFolderNode(node) && !teamPath) {
+        await vscode.commands.executeCommand('hackmd.model.renameFolder', {
+          folderId,
+          teamPath: null,
+        });
+        return;
+      }
+
       const newName = await promptFolderName(folderName);
       if (!newName || newName === folderName) {
         return;
@@ -2206,6 +2249,15 @@ export async function registerTreeViewCommands(context: vscode.ExtensionContext)
       const { folderId, folderName, teamPath } = resolveFolderCommandContext(node);
       if (!folderId) {
         vscode.window.showErrorMessage('Folder ID not found');
+        return;
+      }
+
+      if (isModelFolderNode(node) && !teamPath) {
+        await vscode.commands.executeCommand('hackmd.model.deleteFolder', {
+          folderId,
+          teamPath: null,
+          force: false,
+        });
         return;
       }
 

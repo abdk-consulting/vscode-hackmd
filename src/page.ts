@@ -2,6 +2,7 @@
 
 import 'bootstrap3/dist/css/bootstrap.min.css';
 import 'katex/dist/katex.css';
+import 'markdown-it-chords/markdown-it-chords.css';
 import 'prismjs/themes/prism.css';
 import './css/github-gist.css';
 import './css/mermaid.css';
@@ -24,6 +25,11 @@ let flowchartParse:
   | null
   | undefined;
 
+let sequenceParse:
+  | ((input: string) => { drawSVG: (container: HTMLElement, options?: Record<string, unknown>) => void })
+  | null
+  | undefined;
+
 function getFlowchartParse() {
   if (flowchartParse !== undefined) {
     return flowchartParse;
@@ -39,6 +45,31 @@ function getFlowchartParse() {
   }
 
   return flowchartParse;
+}
+
+function getSequenceParse() {
+  if (sequenceParse !== undefined) {
+    return sequenceParse;
+  }
+
+  try {
+    const maybeDiagram = (window as any).Diagram;
+    if (maybeDiagram?.parse) {
+      sequenceParse = maybeDiagram.parse.bind(maybeDiagram);
+      return sequenceParse;
+    }
+
+    // Load the package lazily and use Diagram.parse directly instead of $.fn.sequenceDiagram.
+    // The plugin wrapper can emit non-fatal runtime noise in some preview environments.
+    require('js-sequence-diagrams');
+    const loadedDiagram = (window as any).Diagram;
+    sequenceParse = loadedDiagram?.parse ? loadedDiagram.parse.bind(loadedDiagram) : null;
+  } catch (err) {
+    sequenceParse = null;
+    console.warn('sequence parser unavailable', err);
+  }
+
+  return sequenceParse;
 }
 
 function init() {
@@ -135,12 +166,8 @@ function updateSequences() {
   const sequences = $('span.sequence-diagram.raw');
   if (!sequences.length) { return; }
 
-  try {
-    // Avoid loading js-sequence-diagrams at module level — it registers a jQuery plugin
-    // ($.fn.sequenceDiagram) immediately, which can crash before jQuery is ready.
-    require('js-sequence-diagrams');
-  } catch (e) {
-    console.warn('js-sequence-diagrams unavailable:', e);
+  const parseSequence = getSequenceParse();
+  if (!parseSequence) {
     return;
   }
 
@@ -151,8 +178,9 @@ function updateSequences() {
       const $value = $(value);
       $ele = $(value).parent().parent();
 
-      const sequence = $value as any;
-      sequence.sequenceDiagram({
+      const diagram = parseSequence($value.text());
+      $value.html('');
+      diagram.drawSVG(value as HTMLElement, {
         theme: 'simple',
       });
 
@@ -220,17 +248,24 @@ function updateMermaid() {
       $ele = $(value).closest('pre');
 
       const text = $value.text();
+      $ele.addClass('mermaid');
+      $ele.text(text);
 
-      if (mermaid.parse(text)) {
-        $ele.addClass('mermaid');
-        $ele.text(text);
-        // Use renderAsync to avoid internal state machine issues
-        mermaid.renderAsync(`mermaid-${key}`, text, $ele[0] as any).then((svg) => {
-          $ele.html(svg);
-        }).catch((err) => {
-          console.warn('mermaid renderAsync error:', err);
+      const mermaidAny = mermaid as any;
+      const renderResult = mermaidAny.renderAsync
+        ? mermaidAny.renderAsync(`mermaid-${key}`, text, undefined, $ele[0] as any)
+        : mermaidAny.render(`mermaid-${key}`, text, undefined, $ele[0] as any);
+
+      Promise.resolve(renderResult)
+        .then((result) => {
+          const svg = typeof result === 'string' ? result : result?.svg;
+          if (svg) {
+            $ele.html(svg);
+          }
+        })
+        .catch((err) => {
+          console.warn('mermaid render error:', err);
         });
-      }
     } catch (err) {
       console.warn('mermaid error:', err);
       $ele?.addClass('mermaid');

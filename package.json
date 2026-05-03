@@ -102,13 +102,13 @@
       },
       {
         "command": "hackmd.model.refreshAll",
-        "title": "Refresh All Data",
-        "category": "HackMD Model"
+        "title": "Refresh",
+        "category": "HackMD"
       },
       {
         "command": "hackmd.model.refreshPersonalScope",
         "title": "Refresh",
-        "category": "HackMD Model",
+        "category": "HackMD My Notes",
         "icon": {
           "light": "images/icon/light/refresh.svg",
           "dark": "images/icon/dark/refresh.svg"
@@ -117,7 +117,7 @@
       {
         "command": "hackmd.model.refreshTeams",
         "title": "Refresh",
-        "category": "HackMD Model",
+        "category": "HackMD Teams",
         "icon": {
           "light": "images/icon/light/refresh.svg",
           "dark": "images/icon/dark/refresh.svg"
@@ -126,7 +126,7 @@
       {
         "command": "hackmd.model.refreshHistory",
         "title": "Refresh",
-        "category": "HackMD Model",
+        "category": "HackMD Recent Notes",
         "icon": {
           "light": "images/icon/light/refresh.svg",
           "dark": "images/icon/dark/refresh.svg"
@@ -135,36 +135,16 @@
       {
         "command": "hackmd.model.refreshScope",
         "title": "Refresh",
-        "category": "HackMD Model",
+        "category": "HackMD Team",
         "icon": {
           "light": "images/icon/light/refresh.svg",
           "dark": "images/icon/dark/refresh.svg"
         }
       },
       {
-        "command": "hackmd.model.getScopeSnapshot",
-        "title": "Get Scope Snapshot",
-        "category": "HackMD Model"
-      },
-      {
-        "command": "hackmd.model.getNote",
-        "title": "Get Note",
-        "category": "HackMD Model"
-      },
-      {
-        "command": "hackmd.model.getNoteContent",
-        "title": "Get Note Content",
-        "category": "HackMD Model"
-      },
-      {
-        "command": "hackmd.model.getEntityByUri",
-        "title": "Get Entity By URI",
-        "category": "HackMD Model"
-      },
-      {
         "command": "hackmd.model.createNote",
-        "title": "Create Note",
-        "category": "HackMD Model",
+        "title": "New Note",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/new-note.svg",
           "dark": "images/icon/dark/new-note.svg"
@@ -172,14 +152,14 @@
       },
       {
         "command": "hackmd.model.createFolder",
-        "title": "Create Folder",
-        "category": "HackMD Model",
+        "title": "New Folder...",
+        "category": "HackMD",
         "icon": "$(new-folder)"
       },
       {
         "command": "hackmd.model.createMyNote",
-        "title": "Create Note in My Notes",
-        "category": "HackMD",
+        "title": "New Note",
+        "category": "HackMD My Notes",
         "icon": {
           "light": "images/icon/light/new-note.svg",
           "dark": "images/icon/dark/new-note.svg"
@@ -187,8 +167,8 @@
       },
       {
         "command": "hackmd.model.createTeamNote",
-        "title": "Create Note in Team",
-        "category": "HackMD",
+        "title": "New Note",
+        "category": "HackMD Team",
         "icon": {
           "light": "images/icon/light/new-note.svg",
           "dark": "images/icon/dark/new-note.svg"
@@ -196,40 +176,25 @@
       },
       {
         "command": "hackmd.model.createMyFolder",
-        "title": "Create Folder in My Notes",
-        "category": "HackMD",
+        "title": "New Folder...",
+        "category": "HackMD My Notes",
         "icon": "$(new-folder)"
       },
       {
         "command": "hackmd.model.createTeamFolder",
-        "title": "Create Folder in Team",
-        "category": "HackMD",
+        "title": "New Folder...",
+        "category": "HackMD Team",
         "icon": "$(new-folder)"
       },
       {
-        "command": "hackmd.model.loadNoteContent",
-        "title": "Load Note Content",
-        "category": "HackMD Model"
-      },
-      {
-        "command": "hackmd.model.saveNoteContent",
-        "title": "Save Note Content",
-        "category": "HackMD Model"
-      },
-      {
-        "command": "hackmd.model.updateNoteProperties",
-        "title": "Update Note Properties",
-        "category": "HackMD Model"
-      },
-      {
         "command": "hackmd.model.renameNote",
-        "title": "Rename Note",
-        "category": "HackMD Model"
+        "title": "Rename...",
+        "category": "HackMD Note"
       },
       {
         "command": "hackmd.model.renameFolder",
-        "title": "Rename Folder",
-        "category": "HackMD Model"
+        "title": "Rename...",
+        "category": "HackMD Folder"
       },
       {
         "command": "hackmd.model.updateFolder",
@@ -238,23 +203,23 @@
       },
       {
         "command": "hackmd.model.move",
-        "title": "Move",
-        "category": "HackMD Model"
+        "title": "Move...",
+        "category": "HackMD"
       },
       {
         "command": "hackmd.model.duplicateNote",
         "title": "Duplicate",
-        "category": "HackMD Model"
+        "category": "HackMD Note"
       },
       {
         "command": "hackmd.model.delete",
-        "title": "Delete",
-        "category": "HackMD Model"
+        "title": "Delete...",
+        "category": "HackMD"
       },
       {
         "command": "hackmd.ui.edit",
         "title": "Edit",
-        "category": "HackMD UI",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/edit.svg",
           "dark": "images/icon/dark/edit.svg"
@@ -263,7 +228,7 @@
       {
         "command": "hackmd.ui.preview",
         "title": "Preview",
-        "category": "HackMD UI",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/eye.svg",
           "dark": "images/icon/dark/eye.svg"
@@ -272,7 +237,7 @@
       {
         "command": "hackmd.ui.sideBySide",
         "title": "Side by Side",
-        "category": "HackMD UI",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/split-horizontal.svg",
           "dark": "images/icon/dark/split-horizontal.svg"
@@ -281,7 +246,7 @@
       {
         "command": "hackmd.ui.openOnHackMD",
         "title": "Open on HackMD",
-        "category": "HackMD UI",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/link-external.svg",
           "dark": "images/icon/dark/link-external.svg"
@@ -289,8 +254,8 @@
       },
       {
         "command": "hackmd.ui.import",
-        "title": "Import",
-        "category": "HackMD UI",
+        "title": "Import...",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/cloud-upload.svg",
           "dark": "images/icon/dark/cloud-upload.svg"
@@ -298,8 +263,8 @@
       },
       {
         "command": "hackmd.ui.importToMyNotes",
-        "title": "Import to My Notes",
-        "category": "HackMD",
+        "title": "Import...",
+        "category": "HackMD My Notes",
         "icon": {
           "light": "images/icon/light/cloud-upload.svg",
           "dark": "images/icon/dark/cloud-upload.svg"
@@ -307,8 +272,8 @@
       },
       {
         "command": "hackmd.ui.importToTeam",
-        "title": "Import to Team",
-        "category": "HackMD",
+        "title": "Import...",
+        "category": "HackMD Team",
         "icon": {
           "light": "images/icon/light/cloud-upload.svg",
           "dark": "images/icon/dark/cloud-upload.svg"
@@ -316,8 +281,8 @@
       },
       {
         "command": "hackmd.ui.export",
-        "title": "Export",
-        "category": "HackMD UI",
+        "title": "Export...",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/file-text.svg",
           "dark": "images/icon/dark/file-text.svg"
@@ -326,7 +291,7 @@
       {
         "command": "hackmd.ui.properties",
         "title": "Properties...",
-        "category": "HackMD UI",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/gist-secret.svg",
           "dark": "images/icon/dark/gist-secret.svg"
@@ -428,8 +393,18 @@
           "group": "2_noteActions@5"
         },
         {
+          "command": "hackmd.ui.export",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasMultiNoteSelection))",
+          "group": "2_noteActions@5"
+        },
+        {
           "command": "hackmd.model.delete",
-          "when": "(viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasActionableSelection)))",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
+          "group": "9_noteDanger@1"
+        },
+        {
+          "command": "hackmd.model.delete",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasMultiNoteSelection))",
           "group": "9_noteDanger@1"
         },
         {
@@ -480,6 +455,11 @@
         {
           "command": "hackmd.ui.export",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "2_folderManage@4"
+        },
+        {
+          "command": "hackmd.ui.export",
+          "when": "(viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMultiNoteSelection))",
           "group": "2_folderManage@4"
         },
         {
@@ -534,7 +514,7 @@
         },
         {
           "command": "hackmd.ui.export",
-          "when": "view == hackmd.tree.team-notes && (viewItem == team || viewItem == team-loaded)",
+          "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
           "group": "2_teamTransfer@2"
         }
       ]
@@ -546,7 +526,10 @@
     "watch": "webpack --mode none --progress --watch",
     "test-compile": "tsc -p ./",
     "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/commands/model.ts src/commands/ui.ts",
-    "test": "npm run test:model && npm run test:commands && npm run test:tree:dnd && npm run test:fs:provider && npm run test:properties && npm run test:completion && npm run test:providers && npm run test:menus && npm run test:page",
+    "test": "npm run test:model && npm run test:commands && npm run test:tree:dnd && npm run test:fs:provider && npm run test:properties && npm run test:completion && npm run test:providers && npm run test:menus && npm run test:page && npm run test:md && npm run test:csv && npm run test:fretboard",
+    "test:md": "node --test ./test/node/markdownTaskLists.node.test.js",
+    "test:csv": "node --test ./test/node/markdownCsvPreview.node.test.js",
+    "test:fretboard": "node --test ./test/node/markdownFretboard.node.test.js",
     "test:page": "node --test ./test/node/page.node.test.js",
     "test:model": "npm run test:model:compile && node --require ./test/node/registerVscodeStub.js --test ./test/node/hackmdModel.node.test.js",
     "test:commands:model": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
@@ -587,16 +570,17 @@
     "eslint-config-prettier": "^10.1.8",
     "flowchart.js": "^1.12.2",
     "glob": "^13.0.6",
+    "happy-dom": "^20.9.0",
     "highlight.js": "^11.11.1",
     "highlightjs-solidity": "^2.0.5",
     "ignore-loader": "^0.1.2",
     "imports-loader": "^5.0.0",
     "jquery": "^4.0.0",
     "js-sequence-diagrams": "git+https://github.com/Moeditor/js-sequence-diagrams.git",
-    "happy-dom": "^20.9.0",
     "jsdom": "^24.1.3",
     "katex": "^0.16.45",
     "lodash": "^4.17.21",
+    "markdown-it": "^14.1.1",
     "mermaid": "9.4.0",
     "mini-css-extract-plugin": "^2.7.2",
     "prettier": "^3.8.3",
@@ -614,6 +598,7 @@
     "@types/mermaid": "^9.1.0",
     "bootstrap3": "^3.3.5",
     "markdown-it-abbr": "^2.0.0",
+    "markdown-it-chords": "^1.0.3",
     "markdown-it-container": "^4.0.0",
     "markdown-it-deflist": "^3.0.0",
     "markdown-it-ins": "^4.0.0",
@@ -622,6 +607,8 @@
     "markdown-it-sub": "^2.0.0",
     "markdown-it-sup": "^2.0.0",
     "markdown-it-table-of-contents": "^1.2.0",
+    "markdown-it-task-lists": "^2.1.1",
+    "papaparse": "^5.5.3",
     "string": "git+https://github.com/hackmdio/string.js.git#a68176b3d",
     "zustand": "^5.0.12"
   }

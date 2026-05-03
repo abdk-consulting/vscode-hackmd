@@ -161,6 +161,113 @@ test('Page Enhancer - Mermaid Diagram Translation', async (t) => {
   assert.equal(renderAsyncCalled, true, 'renderAsync should have been called');
 });
 
+test('Page Enhancer - Mermaid async diagrams render without parse precheck', async (t) => {
+  const win = new Window({ url: 'https://localhost' });
+  const doc = win.document;
+  doc.documentElement.innerHTML = `<html><body>
+    <pre><span class="mermaid raw">gantt\n  title A Gantt Diagram</span></pre>
+  </body></html>`;
+
+  const $ = createMockJQuery(doc);
+
+  let parseCalled = false;
+  let renderAsyncCalled = false;
+  const mermaid = {
+    initialize: () => { },
+    parse: () => {
+      parseCalled = true;
+      throw new Error('Diagram is a promise. Use renderAsync.');
+    },
+    renderAsync: async (id, text, cb, container) => {
+      renderAsyncCalled = true;
+      return { svg: `<svg data-id="${id}">${text}</svg>` };
+    },
+  };
+
+  const mermaids = $('span.mermaid.raw');
+  assert.equal(mermaids.length, 1, 'Should find one mermaid diagram');
+
+  const pending = [];
+  mermaids.removeClass('raw');
+  mermaids.each((key, value) => {
+    const $value = $([value]);
+    const $ele = $([value]).closest('pre');
+    const text = $value.text();
+
+    $ele.addClass('mermaid');
+    $ele.text(text);
+
+    const renderResult = mermaid.renderAsync
+      ? mermaid.renderAsync(`mermaid-${key}`, text, undefined, $ele[0])
+      : mermaid.render(`mermaid-${key}`, text, undefined, $ele[0]);
+
+    pending.push(
+      Promise.resolve(renderResult).then((result) => {
+        const svg = typeof result === 'string' ? result : result?.svg;
+        if (svg) {
+          $ele.html(svg);
+        }
+      })
+    );
+  });
+
+  await Promise.all(pending);
+
+  assert.equal(parseCalled, false, 'Mermaid parse precheck should not run for async diagrams');
+  assert.equal(renderAsyncCalled, true, 'renderAsync should be called for mermaid rendering');
+  assert.match(doc.body.innerHTML, /<svg[^>]*>gantt/s);
+});
+
+test('Page Enhancer - Mermaid falls back to render when renderAsync is unavailable', async (t) => {
+  const win = new Window({ url: 'https://localhost' });
+  const doc = win.document;
+  doc.documentElement.innerHTML = `<html><body>
+    <pre><span class="mermaid raw">graph TD; A-->B;</span></pre>
+  </body></html>`;
+
+  const $ = createMockJQuery(doc);
+
+  let renderCalled = false;
+  const mermaid = {
+    initialize: () => { },
+    render: async (id, text, cb, container) => {
+      renderCalled = true;
+      return `<svg data-id="${id}">${text}</svg>`;
+    },
+  };
+
+  const mermaids = $('span.mermaid.raw');
+  const pending = [];
+  mermaids.removeClass('raw');
+  mermaids.each((key, value) => {
+    const $value = $([value]);
+    const $ele = $([value]).closest('pre');
+    const text = $value.text();
+
+    $ele.addClass('mermaid');
+    $ele.text(text);
+
+    const renderResult = mermaid.renderAsync
+      ? mermaid.renderAsync(`mermaid-${key}`, text, undefined, $ele[0])
+      : mermaid.render(`mermaid-${key}`, text, undefined, $ele[0]);
+
+    pending.push(
+      Promise.resolve(renderResult).then((result) => {
+        const svg = typeof result === 'string' ? result : result?.svg;
+        if (svg) {
+          $ele.html(svg);
+        }
+      })
+    );
+  });
+
+  await Promise.all(pending);
+
+  assert.equal(renderCalled, true, 'render fallback should be called');
+  assert.match(doc.body.innerHTML, /<svg[^>]*data-id="mermaid-0">/s);
+  assert.match(doc.body.innerHTML, /A--&gt;B;/);
+});
+
 test('Page Enhancer - Sequence Diagram Translation', async (t) => {
   const win = new Window({ url: 'https://localhost' });
   const doc = win.document;
@@ -173,19 +280,81 @@ test('Page Enhancer - Sequence Diagram Translation', async (t) => {
   const sequences = $('span.sequence-diagram.raw');
   assert.equal(sequences.length, 1, 'Should find one sequence diagram');
 
+  const parseSequence = (input) => ({
+    drawSVG: (container, options) => {
+      const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '500');
+      svg.setAttribute('height', '300');
+      svg.setAttribute('data-theme', options?.theme || 'simple');
+      container.innerHTML = '';
+      container.appendChild(svg);
+    },
+  });
+
   if (sequences.length > 0) {
     sequences.removeClass('raw');
     sequences.each((key, value) => {
       const $value = $([value]);
       const $ele = $value.parent().parent();
 
-      $value.sequenceDiagram({ theme: 'simple' });
+      const diagram = parseSequence($value.text());
+      $value.html('');
+      diagram.drawSVG(value, { theme: 'simple' });
       $ele.addClass('sequence-diagram');
       $value.children().unwrap().unwrap();
 
       assert($ele.hasClass('sequence-diagram'), 'Should have sequence-diagram class');
     });
   }
+});
+
+test('Page Enhancer - Sequence Diagram avoids jQuery plugin setState error', async (t) => {
+  const win = new Window({ url: 'https://localhost' });
+  const doc = win.document;
+  doc.documentElement.innerHTML = `<html><body>
+    <pre><span class="sequence-diagram raw">Alice->Bob: Hello Bob, how are you?</span></pre>
+  </body></html>`;
+
+  const $ = createMockJQuery(doc);
+  let pluginCalled = false;
+
+  const parseSequence = (input) => ({
+    drawSVG: (container) => {
+      const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '420');
+      svg.setAttribute('height', '120');
+      container.innerHTML = '';
+      container.appendChild(svg);
+    },
+  });
+
+  const sequences = $('span.sequence-diagram.raw');
+  assert.equal(sequences.length, 1, 'Should find one sequence diagram');
+
+  sequences.removeClass('raw');
+  sequences.each((key, value) => {
+    const $value = $([value]);
+    const $ele = $value.parent().parent();
+
+    // Simulate the legacy plugin path that throws in preview console.
+    const failingPlugin = () => {
+      pluginCalled = true;
+      throw new TypeError('_.setState is not a function');
+    };
+    $value.sequenceDiagram = failingPlugin;
+
+    // Fixed path: never call the plugin; render directly from parser output.
+    const diagram = parseSequence($value.text());
+    $value.html('');
+    diagram.drawSVG(value, { theme: 'simple' });
+    $ele.addClass('sequence-diagram');
+    $value.children().unwrap().unwrap();
+
+    assert.equal(pluginCalled, false, 'Legacy jQuery plugin path should not be used');
+    assert.equal(typeof $value.sequenceDiagram, 'function', 'Legacy plugin stub exists for regression intent');
+    assert($ele.hasClass('sequence-diagram'), 'Should still mark container as sequence-diagram');
+    assert.equal($('span.sequence-diagram.raw').length, 0, 'Raw class should be removed after processing');
+  });
 });
 
 test('Page Enhancer - Flowchart Diagram Translation', async (t) => {

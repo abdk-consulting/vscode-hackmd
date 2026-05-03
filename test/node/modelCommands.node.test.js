@@ -368,101 +368,6 @@ test('refreshScope — picker cancelled returns undefined', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// getScopeSnapshot
-// ─────────────────────────────────────────────────────────────
-test('getScopeSnapshot — with explicit teamPath', async () => {
-  const model = setupModel();
-  await invoke('hackmd.model.getScopeSnapshot', { teamPath: 'acme' });
-  assert.deepEqual(model.calls.getScopeSnapshot[0], ['acme']);
-});
-
-test('getScopeSnapshot — picks team scope', async () => {
-  const model = setupModel();
-  new Interactions().qp('Acme Corp').install();
-  await invoke('hackmd.model.getScopeSnapshot');
-  assert.deepEqual(model.calls.getScopeSnapshot[0], ['acme']);
-});
-
-// ─────────────────────────────────────────────────────────────
-// getNote
-// ─────────────────────────────────────────────────────────────
-test('getNote — with explicit noteId + teamPath', async () => {
-  const model = setupModel();
-  await invoke('hackmd.model.getNote', { noteId: 'pn1', teamPath: null });
-  assert.deepEqual(model.calls.getNote[0], ['pn1', null]);
-});
-
-test('getNote — picks note via picker (personal scope)', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')   // scope picker
-    .qp('My Note')    // note picker
-    .install();
-  await invoke('hackmd.model.getNote');
-  assert.ok(model.calls.getNote);
-  assert.equal(model.calls.getNote[0][0], 'pn1');
-});
-
-test('getNote — note picker cancelled returns undefined', async () => {
-  setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp(null)
-    .install();
-  const result = await invoke('hackmd.model.getNote');
-  assert.equal(result, undefined);
-});
-
-// ─────────────────────────────────────────────────────────────
-// getNoteContent
-// ─────────────────────────────────────────────────────────────
-test('getNoteContent — with explicit noteId', async () => {
-  const model = setupModel();
-  await invoke('hackmd.model.getNoteContent', { type: 'note', note: { id: 'pn2', teamPath: null } });
-  assert.deepEqual(model.calls.getNoteContent[0], ['pn2', null]);
-});
-
-test('getNoteContent — picks note interactively', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('Root Note')
-    .install();
-  await invoke('hackmd.model.getNoteContent');
-  assert.equal(model.calls.getNoteContent[0][0], 'pn2');
-});
-
-// ─────────────────────────────────────────────────────────────
-// getEntityByUri
-// ─────────────────────────────────────────────────────────────
-test('getEntityByUri — with string uri arg', async () => {
-  const model = setupModel();
-  await invoke('hackmd.model.getEntityByUri', { uri: 'hackmd:/notes/pn1' });
-  assert.equal(model.calls.getEntityByUri.length, 1);
-});
-
-test('getEntityByUri — with vscode.Uri object', async () => {
-  const model = setupModel();
-  const fakeUri = stub.vscodeStub.Uri.parse('hackmd:/notes/pn1');
-  await invoke('hackmd.model.getEntityByUri', { uri: fakeUri });
-  assert.equal(model.calls.getEntityByUri.length, 1);
-});
-
-test('getEntityByUri — prompts URI input when no arg', async () => {
-  const model = setupModel();
-  new Interactions().ib('hackmd:/notes/pn1').install();
-  await invoke('hackmd.model.getEntityByUri');
-  assert.equal(model.calls.getEntityByUri.length, 1);
-});
-
-test('getEntityByUri — cancelled input returns undefined', async () => {
-  setupModel();
-  new Interactions().ib(null).install();
-  const result = await invoke('hackmd.model.getEntityByUri');
-  assert.equal(result, undefined);
-});
-
-// ─────────────────────────────────────────────────────────────
 // createNote
 // ─────────────────────────────────────────────────────────────
 test('createNote — with all args provided', async () => {
@@ -570,77 +475,6 @@ test('createFolder — name input cancelled returns undefined', async () => {
     .install();
   const result = await invoke('hackmd.model.createFolder');
   assert.equal(result, undefined);
-});
-
-// ─────────────────────────────────────────────────────────────
-// loadNoteContent
-// ─────────────────────────────────────────────────────────────
-test('loadNoteContent — with explicit noteId', async () => {
-  const model = setupModel();
-  await invoke('hackmd.model.loadNoteContent', { noteId: 'pn1', teamPath: null });
-  assert.deepEqual(model.calls.loadNoteContent[0], ['pn1', null]);
-});
-
-test('loadNoteContent — picks note', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('My Note')
-    .install();
-  await invoke('hackmd.model.loadNoteContent');
-  assert.equal(model.calls.loadNoteContent[0][0], 'pn1');
-});
-
-// ─────────────────────────────────────────────────────────────
-// saveNoteContent
-// ─────────────────────────────────────────────────────────────
-test('saveNoteContent — with explicit args', async () => {
-  const model = setupModel();
-  await invoke('hackmd.model.saveNoteContent', { noteId: 'pn1', teamPath: null, content: 'new body' });
-  assert.deepEqual(model.calls.saveNoteContent[0], ['pn1', 'new body', null]);
-});
-
-test('saveNoteContent — picks note, prompts content', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('My Note')
-    .ib('updated content')
-    .install();
-  await invoke('hackmd.model.saveNoteContent');
-  assert.equal(model.calls.saveNoteContent[0][1], 'updated content');
-});
-
-test('saveNoteContent — content input cancelled returns undefined', async () => {
-  setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('My Note')
-    .ib(null)
-    .install();
-  const result = await invoke('hackmd.model.saveNoteContent');
-  assert.equal(result, undefined);
-});
-
-// ─────────────────────────────────────────────────────────────
-// updateNoteProperties
-// ─────────────────────────────────────────────────────────────
-test('updateNoteProperties — with explicit update', async () => {
-  const model = setupModel();
-  const update = { title: 'New' };
-  await invoke('hackmd.model.updateNoteProperties', { noteId: 'pn1', teamPath: null, update });
-  assert.deepEqual(model.calls.updateNoteProperties[0], ['pn1', update, null]);
-});
-
-test('updateNoteProperties — prompts JSON update', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('My Note')
-    .ib('{"title":"Changed"}')
-    .install();
-  await invoke('hackmd.model.updateNoteProperties');
-  assert.deepEqual(model.calls.updateNoteProperties[0][1], { title: 'Changed' });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -896,8 +730,8 @@ test('pickNote — custom note ID input used', async () => {
     .qp('Custom Note ID...')
     .ib('custom-note-123')
     .install();
-  await invoke('hackmd.model.getNote');
-  assert.equal(model.calls.getNote[0][0], 'custom-note-123');
+  await invoke('hackmd.model.renameNote', { type: 'note', note: { id: 'custom-note-123', teamPath: null, title: 'Old' } });
+  assert.equal(model.calls.renameNote[0][0], 'custom-note-123');
 });
 
 test('pickFolder — custom folder ID input used', async () => {

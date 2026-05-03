@@ -6,8 +6,7 @@ import {
   ModelNote,
   ModelScope,
   ModelScopeSnapshot,
-  UpdateFolderInput,
-  UpdateNoteInput
+  UpdateFolderInput
 } from '../model';
 import {
   collectFolders,
@@ -423,89 +422,6 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return true;
   });
 
-  register('hackmd.model.getScopeSnapshot', async (args?: { teamPath?: string | null }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let teamPath = args?.teamPath;
-    if (teamPath === undefined) {
-      const selectedScope = await pickScope(model, 'Choose scope');
-      if (selectedScope === undefined) {
-        return;
-      }
-      teamPath = selectedScope;
-    }
-
-    return model.getScopeSnapshot(teamPath);
-  });
-
-  register('hackmd.model.getNote', async (args?: { noteId?: string; teamPath?: string | null }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let noteId = args?.noteId;
-    let teamPath = args?.teamPath;
-
-    if (!noteId) {
-      const picked = await pickNote(model, teamPath);
-      if (!picked) {
-        return;
-      }
-      noteId = picked.noteId;
-      teamPath = picked.teamPath;
-    }
-
-    return model.getNote(noteId, teamPath);
-  });
-
-  register('hackmd.model.getNoteContent', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    const noteFromNode = extractNote(node);
-    let noteId: string | undefined = noteFromNode?.id;
-    let teamPath: string | null | undefined = noteFromNode ? (noteFromNode.teamPath ?? null) : undefined;
-
-    if (!noteId) {
-      const picked = await pickNote(model, teamPath);
-      if (!picked) {
-        return;
-      }
-      noteId = picked.noteId;
-      teamPath = picked.teamPath;
-    }
-
-    return model.getNoteContent(noteId, teamPath);
-  });
-
-  register('hackmd.model.getEntityByUri', async (args?: { uri?: string | vscode.Uri }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let uri: vscode.Uri | undefined;
-    if (typeof args?.uri === 'string') {
-      uri = vscode.Uri.parse(args.uri);
-    } else if (args?.uri) {
-      uri = args.uri;
-    } else {
-      const input = await promptRequiredInput('Enter hackmd URI');
-      if (!input) {
-        return;
-      }
-      uri = vscode.Uri.parse(input);
-    }
-
-    return model.getEntityByUri(uri);
-  });
-
   register('hackmd.model.createNote', async (node?: any) => {
     const model = getModel();
     if (!model) {
@@ -697,85 +613,6 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     return model.createFolder({ teamPath, name, parentFolderId });
-  });
-
-  register('hackmd.model.loadNoteContent', async (args?: { noteId?: string; teamPath?: string | null }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let noteId = args?.noteId;
-    let teamPath = args?.teamPath;
-
-    if (!noteId) {
-      const picked = await pickNote(model, teamPath);
-      if (!picked) {
-        return;
-      }
-      noteId = picked.noteId;
-      teamPath = picked.teamPath;
-    }
-
-    return model.loadNoteContent(noteId, teamPath);
-  });
-
-  register('hackmd.model.saveNoteContent', async (args?: { noteId?: string; teamPath?: string | null; content?: string }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let noteId = args?.noteId;
-    let teamPath = args?.teamPath;
-    let content = args?.content;
-
-    if (!noteId) {
-      const picked = await pickNote(model, teamPath);
-      if (!picked) {
-        return;
-      }
-      noteId = picked.noteId;
-      teamPath = picked.teamPath;
-    }
-
-    if (content === undefined) {
-      content = await promptRequiredInput('New note content');
-      if (content === undefined) {
-        return;
-      }
-    }
-
-    return model.saveNoteContent(noteId, content, teamPath);
-  });
-
-  register('hackmd.model.updateNoteProperties', async (args?: { noteId?: string; teamPath?: string | null; update?: UpdateNoteInput }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let noteId = args?.noteId;
-    let teamPath = args?.teamPath;
-    let update = args?.update;
-
-    if (!noteId) {
-      const picked = await pickNote(model, teamPath);
-      if (!picked) {
-        return;
-      }
-      noteId = picked.noteId;
-      teamPath = picked.teamPath;
-    }
-
-    if (!update) {
-      update = await promptJson<UpdateNoteInput>('Update payload as JSON', {});
-      if (!update) {
-        return;
-      }
-    }
-
-    return model.updateNoteProperties(noteId, update, teamPath);
   });
 
   register('hackmd.model.renameNote', async (node?: any) => {

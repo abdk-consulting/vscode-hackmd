@@ -8,6 +8,7 @@
   max-width: 758px;
   overflow: visible !important;
 }
+
 /*fixed style for bootstrap comflict*/
 
 .vscode-body .emoji {
@@ -50,7 +51,7 @@
   border-right: 3px solid #6ce26c !important;
 }
 
-.vscode-body pre code .gutter.linenumber > span:before {
+.vscode-body pre code .gutter.linenumber>span:before {
   content: attr(data-linenumber);
 }
 
@@ -100,6 +101,47 @@
   background: unset;
 }
 
+.vscode-body table th,
+.vscode-body table td {
+  padding: 6px 12px;
+}
+
+.vscode-body .fretboard-preview {
+  margin: 12px 0;
+}
+
+.vscode-body .fretboard-title {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.vscode-body .fretboard-table {
+  border-collapse: separate;
+  border-spacing: 4px;
+  margin: 0;
+}
+
+.vscode-body .fretboard-table td.fretboard-cell {
+  min-width: 18px;
+  padding: 2px 4px;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+}
+
+.vscode-body .fretboard-table td.fretboard-empty {
+  opacity: 0.4;
+}
+
+.vscode-body .fretboard-table td.fretboard-root {
+  font-weight: 700;
+}
+
+.vscode-body .fretboard-base-fret {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
 /*fixed style for rtl in pre and code*/
 
 .vscode-body[dir='rtl'] pre {
@@ -111,7 +153,7 @@
   unicode-bidi: embed;
 }
 
-.vscode-body .alert > p {
+.vscode-body .alert>p {
   margin-bottom: 0;
 }
 
@@ -126,33 +168,38 @@
   white-space: inherit;
 }
 
-.vscode-body pre.flow-chart > code,
-.vscode-body pre.sequence-diagram > code,
-.vscode-body pre.graphviz > code,
-.vscode-body pre.mermaid > code,
-.vscode-body pre.abc > code {
+.vscode-body pre.flow-chart>code,
+.vscode-body pre.sequence-diagram>code,
+.vscode-body pre.graphviz>code,
+.vscode-body pre.mermaid>code,
+.vscode-body pre.abc>code {
   text-align: left;
 }
 
-.vscode-body pre.flow-chart > svg,
-.vscode-body pre.sequence-diagram > svg,
-.vscode-body pre.graphviz > svg,
-.vscode-body pre.mermaid > svg,
-.vscode-body pre.abc > svg {
+.vscode-body pre.flow-chart>svg,
+.vscode-body pre.sequence-diagram>svg,
+.vscode-body pre.graphviz>svg,
+.vscode-body pre.mermaid>svg,
+.vscode-body pre.abc>svg {
   max-width: 100%;
   height: 100%;
 }
 
-.vscode-body pre > code.wrap {
-  white-space: pre-wrap; /* Since CSS 2.1 */
-  white-space: -moz-pre-wrap; /* Mozilla, since 1999 */
-  white-space: -pre-wrap; /* Opera 4-6 */
-  white-space: -o-pre-wrap; /* Opera 7 */
-  word-wrap: break-word; /* Internet Explorer 5.5+ */
+.vscode-body pre>code.wrap {
+  white-space: pre-wrap;
+  /* Since CSS 2.1 */
+  white-space: -moz-pre-wrap;
+  /* Mozilla, since 1999 */
+  white-space: -pre-wrap;
+  /* Opera 4-6 */
+  white-space: -o-pre-wrap;
+  /* Opera 7 */
+  word-wrap: break-word;
+  /* Internet Explorer 5.5+ */
 }
 
-.vscode-body .alert > p,
-.vscode-body .alert > ul {
+.vscode-body .alert>p,
+.vscode-body .alert>ul {
   margin-bottom: 0;
 }
 
@@ -168,7 +215,7 @@
   cursor: pointer;
 }
 
-.vscode-body details:not([open]) > *:not(summary) {
+.vscode-body details:not([open])>*:not(summary) {
   display: none;
 }
 

@@ -4,6 +4,51 @@
 
 ## Recent Changes (Unreleased)
 
+### Removed
+
+- Removed query-only model commands that just passed through to model methods without additional logic:
+  - `hackmd.model.getNote` — callers now invoke `model.getNote()` directly.
+  - `hackmd.model.getNoteContent` — callers now invoke `model.getNoteContent()` directly.
+  - `hackmd.model.getEntityByUri` — callers now invoke `model.getEntityByUri()` directly.
+  - `hackmd.model.loadNoteContent` — callers now invoke `model.loadNoteContent()` directly.
+  - `hackmd.model.saveNoteContent` — callers now invoke `model.saveNoteContent()` directly.
+  - `hackmd.model.updateNoteProperties` — callers now invoke `model.updateNoteProperties()` directly.
+  - `hackmd.model.getScopeSnapshot` — UI export now calls `model.getScopeSnapshot()` directly.
+- Removed corresponding test cases (39 model command tests removed).
+
+### Changed
+
+- Team export context menu now restricted to `team-loaded` viewItem only (previously allowed both `team` and `team-loaded`), ensuring export is only available for teams that have already been loaded.
+- Fixed context menu visibility for delete and export actions on notes and folders:
+  - Delete now appears on both individual notes/folders and multiselection.
+  - Export now appears on both individual notes/folders and multiselection.
+  - Multiselection delete and export use appropriate selection qualifiers (`hasMultiNoteSelection`).
+
+### Added
+
+- Added `markdown-it-task-lists` plugin to the `extendMarkdownIt` hook in `src/extension.ts`, enabling GitHub-style task list rendering (`- [ ]` / `- [x]`) in VS Code's markdown preview. The plugin is registered with `{ enabled: true }` so checkboxes are interactive.
+- Added pure-Node test suite for task-list rendering (`test/node/markdownTaskLists.node.test.js`):
+  - 9 tests covering unchecked items, checked items, uppercase `[X]`, mixed lists, the nested HackMD ToDo example, plain lists (no false positives), baseline without plugin, `enabled:true` interactivity, and CSS class assertions.
+- Added `test:md` npm script; included in the default `npm test` run.
+
+### Chores
+
+- Added `markdown-it-task-lists` as a runtime dependency.
+- Added `markdown-it` as a dev dependency (used by the `test:md` test suite).
+
+- Added `csvpreview` fenced-block rendering in `src/extension.ts` `extendMarkdownIt`:
+  fenced blocks tagged `csvpreview` (with optional `{header="true"}`) are converted
+  to an HTML table via `csv-to-markdown-table` instead of being shown as a code block.
+- Added pure-Node test suite for CSV preview rendering (`test/node/markdownCsvPreview.node.test.js`):
+  8 tests covering basic table with header, no-header default (empty header row), the full
+  HackMD four-column example, correct data-row count, non-csvpreview code block passthrough,
+  bare `csvpreview` language tag, `header="false"` attribute, and absence of `<pre><code>` wrapper.
+- Added `test:csv` npm script; included in the default `npm test` run.
+
+### Chores (continued)
+
+- Added `csv-to-markdown-table` as a runtime dependency.
+
 ### Changed
 
 - All three tree providers (`MyNotesProvider`, `TeamNotesProvider`, `HistoryProvider`) now pass `{ type: 'note', note }` as the argument to `hackmd.ui.edit` instead of the previous `{ noteId, teamPath }` shape, giving command handlers direct access to the full note object.

@@ -468,7 +468,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         // Team node: export all root notes + folders for that team
         if (n?.team?.path) {
           const teamPath: string = n.team.path;
-          const snapshot = await vscode.commands.executeCommand('hackmd.model.getScopeSnapshot', { teamPath }) as any;
+          const snapshot = await model.getScopeSnapshot(teamPath) as any;
           const rootNotes: any[] = snapshot?.rootNotes ?? [];
           const rootFolders: any[] = snapshot?.rootFolders ?? [];
           for (const rn of rootNotes) { noteTargets.push({ type: 'note', noteId: rn.id, teamPath }); }

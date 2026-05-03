@@ -241,6 +241,136 @@ function parseFenceCodeParams(lang) {
   return params;
 }
 
+function parseFenceParamValue(value: unknown) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    return Number(value);
+  }
+
+  return value;
+}
+
+function renderCsvPreviewTable(
+  content: string,
+  params: Record<string, unknown>,
+  md: any,
+) {
+  const Papa = require('papaparse');
+  const parseOptions: Record<string, unknown> = {};
+
+  Object.keys(params).forEach((key) => {
+    if (key === 'id' || key === 'class' || key === 'title' || key === 'type') {
+      return;
+    }
+    parseOptions[key] = parseFenceParamValue(params[key]);
+  });
+
+  if (!Object.prototype.hasOwnProperty.call(parseOptions, 'delimiter')) {
+    parseOptions.delimiter = ',';
+  }
+
+  const parsed = Papa.parse(content.trim(), parseOptions);
+  const escaped = (text: unknown) => md.utils.escapeHtml(String(text ?? ''));
+  const header = Boolean(parseOptions.header);
+  let headers: string[] = [];
+  let rows: unknown[][] = [];
+
+  if (header) {
+    headers = Array.isArray(parsed.meta?.fields) ? parsed.meta.fields : [];
+    rows = Array.isArray(parsed.data)
+      ? parsed.data.map((row: Record<string, unknown>) => headers.map((key) => row?.[key]))
+      : [];
+  } else {
+    rows = Array.isArray(parsed.data) ? parsed.data : [];
+  }
+
+  let html = '<table class="csv-preview-table">';
+  if (header && headers.length) {
+    html += '<thead><tr>';
+    headers.forEach((column) => {
+      html += `<th>${escaped(column)}</th>`;
+    });
+    html += '</tr></thead>';
+  }
+
+  html += '<tbody>';
+  rows.forEach((row) => {
+    html += '<tr>';
+    (row as unknown[]).forEach((cell) => {
+      html += `<td>${escaped(cell)}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+
+  return html;
+}
+
+function renderFretboardBlock(
+  content: string,
+  params: Record<string, unknown>,
+  md: any,
+) {
+  const lines = content
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
+
+  if (!lines.length) {
+    return '<div class="fretboard-preview"></div>';
+  }
+
+  const escaped = (text: unknown) => md.utils.escapeHtml(String(text ?? ''));
+  const maybeFret = lines[lines.length - 1].trim();
+  const baseFret = /^\d+$/.test(maybeFret) ? maybeFret : '';
+  const boardRows = baseFret ? lines.slice(0, -1) : lines;
+  const typeClass = typeof params.type === 'string' && params.type ? ` fretboard-${escaped(params.type)}` : '';
+  const title = typeof params.title === 'string' ? params.title : '';
+
+  let html = `<div class="fretboard-preview${typeClass}">`;
+  if (title) {
+    html += `<div class="fretboard-title">${escaped(title)}</div>`;
+  }
+
+  html += '<table class="fretboard-table"><tbody>';
+  boardRows.forEach((line) => {
+    html += '<tr>';
+    line.split('').forEach((char) => {
+      if (char === '-') {
+        html += '<td class="fretboard-cell fretboard-empty"></td>';
+      } else if (char === 'o') {
+        html += '<td class="fretboard-cell fretboard-open">○</td>';
+      } else if (char === 'O') {
+        html += '<td class="fretboard-cell fretboard-filled">●</td>';
+      } else if (char === '*') {
+        html += '<td class="fretboard-cell fretboard-root">★</td>';
+      } else {
+        html += `<td class="fretboard-cell fretboard-mark">${escaped(char)}</td>`;
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+
+  if (baseFret) {
+    html += `<div class="fretboard-base-fret">${escaped(baseFret)}</div>`;
+  }
+
+  html += '</div>';
+  return html;
+}
+
 function highlightRender(code, lang) {
   if (!lang || /no(-?)highlight|plain|text/.test(lang)) {
     // fallback
@@ -399,6 +529,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   return {
     extendMarkdownIt(md: any) {
+      md.use(require('markdown-it-chords'));
+      md.use(require('markdown-it-task-lists'), { enabled: true });
       md.use(require('markdown-it-abbr'));
       md.use(require('markdown-it-deflist'));
       md.use(require('markdown-it-mark'));
@@ -446,6 +578,29 @@ export async function activate(context: vscode.ExtensionContext) {
       md.options.typographer = true;
       highlight = md.options.highlight;
       md.options.highlight = highlightRender;
+
+      // Render custom fenced blocks used by HackMD
+      const defaultFenceRule =
+        md.renderer.rules.fence ||
+        function (tokens, idx, options, env, self) {
+          return self.renderToken(tokens, idx, options);
+        };
+      md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+        const token = tokens[idx];
+        const info = token.info ? token.info.trim() : '';
+        const language = info.split(/\s+/)[0];
+        if (language === 'csvpreview') {
+          const params = parseFenceCodeParams(info) as Record<string, unknown>;
+          return renderCsvPreviewTable(token.content, params, md);
+        }
+
+        if (language === 'fretboard') {
+          const params = parseFenceCodeParams(info) as Record<string, unknown>;
+          return renderFretboardBlock(token.content, params, md);
+        }
+
+        return defaultFenceRule(tokens, idx, options, env, self);
+      };
 
       return md;
     },

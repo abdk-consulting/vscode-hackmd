@@ -59,3 +59,14 @@ test('team refresh command title remains Refresh', () => {
   assert.ok(refreshTeamCommand, 'hackmd.model.refreshScope command must exist');
   assert.equal(refreshTeamCommand.title, 'Refresh');
 });
+
+test('team export is only available for loaded team nodes', () => {
+  const pkg = readPackageJson();
+  const entries = getContextMenuEntries(pkg);
+  const teamExportEntry = findContextEntry(entries, 'hackmd.ui.export', '2_teamTransfer@2');
+
+  assert.ok(teamExportEntry, 'Team export menu item must exist at 2_teamTransfer@2');
+  assert.match(teamExportEntry.when || '', /view\s*==\s*hackmd\.tree\.team-notes/);
+  assert.match(teamExportEntry.when || '', /viewItem\s*==\s*team-loaded/);
+  assert.doesNotMatch(teamExportEntry.when || '', /viewItem\s*==\s*team\s*\|\|/);
+});

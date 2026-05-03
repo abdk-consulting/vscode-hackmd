@@ -398,6 +398,11 @@
           "group": "2_noteActions@5"
         },
         {
+          "command": "hackmd.ui.export",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasMixedSelection && hackmd.historySelection.hasActionableSelection))",
+          "group": "2_noteActions@5"
+        },
+        {
           "command": "hackmd.model.delete",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "9_noteDanger@1"
@@ -408,8 +413,13 @@
           "group": "9_noteDanger@1"
         },
         {
+          "command": "hackmd.model.delete",
+          "when": "viewItem == file && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection) || (view == hackmd.tree.recent-notes && hackmd.historySelection.hasMixedSelection && hackmd.historySelection.hasActionableSelection))",
+          "group": "9_noteDanger@1"
+        },
+        {
           "command": "hackmd.model.createNote",
-          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "when": "(viewItem == folder || viewItem == folder-pending) && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection))",
           "group": "inline@1"
         },
         {
@@ -434,7 +444,7 @@
         },
         {
           "command": "hackmd.ui.openOnHackMD",
-          "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending)",
+          "when": "(viewItem == folder || viewItem == folder-pending) && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection))",
           "group": "1_folderMain@3"
         },
         {
@@ -463,8 +473,18 @@
           "group": "2_folderManage@4"
         },
         {
+          "command": "hackmd.ui.export",
+          "when": "(viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection))",
+          "group": "2_folderManage@4"
+        },
+        {
           "command": "hackmd.model.delete",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
+          "group": "3_folderDanger@1"
+        },
+        {
+          "command": "hackmd.model.delete",
+          "when": "(viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && hackmd.myNotesSelection.hasMixedSelection && hackmd.myNotesSelection.hasActionableSelection) || (view == hackmd.tree.team-notes && hackmd.teamNotesSelection.hasMixedSelection && hackmd.teamNotesSelection.hasActionableSelection))",
           "group": "3_folderDanger@1"
         },
         {

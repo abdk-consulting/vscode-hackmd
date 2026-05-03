@@ -12,7 +12,15 @@ export interface Note {
   shortId?: string;
   teamPath?: string | null;
   userPath?: string | null;
-  folderPaths?: Array<{ id: string; path: string; name?: string }>;
+  folderPaths?: Array<{
+    id: string;
+    path: string;
+    name?: string;
+    clientId?: string;
+    parentFolderId?: string | null;
+    /** HackMD API typo alias for parentFolderId */
+    parentForderId?: string | null;
+  }>;
   parentFolderId?: string | null;
   /** HackMD API typo alias for parentFolderId */
   parentForderId?: string | null;
@@ -33,6 +41,7 @@ export interface HackMdFolder {
   id: string;
   name: string;
   path?: string;
+  clientId?: string;
   parentFolderId?: string | null;
   /** HackMD API typo alias for parentFolderId */
   parentForderId?: string | null;

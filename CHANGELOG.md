@@ -23,8 +23,17 @@
   - Delete now appears on both individual notes/folders and multiselection.
   - Export now appears on both individual notes/folders and multiselection.
   - Multiselection delete and export use appropriate selection qualifiers (`hasMultiNoteSelection`).
+- Fixed "Open on HackMD" context menu visibility for folders by enriching folder `clientId` from note folder-path metadata:
+  - Model now extracts folder metadata from `note.folderPaths` during scope rebuild and merges with folders API response.
+  - `ModelFolder` now carries `clientId` field, populated from ancestor metadata when folders API lacks it.
+  - Both tree providers now classify folders as `folder` or `folder-pending` (showing "Open on HackMD") when clientId is present, and as `folder-no-client-id` only when truly absent.
+  - Folders reachable via descendant notes now properly expose the "Open on HackMD" menu option.
 
 ### Added
+
+- Added two regression tests for folder "Open on HackMD" URL generation in `test/node/uiCommands.node.test.js`:
+  - Verify that folder clientId is correctly used in personal-scope URL (`https://hackmd.io/folders/<clientId>`).
+  - Verify that folder clientId is correctly used in team-scope URL (`https://hackmd.io/team/<teamPath>/folders/<clientId>`).
 
 - Added `markdown-it-task-lists` plugin to the `extendMarkdownIt` hook in `src/extension.ts`, enabling GitHub-style task list rendering (`- [ ]` / `- [x]`) in VS Code's markdown preview. The plugin is registered with `{ enabled: true }` so checkboxes are interactive.
 - Added pure-Node test suite for task-list rendering (`test/node/markdownTaskLists.node.test.js`):

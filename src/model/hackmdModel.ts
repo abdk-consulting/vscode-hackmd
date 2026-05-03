@@ -46,6 +46,7 @@ export interface ModelFolder {
   name: string;
   pendingOperation: boolean;
   path?: string;
+  clientId: string;
   parentId?: string | null;
   teamPath: string | null;
   children: ModelFolder[];
@@ -64,7 +65,14 @@ export interface ModelNote {
   publishType?: Note['publishType'];
   permalink?: string | null;
   userPath?: string | null;
-  folderPaths?: Array<{ id: string; path: string; name?: string }>;
+  folderPaths?: Array<{
+    id: string;
+    path: string;
+    name?: string;
+    clientId?: string;
+    parentFolderId?: string | null;
+    parentForderId?: string | null;
+  }>;
   parentFolderId?: string | null;
   parentForderId?: string | null;
   readPermission?: string;
@@ -230,8 +238,8 @@ function stringArrayEqual(a?: string[], b?: string[]): boolean {
 }
 
 function folderPathsEqual(
-  a?: Array<{ id: string; path: string; name?: string }>,
-  b?: Array<{ id: string; path: string; name?: string }>
+  a?: Array<{ id: string; path: string; name?: string; clientId?: string; parentFolderId?: string | null; parentForderId?: string | null }>,
+  b?: Array<{ id: string; path: string; name?: string; clientId?: string; parentFolderId?: string | null; parentForderId?: string | null }>
 ): boolean {
   if (a === b) {
     return true;
@@ -245,7 +253,13 @@ function folderPathsEqual(
   for (let i = 0; i < a.length; i += 1) {
     const ai = a[i];
     const bi = b[i];
-    if (ai.id !== bi.id || ai.path !== bi.path || ai.name !== bi.name) {
+    if (
+      ai.id !== bi.id
+      || ai.path !== bi.path
+      || ai.name !== bi.name
+      || ai.clientId !== bi.clientId
+      || (ai.parentFolderId || ai.parentForderId || null) !== (bi.parentFolderId || bi.parentForderId || null)
+    ) {
       return false;
     }
   }
@@ -885,7 +899,13 @@ export class HackmdModel {
     const folderMetaById = new Map<string, any>();
     for (const note of notes) {
       for (const fp of note.folderPaths || []) {
-        folderMetaById.set(fp.id, fp);
+        const prev = folderMetaById.get(fp.id) || {};
+        folderMetaById.set(fp.id, {
+          ...prev,
+          ...fp,
+          // Preserve whichever source has clientId metadata.
+          clientId: fp.clientId || prev.clientId || '',
+        });
       }
     }
 
@@ -896,6 +916,7 @@ export class HackmdModel {
         id,
         name: meta.name || 'Folder',
         path: meta.path,
+        clientId: meta.clientId,
         parentFolderId: resolveParentFolderId(meta),
       });
     }
@@ -904,7 +925,11 @@ export class HackmdModel {
       desiredFolderIds.add(apiFolder.id);
       const noteMeta = folderMetaById.get(apiFolder.id);
       const parentId = resolveParentFolderId(noteMeta) || resolveParentFolderId(apiFolder);
-      this.upsertFolder(teamPath, { ...apiFolder, parentFolderId: parentId });
+      this.upsertFolder(teamPath, {
+        ...apiFolder,
+        clientId: noteMeta?.clientId || apiFolder.clientId || '',
+        parentFolderId: parentId,
+      });
     }
 
     for (const folderId of [...folderMap.keys()]) {
@@ -995,6 +1020,7 @@ export class HackmdModel {
         name: folder.name || 'Folder',
         pendingOperation: this.isPendingByKey(this.pendingKeyForFolder(teamPath, folder.id)),
         path: folder.path,
+        clientId: folder.clientId || '',
         parentId: resolveParentFolderId(folder),
         teamPath,
         children: [],
@@ -1014,6 +1040,12 @@ export class HackmdModel {
       const nextPath = folder.path || entity.path;
       if (entity.path !== nextPath) {
         entity.path = nextPath;
+        changed = true;
+      }
+
+      const nextClientId = folder.clientId || entity.clientId || '';
+      if (entity.clientId !== nextClientId) {
+        entity.clientId = nextClientId;
         changed = true;
       }
 

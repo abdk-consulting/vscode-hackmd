@@ -417,7 +417,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           id: folder.id,
           name: folder.name,
           parentId: parentMap.get(folder.id) || undefined,
-          clientId: '',
+          clientId: folder.clientId || '',
         });
         currentId = parentMap.get(currentId) || null;
       }
@@ -616,7 +616,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       icon: undefined,
       color: undefined,
       parentId,
-      clientId: '',
+      clientId: folder.clientId || '',
       teamPath,
       children: folder.children.map((child) => this.toFolderNode(child, teamPath)),
       notes: [...folder.notes],
@@ -648,14 +648,17 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     item.id = `folder-${folderNode.id}`;
 
     const isPending = this.model?.isFolderPendingOperation(folderNode.id, folderNode.teamPath) || false;
-    item.contextValue = isPending ? 'folder-no-client-id-pending' : 'folder-no-client-id';
+    const hasClientId = !!folderNode.clientId;
+    item.contextValue = hasClientId
+      ? (isPending ? 'folder-pending' : 'folder')
+      : (isPending ? 'folder-no-client-id-pending' : 'folder-no-client-id');
     item.tooltip = folderNode.name;
 
     (item as any).source = 'model';
     (item as any).folderId = folderNode.id;
     (item as any).folderName = folderNode.name;
     (item as any).parentId = folderNode.parentId;
-    (item as any).folderClientId = '';
+    (item as any).folderClientId = folderNode.clientId || '';
     (item as any).teamPath = folderNode.teamPath;
 
     if (isPending) {

@@ -356,6 +356,36 @@ test('openOnHackMD: shows error when publish link is unavailable', async () => {
   assert.equal(stub.env.openExternalCalls.length, 0);
 });
 
+test('openOnHackMD: folder uses folderClientId in personal scope URL', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  await invoke('hackmd.ui.openOnHackMD', {
+    type: 'folder',
+    id: 'folder-raw-id',
+    teamPath: null,
+    value: { context: { folderClientId: 'cid-123' } },
+  });
+
+  assert.equal(stub.env.openExternalCalls.length, 1);
+  assert.equal(stub.env.openExternalCalls[0].toString(), 'https://hackmd.io/folders/cid-123');
+});
+
+test('openOnHackMD: folder uses folderClientId in team scope URL', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  await invoke('hackmd.ui.openOnHackMD', {
+    type: 'folder',
+    id: 'folder-raw-id',
+    teamPath: 'acme',
+    value: { context: { folderClientId: 'cid-123' } },
+  });
+
+  assert.equal(stub.env.openExternalCalls.length, 1);
+  assert.equal(stub.env.openExternalCalls[0].toString(), 'https://hackmd.io/team/acme/folders/cid-123');
+});
+
 test('import: programmatic files create notes and refresh personal tree', async () => {
   const model = new MockUiModel();
   stub.setModel(model);

@@ -23,6 +23,11 @@
   - Delete now appears on both individual notes/folders and multiselection.
   - Export now appears on both individual notes/folders and multiselection.
   - Multiselection delete and export use appropriate selection qualifiers (`hasMultiNoteSelection`).
+- Unified note and folder rename actions into a single command: `hackmd.model.rename`.
+  - Replaced `hackmd.model.renameNote` and `hackmd.model.renameFolder` command contributions in `package.json` with one shared `Rename...` entry.
+  - Updated note and folder context-menu bindings to call `hackmd.model.rename`.
+  - `src/commands/model.ts` now routes by selected node type when invoked from tree context menus, and for command-palette invocation asks whether to rename a Note or Folder before running the corresponding picker flow.
+  - Updated Node test suites to cover unified rename behavior and interactive picker path (`test/node/modelCommands.node.test.js`, `test/node/contextMenus.node.test.js`).
 - Fixed "Open on HackMD" context menu visibility for folders by enriching folder `clientId` from note folder-path metadata:
   - Model now extracts folder metadata from `note.folderPaths` during scope rebuild and merges with folders API response.
   - `ModelFolder` now carries `clientId` field, populated from ancestor metadata when folders API lacks it.

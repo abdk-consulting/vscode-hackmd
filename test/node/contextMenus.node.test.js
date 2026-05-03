@@ -39,7 +39,7 @@ test('folder context menu groups remain in requested order', () => {
     ['hackmd.model.createNote', '1_folderMain@1'],
     ['hackmd.model.createFolder', '1_folderMain@2'],
     ['hackmd.ui.openOnHackMD', '1_folderMain@3'],
-    ['hackmd.model.renameFolder', '2_folderManage@1'],
+    ['hackmd.model.rename', '2_folderManage@1'],
     ['hackmd.model.move', '2_folderManage@2'],
     ['hackmd.ui.import', '2_folderManage@3'],
     ['hackmd.ui.export', '2_folderManage@4'],

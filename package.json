@@ -187,14 +187,9 @@
         "icon": "$(new-folder)"
       },
       {
-        "command": "hackmd.model.renameNote",
+        "command": "hackmd.model.rename",
         "title": "Rename...",
-        "category": "HackMD Note"
-      },
-      {
-        "command": "hackmd.model.renameFolder",
-        "title": "Rename...",
-        "category": "HackMD Folder"
+        "category": "HackMD"
       },
       {
         "command": "hackmd.model.updateFolder",
@@ -368,7 +363,7 @@
           "group": "1_noteMain@4"
         },
         {
-          "command": "hackmd.model.renameNote",
+          "command": "hackmd.model.rename",
           "when": "viewItem == file && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.recent-notes && !hackmd.historySelection.hasMixedSelection && !hackmd.historySelection.hasMultiNoteSelection))",
           "group": "2_noteActions@2"
         },
@@ -448,7 +443,7 @@
           "group": "1_folderMain@3"
         },
         {
-          "command": "hackmd.model.renameFolder",
+          "command": "hackmd.model.rename",
           "when": "view =~ /hackmd.tree/ && (viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending)",
           "group": "2_folderManage@1"
         },

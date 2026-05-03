@@ -478,48 +478,47 @@ test('createFolder — name input cancelled returns undefined', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// renameNote
+// rename
 // ─────────────────────────────────────────────────────────────
-test('renameNote — with explicit args', async () => {
+test('rename (note) — with explicit args', async () => {
   const model = setupModel();
   new Interactions()
     .ib('Renamed')  // new title
     .install();
-  await invoke('hackmd.model.renameNote', { type: 'note', note: { id: 'pn1', teamPath: null, title: 'Old' } });
+  await invoke('hackmd.model.rename', { type: 'note', note: { id: 'pn1', teamPath: null, title: 'Old' } });
   assert.deepEqual(model.calls.renameNote[0], ['pn1', 'Renamed', null]);
 });
 
-test('renameNote — picks note, prompts new title', async () => {
+test('rename (note) — picks note, prompts new title', async () => {
   const model = setupModel();
   new Interactions()
+    .qp('Note')
     .qp('My Notes')
     .qp('My Note')
     .ib('Brand New Title')
     .install();
-  await invoke('hackmd.model.renameNote');
+  await invoke('hackmd.model.rename');
   assert.equal(model.calls.renameNote[0][1], 'Brand New Title');
 });
 
-// ─────────────────────────────────────────────────────────────
-// renameFolder
-// ─────────────────────────────────────────────────────────────
-test('renameFolder — with explicit args', async () => {
+test('rename (folder) — with explicit args', async () => {
   const model = setupModel();
   new Interactions()
     .ib('Archives')  // new name
     .install();
-  await invoke('hackmd.model.renameFolder', { type: 'folder', id: 'pf1', teamPath: null, name: 'Work' });
+  await invoke('hackmd.model.rename', { type: 'folder', id: 'pf1', teamPath: null, name: 'Work' });
   assert.deepEqual(model.calls.renameFolder[0], ['pf1', 'Archives', null]);
 });
 
-test('renameFolder — fully interactive (scope → folder → name)', async () => {
+test('rename (folder) — fully interactive (scope → folder → name)', async () => {
   const model = setupModel();
   new Interactions()
+    .qp('Folder')
     .qp('My Notes')
     .qp('Work')
     .ib('Old Work')
     .install();
-  await invoke('hackmd.model.renameFolder');
+  await invoke('hackmd.model.rename');
   assert.equal(model.calls.renameFolder[0][0], 'pf1');
   assert.equal(model.calls.renameFolder[0][1], 'Old Work');
 });
@@ -726,23 +725,26 @@ test('pickScope — custom path empty string treated as personal (null)', async 
 test('pickNote — custom note ID input used', async () => {
   const model = setupModel();
   new Interactions()
+    .qp('Note')
     .qp('My Notes')
     .qp('Custom Note ID...')
     .ib('custom-note-123')
+    .ib('Renamed Custom Note')
     .install();
-  await invoke('hackmd.model.renameNote', { type: 'note', note: { id: 'custom-note-123', teamPath: null, title: 'Old' } });
+  await invoke('hackmd.model.rename');
   assert.equal(model.calls.renameNote[0][0], 'custom-note-123');
 });
 
 test('pickFolder — custom folder ID input used', async () => {
   const model = setupModel();
   new Interactions()
+    .qp('Folder')
     .qp('My Notes')
     .qp('Custom Folder ID...')
     .ib('custom-folder-456')
     .ib('Folder Name')
     .install();
-  await invoke('hackmd.model.renameFolder');
+  await invoke('hackmd.model.rename');
   assert.equal(model.calls.renameFolder[0][0], 'custom-folder-456');
 });
 

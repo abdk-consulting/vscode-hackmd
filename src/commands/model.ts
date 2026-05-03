@@ -615,45 +615,69 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return model.createFolder({ teamPath, name, parentFolderId });
   });
 
-  register('hackmd.model.renameNote', async (node?: any) => {
+  register('hackmd.model.rename', async (node?: any) => {
     const model = getModel();
     if (!model) {
       return;
     }
 
     const noteFromNode = extractNote(node);
-    let noteId: string | undefined = noteFromNode?.id;
-    let teamPath: string | null | undefined = noteFromNode ? (noteFromNode.teamPath ?? null) : undefined;
-    let initialTitle: string = noteFromNode?.title || '';
+    if (noteFromNode?.id) {
+      const noteId: string = noteFromNode.id;
+      const teamPath: string | null = noteFromNode.teamPath ?? null;
+      const initialTitle: string = noteFromNode.title || '';
 
-    if (!noteId) {
-      const picked = await pickNote(model, teamPath);
-      if (!picked) {
+      const newTitle = await promptRequiredInput('New note title', initialTitle);
+      if (!newTitle) {
         return;
       }
-      noteId = picked.noteId;
-      teamPath = picked.teamPath ?? null;
-      initialTitle = picked.note?.title || '';
-    }
 
-    const newTitle = await promptRequiredInput('New note title', initialTitle);
-    if (!newTitle) {
-      return;
-    }
-
-    return model.renameNote(noteId, newTitle, teamPath);
-  });
-
-  register('hackmd.model.renameFolder', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
+      return model.renameNote(noteId, newTitle, teamPath);
     }
 
     const folderFromNode = extractFolder(node);
-    let folderId: string | undefined = folderFromNode?.id;
-    let teamPath: string | null | undefined = folderFromNode ? (folderFromNode.teamPath ?? null) : undefined;
-    let initialName: string = folderFromNode?.name || '';
+    if (folderFromNode?.id) {
+      const folderId: string = folderFromNode.id;
+      const teamPath: string | null = folderFromNode.teamPath ?? null;
+      const initialName: string = folderFromNode.name || '';
+
+      const newName = await promptRequiredInput('New folder name', initialName);
+      if (!newName) {
+        return;
+      }
+
+      return model.renameFolder(folderId, newName, teamPath);
+    }
+
+    const kind = await vscode.window.showQuickPick([
+      { label: 'Note', targetType: 'note' as const },
+      { label: 'Folder', targetType: 'folder' as const },
+    ], {
+      placeHolder: 'Rename note or folder?',
+      ignoreFocusOut: true,
+    });
+
+    if (!kind) {
+      return;
+    }
+
+    if (kind.targetType === 'note') {
+      const picked = await pickNote(model, undefined);
+      if (!picked) {
+        return;
+      }
+
+      const newTitle = await promptRequiredInput('New note title', picked.note?.title || '');
+      if (!newTitle) {
+        return;
+      }
+
+      return model.renameNote(picked.noteId, newTitle, picked.teamPath ?? null);
+    }
+
+    let folderId: string | undefined;
+    let teamPath: string | null | undefined;
+    let initialName = '';
 
     if (!folderId) {
       if (teamPath === undefined) {

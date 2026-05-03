@@ -10,11 +10,11 @@ import {
 } from '../model';
 import {
   collectFolders,
+  collectNotes,
   pickEntity,
   pickFolder,
   pickNote,
   pickScope,
-  promptOptionalInput,
   promptRequiredInput
 } from './pickers';
 
@@ -277,6 +277,152 @@ function parseTargetFolder(targetFolder: any, defaultScope: ModelScope): MoveTar
   return { teamPath, folderId };
 }
 
+type RenameQuickPickItem = vscode.QuickPickItem & {
+  targetType: 'note' | 'folder';
+  noteId?: string;
+  folderId?: string;
+  teamPath?: ModelScope;
+  currentName?: string;
+};
+
+type CreateLocationQuickPickItem = vscode.QuickPickItem & {
+  teamPath: ModelScope;
+  parentFolderId: string | null;
+};
+
+export async function pickCreateLocation(
+  model: ReturnType<typeof getHackmdModel>,
+  placeHolder: string
+): Promise<{ teamPath: ModelScope; parentFolderId: string | null } | undefined> {
+  const items: CreateLocationQuickPickItem[] = [];
+
+  // Personal root is always available.
+  items.push({
+    label: '$(home) My Notes',
+    description: 'Root',
+    teamPath: null,
+    parentFolderId: null,
+  });
+
+  const personalSnapshot = model.getScopeSnapshotSync(null);
+  if (personalSnapshot) {
+    for (const folder of collectFolders(personalSnapshot.rootFolders)) {
+      items.push({
+        label: `$(folder) ${folder.name}`,
+        description: `My Notes${folder.path ? ` • ${folder.path}` : ''}`,
+        detail: folder.id,
+        teamPath: null,
+        parentFolderId: folder.id,
+      });
+    }
+  }
+
+  for (const team of model.getTeams()) {
+    items.push({
+      label: `$(organization) ${team.name || team.path}`,
+      description: 'Root',
+      detail: team.path,
+      teamPath: team.path,
+      parentFolderId: null,
+    });
+
+    const snapshot = model.getScopeSnapshotSync(team.path);
+    if (!snapshot) {
+      continue;
+    }
+
+    for (const folder of collectFolders(snapshot.rootFolders)) {
+      items.push({
+        label: `$(folder) ${folder.name}`,
+        description: `${team.name || team.path}${folder.path ? ` • ${folder.path}` : ''}`,
+        detail: folder.id,
+        teamPath: team.path,
+        parentFolderId: folder.id,
+      });
+    }
+  }
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder,
+    ignoreFocusOut: true,
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+
+  if (!selected) {
+    return undefined;
+  }
+
+  return {
+    teamPath: selected.teamPath,
+    parentFolderId: selected.parentFolderId,
+  };
+}
+
+async function pickRenameTarget(
+  model: ReturnType<typeof getHackmdModel>
+): Promise<RenameQuickPickItem | undefined> {
+  const scopes = [
+    { teamPath: null as ModelScope, scopeLabel: 'My Notes' },
+    ...model.getTeams().map((team) => ({ teamPath: team.path as ModelScope, scopeLabel: team.name || team.path })),
+  ];
+
+  const items: RenameQuickPickItem[] = [];
+
+  for (const scope of scopes) {
+    const snapshot = model.getScopeSnapshotSync(scope.teamPath);
+    if (!snapshot) {
+      continue;
+    }
+
+    const folders = collectFolders(snapshot.rootFolders);
+    for (const folder of folders) {
+      items.push({
+        label: `$(folder) ${folder.name}`,
+        description: `${scope.scopeLabel}${folder.path ? ` • ${folder.path}` : ''}`,
+        detail: folder.id,
+        targetType: 'folder',
+        folderId: folder.id,
+        teamPath: scope.teamPath,
+        currentName: folder.name,
+      });
+    }
+
+    const notes = collectNotes(snapshot.rootFolders, snapshot.rootNotes);
+    for (const note of notes) {
+      const title = note.title || note.shortId || note.id;
+      items.push({
+        label: `$(note) ${title}`,
+        description: `${scope.scopeLabel} • ${note.id}`,
+        detail: note.title ? undefined : note.id,
+        targetType: 'note',
+        noteId: note.id,
+        teamPath: scope.teamPath,
+        currentName: note.title || '',
+      });
+    }
+  }
+
+  items.sort((a, b) => {
+    const descriptionA = a.description || '';
+    const descriptionB = b.description || '';
+    const byScope = descriptionA.localeCompare(descriptionB);
+    if (byScope !== 0) {
+      return byScope;
+    }
+    return a.label.localeCompare(b.label);
+  });
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Choose a note or folder to rename',
+    ignoreFocusOut: true,
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+
+  return selected;
+}
+
 async function resolveMoveCandidates(
   model: ReturnType<typeof getHackmdModel>,
   activeItem?: any,
@@ -432,30 +578,22 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     let teamPath = scope.teamPath;
     let parentFolderId = scope.parentFolderId;
 
-    if (teamPath === undefined) {
-      const selectedScope = await pickScope(model, 'Choose scope for new note');
-      if (selectedScope === undefined) {
+    if (teamPath === undefined && parentFolderId === undefined) {
+      const location = await pickCreateLocation(model, 'Choose where to create the new note');
+      if (!location) {
         return;
       }
-      teamPath = selectedScope;
+      teamPath = location.teamPath;
+      parentFolderId = location.parentFolderId;
+    } else {
+      // Node provided: default parentFolderId to root if not set (e.g. team node)
+      parentFolderId = parentFolderId ?? null;
     }
 
-    if (parentFolderId === undefined) {
-      const destination = await pickFolder(model, teamPath ?? null, 'Choose parent folder (Root = top level)', true);
-      if (!destination) {
-        return;
-      }
-      parentFolderId = destination.folderId;
-    }
-
-    const title = await promptRequiredInput('Note title');
-    if (!title) {
-      return;
-    }
-
-    const content = await promptOptionalInput('Initial note content (optional)');
-
-    return model.createNote({ teamPath, title, content, parentFolderId });
+    const created = await model.createNote({ teamPath, parentFolderId });
+    await vscode.commands.executeCommand('hackmd.ui.revealNote', { type: 'note', note: created });
+    await vscode.commands.executeCommand('hackmd.ui.edit', { type: 'note', note: created });
+    return created;
   });
 
   register('hackmd.model.createFolder', async (node?: any) => {
@@ -468,20 +606,16 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     let teamPath = scope.teamPath;
     let parentFolderId = scope.parentFolderId;
 
-    if (teamPath === undefined) {
-      const selectedScope = await pickScope(model, 'Choose scope for new folder');
-      if (selectedScope === undefined) {
+    if (teamPath === undefined && parentFolderId === undefined) {
+      const location = await pickCreateLocation(model, 'Choose where to create the new folder');
+      if (!location) {
         return;
       }
-      teamPath = selectedScope;
-    }
-
-    if (parentFolderId === undefined) {
-      const destination = await pickFolder(model, teamPath ?? null, 'Choose parent folder (Root = top level)', true);
-      if (!destination) {
-        return;
-      }
-      parentFolderId = destination.folderId;
+      teamPath = location.teamPath;
+      parentFolderId = location.parentFolderId;
+    } else {
+      // Node provided: default parentFolderId to root if not set (e.g. team node)
+      parentFolderId = parentFolderId ?? null;
     }
 
     const name = await promptRequiredInput('Folder name');
@@ -499,61 +633,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const scope = extractScopeContext(node);
-    let parentFolderId = scope.parentFolderId;
-
-    if (parentFolderId === undefined) {
-      const destination = await pickFolder(model, null, 'Choose parent folder (Root = top level)', true);
-      if (!destination) {
-        return;
-      }
-      parentFolderId = destination.folderId;
-    }
-
-    const title = await promptRequiredInput('Note title');
-    if (!title) {
-      return;
-    }
-
-    const content = await promptOptionalInput('Initial note content (optional)');
-
-    return model.createNote({ teamPath: null, title, content, parentFolderId });
-  });
-
-  register('hackmd.model.createTeamNote', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    const scope = extractScopeContext(node);
-    let teamPath = scope.teamPath;
-    let parentFolderId = scope.parentFolderId;
-
-    if (!teamPath) {
-      const selectedScope = await pickScope(model, 'Choose team for new note');
-      if (selectedScope === undefined || selectedScope === null) {
-        return;
-      }
-      teamPath = selectedScope;
-    }
-
-    if (parentFolderId === undefined) {
-      const destination = await pickFolder(model, teamPath, 'Choose parent folder (Root = top level)', true);
-      if (!destination) {
-        return;
-      }
-      parentFolderId = destination.folderId;
-    }
-
-    const title = await promptRequiredInput('Note title');
-    if (!title) {
-      return;
-    }
-
-    const content = await promptOptionalInput('Initial note content (optional)');
-
-    return model.createNote({ teamPath, title, content, parentFolderId });
+    const created = await model.createNote({ teamPath: null, parentFolderId: null });
+    await vscode.commands.executeCommand('hackmd.ui.revealNote', { type: 'note', note: created });
+    await vscode.commands.executeCommand('hackmd.ui.edit', { type: 'note', note: created });
+    return created;
   });
 
   register('hackmd.model.createMyFolder', async (node?: any) => {
@@ -563,15 +646,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     const scope = extractScopeContext(node);
-    let parentFolderId = scope.parentFolderId;
-
-    if (parentFolderId === undefined) {
-      const destination = await pickFolder(model, null, 'Choose parent folder (Root = top level)', true);
-      if (!destination) {
-        return;
-      }
-      parentFolderId = destination.folderId;
-    }
+    const parentFolderId = scope.parentFolderId ?? null;
 
     const name = await promptRequiredInput('Folder name');
     if (!name) {
@@ -579,40 +654,6 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     return model.createFolder({ teamPath: null, name, parentFolderId });
-  });
-
-  register('hackmd.model.createTeamFolder', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    const scope = extractScopeContext(node);
-    let teamPath = scope.teamPath;
-    let parentFolderId = scope.parentFolderId;
-
-    if (!teamPath) {
-      const selectedScope = await pickScope(model, 'Choose team for new folder');
-      if (selectedScope === undefined || selectedScope === null) {
-        return;
-      }
-      teamPath = selectedScope;
-    }
-
-    if (parentFolderId === undefined) {
-      const destination = await pickFolder(model, teamPath, 'Choose parent folder (Root = top level)', true);
-      if (!destination) {
-        return;
-      }
-      parentFolderId = destination.folderId;
-    }
-
-    const name = await promptRequiredInput('Folder name');
-    if (!name) {
-      return;
-    }
-
-    return model.createFolder({ teamPath, name, parentFolderId });
   });
 
   register('hackmd.model.rename', async (node?: any) => {
@@ -649,57 +690,30 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return model.renameFolder(folderId, newName, teamPath);
     }
 
-    const kind = await vscode.window.showQuickPick([
-      { label: 'Note', targetType: 'note' as const },
-      { label: 'Folder', targetType: 'folder' as const },
-    ], {
-      placeHolder: 'Rename note or folder?',
-      ignoreFocusOut: true,
-    });
-
-    if (!kind) {
+    const selected = await pickRenameTarget(model);
+    if (!selected) {
       return;
     }
 
-    if (kind.targetType === 'note') {
-      const picked = await pickNote(model, undefined);
-      if (!picked) {
-        return;
-      }
-
-      const newTitle = await promptRequiredInput('New note title', picked.note?.title || '');
+    if (selected.targetType === 'note') {
+      const newTitle = await promptRequiredInput('New note title', selected.currentName || '');
       if (!newTitle) {
         return;
       }
 
-      return model.renameNote(picked.noteId, newTitle, picked.teamPath ?? null);
+      return model.renameNote(selected.noteId!, newTitle, selected.teamPath ?? null);
     }
 
-    let folderId: string | undefined;
-    let teamPath: string | null | undefined;
-    let initialName = '';
-
-    if (!folderId) {
-      if (teamPath === undefined) {
-        const selectedScope = await pickScope(model, 'Choose scope for folder');
-        if (selectedScope === undefined) {
-          return;
-        }
-        teamPath = selectedScope;
-      }
-      const selectedFolder = await pickFolder(model, teamPath ?? null, 'Choose folder to rename');
-      if (!selectedFolder || !selectedFolder.folderId) {
+    if (selected.targetType === 'folder') {
+      const newName = await promptRequiredInput('New folder name', selected.currentName || '');
+      if (!newName) {
         return;
       }
-      folderId = selectedFolder.folderId;
+
+      return model.renameFolder(selected.folderId!, newName, selected.teamPath ?? null);
     }
 
-    const newName = await promptRequiredInput('New folder name', initialName);
-    if (!newName) {
-      return;
-    }
-
-    return model.renameFolder(folderId, newName, teamPath);
+    return undefined;
   });
 
   register('hackmd.model.updateFolder', async (args?: { folderId?: string; teamPath?: string | null; update?: UpdateFolderInput }) => {

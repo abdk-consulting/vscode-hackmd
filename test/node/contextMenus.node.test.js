@@ -12,6 +12,10 @@ function getContextMenuEntries(pkg) {
   return pkg.contributes?.menus?.['view/item/context'] || [];
 }
 
+function getViewTitleEntries(pkg) {
+  return pkg.contributes?.menus?.['view/title'] || [];
+}
+
 function findContextEntry(entries, command, group) {
   return entries.find((entry) => entry.command === command && entry.group === group);
 }
@@ -69,4 +73,15 @@ test('team export is only available for loaded team nodes', () => {
   assert.match(teamExportEntry.when || '', /view\s*==\s*hackmd\.tree\.team-notes/);
   assert.match(teamExportEntry.when || '', /viewItem\s*==\s*team-loaded/);
   assert.doesNotMatch(teamExportEntry.when || '', /viewItem\s*==\s*team\s*\|\|/);
+});
+
+test('My Notes title Import button uses scoped importMyNotes command', () => {
+  const pkg = readPackageJson();
+  const entries = getViewTitleEntries(pkg);
+  const myNotesImport = entries.find(
+    (entry) => entry.command === 'hackmd.ui.importMyNotes' && entry.group === 'navigation@3'
+  );
+
+  assert.ok(myNotesImport, 'Expected hackmd.ui.importMyNotes in view/title navigation@3');
+  assert.match(myNotesImport.when || '', /view\s*=~\s*\/hackmd\.tree\.my-notes\//);
 });

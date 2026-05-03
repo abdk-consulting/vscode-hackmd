@@ -27,6 +27,7 @@ let teamNotesTreeView: vscode.TreeView<any> | undefined;
 let myNotesTreeView: vscode.TreeView<any> | undefined;
 let historyTreeView: vscode.TreeView<any> | undefined;
 let propertiesProvider: NotePropertiesProvider | undefined;
+let myNotesProgressResolve: (() => void) | null = null;
 
 export function getTeamNotesProvider(): TeamNotesProvider | undefined {
   return teamNotesProvider;
@@ -486,6 +487,23 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: myNotesProvider,
     dragAndDropController,
   });
+
+  void vscode.commands.executeCommand('setContext', 'hackmd.myNotesPendingOperation', myNotesProvider.isPendingOperation());
+  context.subscriptions.push(
+    myNotesProvider.onDidChangePendingState((pending) => {
+      void vscode.commands.executeCommand('setContext', 'hackmd.myNotesPendingOperation', pending);
+      if (myNotesProgressResolve !== null) {
+        myNotesProgressResolve();
+        myNotesProgressResolve = null;
+      }
+      if (pending)
+        vscode.window.withProgress(
+          { location: { viewId: 'hackmd.tree.my-notes' } },
+          () => new Promise<void>(resolve => {
+            myNotesProgressResolve = resolve;
+          }));
+    })
+  );
   context.subscriptions.push(myNotesTreeView);
   bindTreeSelectionContexts(myNotesTreeView, 'hackmd.myNotesSelection', context);
 

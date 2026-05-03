@@ -69,11 +69,17 @@ function createMockModel(overrides = {}) {
     getNoteById: (noteId, scope) => state.notesByScopeAndId.get(key(scope ?? null, noteId)),
     getFolderById: (folderId, scope) => state.foldersByScopeAndId.get(key(scope ?? null, folderId)),
     getHistoryNotes: () => state.historyNotes,
+    isMyNotesPendingOperation: () => !!state.myNotesPendingOperation,
     isFolderPendingOperation: () => false,
 
     __emitState: (payload) => stateBus.emit(payload),
     __emitEntity: (payload) => entityBus.emit(payload),
-    __emitPending: (payload) => pendingBus.emit(payload),
+    __emitPending: (payload) => {
+      if (payload?.targetType === 'container' && payload?.container === 'my-notes') {
+        state.myNotesPendingOperation = !!payload.pending;
+      }
+      pendingBus.emit(payload);
+    },
     __state: state,
   };
 
@@ -221,6 +227,52 @@ test('MyNotesProvider note tree items pass the clicked note object to hackmd.ui.
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
   assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
+});
+
+test('MyNotesProvider emits pending-state changes without marking tree dirty', async () => {
+  const model = createMockModel();
+  const snapshot = {
+    scope: null,
+    rootFolders: [],
+    rootNotes: [
+      { id: 'n1', title: 'Note One', teamPath: null, pendingOperation: false },
+    ],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+
+  await provider.getChildren();
+
+  const treeEvents = [];
+  const pendingEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+  provider.onDidChangePendingState((pending) => pendingEvents.push(pending));
+
+  model.__emitPending({
+    targetType: 'container',
+    container: 'my-notes',
+    pending: true,
+    scope: null,
+    id: null,
+  });
+
+  assert.deepEqual(pendingEvents, [true]);
+  assert.equal(treeEvents.length, 0);
+
+  model.__emitPending({
+    targetType: 'container',
+    container: 'my-notes',
+    pending: false,
+    scope: null,
+    id: null,
+  });
+
+  assert.deepEqual(pendingEvents, [true, false]);
+  assert.equal(treeEvents.length, 0);
 });
 
 test('TeamNotesProvider sorts teams and children deterministically with folders before notes', async () => {

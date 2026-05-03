@@ -108,6 +108,29 @@ const vscodeStub = {
 // Module._load interception
 // ---------------------------------------------------------------------------
 const MODEL_INDEX_PATH = path.resolve(__dirname, '../../out/model/index.js');
+const EXTENSION_PATH = path.resolve(__dirname, '../../out/extension.js');
+
+const extensionState = {
+  myNotesProvider: undefined,
+  myNotesTreeView: undefined,
+  teamNotesProvider: undefined,
+  teamNotesTreeView: undefined,
+};
+
+const extensionModule = {
+  getMyNotesProvider() {
+    return extensionState.myNotesProvider;
+  },
+  getMyNotesTreeView() {
+    return extensionState.myNotesTreeView;
+  },
+  getTeamNotesProvider() {
+    return extensionState.teamNotesProvider;
+  },
+  getTeamNotesTreeView() {
+    return extensionState.teamNotesTreeView;
+  },
+};
 
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === 'vscode') {
@@ -117,6 +140,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
     const resolved = Module._resolveFilename(request, parent, isMain);
     if (resolved === MODEL_INDEX_PATH) {
       return modelModule;
+    }
+    if (resolved === EXTENSION_PATH) {
+      return extensionModule;
     }
   } catch (_) {
     // unresolvable — fall through to original
@@ -138,4 +164,13 @@ module.exports = {
   setModel(mock) { _currentModel = mock; },
   /** Cause getHackmdModel() to throw (simulates uninitialized state) */
   clearModel() { _currentModel = null; },
+  setExtensionState(state) {
+    Object.assign(extensionState, state || {});
+  },
+  resetExtensionState() {
+    extensionState.myNotesProvider = undefined;
+    extensionState.myNotesTreeView = undefined;
+    extensionState.teamNotesProvider = undefined;
+    extensionState.teamNotesTreeView = undefined;
+  },
 };

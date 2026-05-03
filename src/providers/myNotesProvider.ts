@@ -69,8 +69,11 @@ function sortedNotes(notes: readonly ModelNote[]): ModelNote[] {
 export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly _onDidChangePendingState = new vscode.EventEmitter<boolean>();
+  readonly onDidChangePendingState = this._onDidChangePendingState.event;
 
   private readonly pendingContainers = new Set<string>();
+  private myNotesPendingOperation = false;
 
   private readonly model: ReturnType<typeof getHackmdModel> | null;
   private loaded = false;
@@ -87,6 +90,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
+      this.myNotesPendingOperation = !!this.model.isMyNotesPendingOperation();
       this.model.onDidChangeState((event) => {
         if (event.scope === null || event.reason === 'refreshAll') {
           this.loaded = false;
@@ -103,9 +107,15 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       });
       this.model.onDidChangePending((event) => {
+        if (event.targetType === 'container' && event.container === 'my-notes') {
+          if (this.myNotesPendingOperation !== event.pending) {
+            this.myNotesPendingOperation = event.pending;
+            this._onDidChangePendingState.fire(event.pending);
+          }
+          return;
+        }
         if (
-          (event.targetType === 'container' && event.container === 'my-notes')
-          || (event.targetType === 'folder' && event.scope === null)
+          (event.targetType === 'folder' && event.scope === null)
           || (event.targetType === 'note' && event.scope === null)
         ) {
           this._onDidChangeTreeData.fire(undefined);
@@ -114,6 +124,10 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     } catch {
       this.model = null;
     }
+  }
+
+  isPendingOperation(): boolean {
+    return this.myNotesPendingOperation;
   }
 
   private async ensureLoaded(force = false): Promise<void> {

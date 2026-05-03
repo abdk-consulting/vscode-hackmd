@@ -28,6 +28,18 @@
   - Updated note and folder context-menu bindings to call `hackmd.model.rename`.
   - `src/commands/model.ts` now routes by selected node type when invoked from tree context menus, and for command-palette invocation asks whether to rename a Note or Folder before running the corresponding picker flow.
   - Updated Node test suites to cover unified rename behavior and interactive picker path (`test/node/modelCommands.node.test.js`, `test/node/contextMenus.node.test.js`).
+- Improved My Notes title actions to behave as direct root actions:
+  - `hackmd.model.createMyNote` now creates an untitled note at My Notes root (no title/location prompts) and immediately opens it by delegating to `hackmd.ui.edit`.
+  - `hackmd.model.createMyFolder` now creates folders at My Notes root by default and no longer asks for location from the title action.
+  - My Notes title-bar `Import...` now invokes `hackmd.ui.importMyNotes` (instead of generic `hackmd.ui.import`).
+  - `hackmd.ui.importMyNotes` now imports directly into My Notes root without a location picker.
+- New-note flows now reveal and select the created note before opening it:
+  - `hackmd.model.createNote` and `hackmd.model.createMyNote` now delegate to `hackmd.ui.revealNote` first, then call `hackmd.ui.edit`.
+  - Team-scope reveals refresh unloaded team scopes before attempting tree reveal/selection.
+- Separated My Notes pending-state updates from tree-dirty updates:
+  - `MyNotesProvider` now exposes a dedicated pending event (`onDidChangePendingState`) for container pending changes.
+  - Container pending changes no longer trigger `onDidChangeTreeData`; tree updates are reserved for actual data changes.
+  - Extension activation now listens to pending-state events to drive title-level progress indication for My Notes.
 - Fixed "Open on HackMD" context menu visibility for folders by enriching folder `clientId` from note folder-path metadata:
   - Model now extracts folder metadata from `note.folderPaths` during scope rebuild and merges with folders API response.
   - `ModelFolder` now carries `clientId` field, populated from ancestor metadata when folders API lacks it.
@@ -39,6 +51,11 @@
 - Added two regression tests for folder "Open on HackMD" URL generation in `test/node/uiCommands.node.test.js`:
   - Verify that folder clientId is correctly used in personal-scope URL (`https://hackmd.io/folders/<clientId>`).
   - Verify that folder clientId is correctly used in team-scope URL (`https://hackmd.io/team/<teamPath>/folders/<clientId>`).
+- Added tree navigation UI commands for command palette and reuse by model flows:
+  - `hackmd.ui.revealNote`
+  - `hackmd.ui.revealFolder`
+  - `hackmd.ui.revealTeam`
+  - All three reveal commands now explicitly reveal and select the target tree item when successful.
 
 - Added `markdown-it-task-lists` plugin to the `extendMarkdownIt` hook in `src/extension.ts`, enabling GitHub-style task list rendering (`- [ ]` / `- [x]`) in VS Code's markdown preview. The plugin is registered with `{ enabled: true }` so checkboxes are interactive.
 - Added pure-Node test suite for task-list rendering (`test/node/markdownTaskLists.node.test.js`):

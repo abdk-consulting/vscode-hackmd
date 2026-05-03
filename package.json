@@ -142,21 +142,6 @@
         }
       },
       {
-        "command": "hackmd.model.createNote",
-        "title": "New Note",
-        "category": "HackMD",
-        "icon": {
-          "light": "images/icon/light/new-note.svg",
-          "dark": "images/icon/dark/new-note.svg"
-        }
-      },
-      {
-        "command": "hackmd.model.createFolder",
-        "title": "New Folder...",
-        "category": "HackMD",
-        "icon": "$(new-folder)"
-      },
-      {
         "command": "hackmd.model.createMyNote",
         "title": "New Note",
         "category": "HackMD My Notes",
@@ -166,9 +151,9 @@
         }
       },
       {
-        "command": "hackmd.model.createTeamNote",
+        "command": "hackmd.model.createNote",
         "title": "New Note",
-        "category": "HackMD Team",
+        "category": "HackMD",
         "icon": {
           "light": "images/icon/light/new-note.svg",
           "dark": "images/icon/dark/new-note.svg"
@@ -181,9 +166,9 @@
         "icon": "$(new-folder)"
       },
       {
-        "command": "hackmd.model.createTeamFolder",
+        "command": "hackmd.model.createFolder",
         "title": "New Folder...",
-        "category": "HackMD Team",
+        "category": "HackMD",
         "icon": "$(new-folder)"
       },
       {
@@ -239,6 +224,21 @@
         }
       },
       {
+        "command": "hackmd.ui.revealNote",
+        "title": "Reveal Note",
+        "category": "HackMD"
+      },
+      {
+        "command": "hackmd.ui.revealFolder",
+        "title": "Reveal Folder",
+        "category": "HackMD"
+      },
+      {
+        "command": "hackmd.ui.revealTeam",
+        "title": "Reveal Team",
+        "category": "HackMD"
+      },
+      {
         "command": "hackmd.ui.openOnHackMD",
         "title": "Open on HackMD",
         "category": "HackMD",
@@ -257,18 +257,9 @@
         }
       },
       {
-        "command": "hackmd.ui.importToMyNotes",
+        "command": "hackmd.ui.importMyNotes",
         "title": "Import...",
         "category": "HackMD My Notes",
-        "icon": {
-          "light": "images/icon/light/cloud-upload.svg",
-          "dark": "images/icon/dark/cloud-upload.svg"
-        }
-      },
-      {
-        "command": "hackmd.ui.importToTeam",
-        "title": "Import...",
-        "category": "HackMD Team",
         "icon": {
           "light": "images/icon/light/cloud-upload.svg",
           "dark": "images/icon/dark/cloud-upload.svg"
@@ -294,6 +285,20 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "hackmd.model.createMyNote",
+          "when": "false"
+        },
+        {
+          "command": "hackmd.model.createMyFolder",
+          "when": "false"
+        },
+        {
+          "command": "hackmd.ui.importMyNotes",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "hackmd.model.refreshPersonalScope",
@@ -321,7 +326,7 @@
           "group": "navigation@2"
         },
         {
-          "command": "hackmd.ui.import",
+          "command": "hackmd.ui.importMyNotes",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@3"
         }

@@ -225,7 +225,12 @@ class MockHackmdModel {
   }
   async createNote(input) {
     this._record('createNote', [input]);
-    return { id: 'new1', title: input.title };
+    return {
+      id: 'new1',
+      title: input.title,
+      teamPath: input.teamPath ?? null,
+      parentFolderId: input.parentFolderId ?? null,
+    };
   }
   async createFolder(input) {
     this._record('createFolder', [input]);
@@ -279,6 +284,7 @@ class MockHackmdModel {
 function setupModel() {
   const model = new MockHackmdModel();
   stub.setModel(model);
+  stub.resetExtensionState();
   return model;
 }
 
@@ -372,73 +378,165 @@ test('refreshScope — picker cancelled returns undefined', async () => {
 // ─────────────────────────────────────────────────────────────
 test('createNote — with all args provided', async () => {
   const model = setupModel();
-  new Interactions()
-    .ib('Hello')    // title
-    .ib('# hi')     // content
-    .install();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
   const result = await invoke('hackmd.model.createNote', { type: 'folder', id: null, teamPath: null });
   assert.ok(result);
-  assert.equal(model.calls.createNote[0][0].title, 'Hello');
-  assert.equal(model.calls.createNote[0][0].content, '# hi');
+  assert.equal('title' in model.calls.createNote[0][0], false);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createNote — fully interactive (scope → folder → title → content)', async () => {
+test('createNote — fully interactive (single location picker → creates untitled note)', async () => {
   const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
   new Interactions()
-    .qp('My Notes')    // scope picker
-    .qp('Root')        // folder picker (includeRoot = true)
-    .ib('New Note')    // title input
-    .ib('# content')   // content input
+    .qp((it) => String(it.label || '').includes('My Notes'))
     .install();
   const result = await invoke('hackmd.model.createNote');
   assert.ok(result);
   const args = model.calls.createNote[0][0];
-  assert.equal(args.title, 'New Note');
-  assert.equal(args.content, '# content');
+  assert.equal('title' in args, false);
+  assert.equal('content' in args, false);
   assert.equal(args.teamPath, null);
   assert.equal(args.parentFolderId, null);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createNote — scope picker cancelled returns undefined', async () => {
+test('createNote — location picker cancelled returns undefined', async () => {
   setupModel();
   new Interactions().qp(null).install();
   const result = await invoke('hackmd.model.createNote');
   assert.equal(result, undefined);
 });
 
-test('createNote — folder picker cancelled returns undefined', async () => {
-  setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp(null)
-    .install();
-  const result = await invoke('hackmd.model.createNote');
-  assert.equal(result, undefined);
-});
-
 test('createNote — title input cancelled returns undefined', async () => {
+  // No longer asks for title — this test is superseded; location picker cancel still works
   setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('Root')
-    .ib(null)
-    .install();
+  new Interactions().qp(null).install();
   const result = await invoke('hackmd.model.createNote');
   assert.equal(result, undefined);
 });
 
-test('createNote — custom scope input ("Custom Team Path...")', async () => {
+test('createNote — can target a team root from unified location picker', async () => {
   const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
   new Interactions()
-    .qp('Custom Team Path...')  // scope picker → custom
-    .ib('acme')                 // custom team path input
-    .qp('Root')                 // folder picker
-    .ib('Team Note Title')      // title
-    .ib('')                     // content (empty = no content)
+    .qp((it) => String(it.label || '').includes('Acme Corp'))
     .install();
   const result = await invoke('hackmd.model.createNote');
   assert.ok(result);
   assert.equal(model.calls.createNote[0][0].teamPath, 'acme');
+  assert.equal(model.calls.createNote[0][0].parentFolderId, null);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createMyNote — creates untitled root note without prompts', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  stub.window.showQuickPick = async () => {
+    throw new Error('showQuickPick should not be called for createMyNote root action');
+  };
+  stub.window.showInputBox = async () => {
+    throw new Error('showInputBox should not be called for createMyNote root action');
+  };
+
+  const result = await invoke('hackmd.model.createMyNote');
+  assert.ok(result);
+
+  const args = model.calls.createNote[0][0];
+  assert.equal(args.teamPath, null);
+  assert.equal(args.parentFolderId, null);
+  assert.equal('title' in args, false);
+  assert.equal('content' in args, false);
+  assert.equal(executeCalls.length, 2);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[0][1]?.type, 'note');
+  assert.equal(executeCalls[0][1]?.note?.id, 'new1');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+  assert.equal(executeCalls[1][1]?.type, 'note');
+  assert.equal(executeCalls[1][1]?.note?.id, 'new1');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createMyNote — ignores folder node and creates untitled note at root', async () => {
+  const model = setupModel();
+
+  stub.window.showQuickPick = async () => {
+    throw new Error('showQuickPick should not be called for createMyNote folder action');
+  };
+  stub.window.showInputBox = async () => {
+    throw new Error('showInputBox should not be called for createMyNote folder action');
+  };
+
+  const result = await invoke('hackmd.model.createMyNote', { type: 'folder', id: 'pf1', teamPath: null });
+  assert.ok(result);
+
+  const args = model.calls.createNote[0][0];
+  assert.equal(args.teamPath, null);
+  assert.equal(args.parentFolderId, null);
+  assert.equal('title' in args, false);
+  assert.equal('content' in args, false);
+});
+
+test('createMyNote — delegates reveal command before opening editor', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  const result = await invoke('hackmd.model.createMyNote');
+  assert.ok(result);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createNote — delegates reveal command before opening editor', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  new Interactions()
+    .qp((it) => String(it.label || '').includes('Acme Corp'))
+    .install();
+
+  const result = await invoke('hackmd.model.createNote');
+  assert.ok(result);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -453,28 +551,83 @@ test('createFolder — with all args provided', async () => {
   assert.equal(model.calls.createFolder[0][0].name, 'Archive');
 });
 
-test('createFolder — fully interactive (scope → folder → name)', async () => {
+test('createFolder — fully interactive (single location picker → name)', async () => {
   const model = setupModel();
   new Interactions()
-    .qp('My Notes')
-    .qp('Root')
+    .qp((it) => String(it.label || '').includes('My Notes'))
     .ib('My Folder')
     .install();
   const result = await invoke('hackmd.model.createFolder');
   assert.ok(result);
   assert.equal(model.calls.createFolder[0][0].name, 'My Folder');
   assert.equal(model.calls.createFolder[0][0].teamPath, null);
+  assert.equal(model.calls.createFolder[0][0].parentFolderId, null);
 });
 
 test('createFolder — name input cancelled returns undefined', async () => {
   setupModel();
   new Interactions()
-    .qp('My Notes')
-    .qp('Root')
+    .qp((it) => String(it.label || '').includes('My Notes'))
     .ib(null)
     .install();
   const result = await invoke('hackmd.model.createFolder');
   assert.equal(result, undefined);
+});
+
+test('createFolder — can target a team root from unified location picker', async () => {
+  const model = setupModel();
+  new Interactions()
+    .qp((it) => String(it.label || '').includes('Acme Corp'))
+    .ib('Team Folder')
+    .install();
+
+  const result = await invoke('hackmd.model.createFolder');
+  assert.ok(result);
+
+  const args = model.calls.createFolder[0][0];
+  assert.equal(args.teamPath, 'acme');
+  assert.equal(args.parentFolderId, null);
+  assert.equal(args.name, 'Team Folder');
+});
+
+test('createMyFolder — creates folder at root without location picker', async () => {
+  const model = setupModel();
+
+  stub.window.showQuickPick = async () => {
+    throw new Error('showQuickPick should not be called for createMyFolder title action');
+  };
+
+  new Interactions()
+    .ib('Root Folder')
+    .install();
+
+  const result = await invoke('hackmd.model.createMyFolder');
+  assert.ok(result);
+  assert.deepEqual(model.calls.createFolder[0][0], {
+    teamPath: null,
+    name: 'Root Folder',
+    parentFolderId: null,
+  });
+});
+
+test('createMyFolder — folder node creates inside that folder without location picker', async () => {
+  const model = setupModel();
+
+  stub.window.showQuickPick = async () => {
+    throw new Error('showQuickPick should not be called for createMyFolder folder action');
+  };
+
+  new Interactions()
+    .ib('Child Folder')
+    .install();
+
+  const result = await invoke('hackmd.model.createMyFolder', { type: 'folder', id: 'pf1', teamPath: null });
+  assert.ok(result);
+  assert.deepEqual(model.calls.createFolder[0][0], {
+    teamPath: null,
+    name: 'Child Folder',
+    parentFolderId: 'pf1',
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -492,9 +645,7 @@ test('rename (note) — with explicit args', async () => {
 test('rename (note) — picks note, prompts new title', async () => {
   const model = setupModel();
   new Interactions()
-    .qp('Note')
-    .qp('My Notes')
-    .qp('My Note')
+    .qp((it) => String(it.label || '').includes('My Note'))
     .ib('Brand New Title')
     .install();
   await invoke('hackmd.model.rename');
@@ -510,12 +661,10 @@ test('rename (folder) — with explicit args', async () => {
   assert.deepEqual(model.calls.renameFolder[0], ['pf1', 'Archives', null]);
 });
 
-test('rename (folder) — fully interactive (scope → folder → name)', async () => {
+test('rename (folder) — fully interactive (single picker → name)', async () => {
   const model = setupModel();
   new Interactions()
-    .qp('Folder')
-    .qp('My Notes')
-    .qp('Work')
+    .qp((it) => String(it.label || '').includes('Work'))
     .ib('Old Work')
     .install();
   await invoke('hackmd.model.rename');
@@ -722,38 +871,30 @@ test('pickScope — custom path empty string treated as personal (null)', async 
   assert.equal(model.calls.refreshScope[0][0], null);
 });
 
-test('pickNote — custom note ID input used', async () => {
+test('rename picker excludes custom ID entries', async () => {
   const model = setupModel();
-  new Interactions()
-    .qp('Note')
-    .qp('My Notes')
-    .qp('Custom Note ID...')
-    .ib('custom-note-123')
-    .ib('Renamed Custom Note')
-    .install();
-  await invoke('hackmd.model.rename');
-  assert.equal(model.calls.renameNote[0][0], 'custom-note-123');
-});
+  let sawCustomNote = false;
+  let sawCustomFolder = false;
+  stub.window.showInputBox = async () => 'Renamed Loaded Note';
 
-test('pickFolder — custom folder ID input used', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('Folder')
-    .qp('My Notes')
-    .qp('Custom Folder ID...')
-    .ib('custom-folder-456')
-    .ib('Folder Name')
-    .install();
+  stub.window.showQuickPick = async (items) => {
+    const resolved = await Promise.resolve(items);
+    sawCustomNote = resolved.some((it) => it.label === 'Custom Note ID...');
+    sawCustomFolder = resolved.some((it) => it.label === 'Custom Folder ID...');
+    return resolved.find((it) => String(it.label || '').includes('My Note'));
+  };
+
   await invoke('hackmd.model.rename');
-  assert.equal(model.calls.renameFolder[0][0], 'custom-folder-456');
+  assert.equal(sawCustomNote, false);
+  assert.equal(sawCustomFolder, false);
+  assert.equal(model.calls.renameNote[0][0], 'pn1');
+  stub.window.showInputBox = async () => undefined;
 });
 
 test('pickFolder with includeRoot — custom folder ID empty = root (null)', async () => {
   const model = setupModel();
   new Interactions()
-    .qp('My Notes')           // scope
-    .qp('Custom Folder ID...')  // folder picker → custom (with includeRoot)
-    .ib('')                   // empty → Root (null parentFolderId)
+    .qp((it) => String(it.label || '').includes('My Notes'))
     .ib('Note Title')         // title
     .ib('')                   // content
     .install();

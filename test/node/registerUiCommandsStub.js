@@ -164,9 +164,17 @@ const MODEL_INDEX_PATH = nodePath.resolve(__dirname, '../../out/model/index.js')
 const EXTENSION_PATH = nodePath.resolve(__dirname, '../../out/extension.js');
 
 let _propertiesProvider = null;
+let _myNotesProvider = null;
+let _myNotesTreeView = null;
+let _teamNotesProvider = null;
+let _teamNotesTreeView = null;
 
 const extensionModule = {
   getPropertiesProvider() { return _propertiesProvider; },
+  getMyNotesProvider() { return _myNotesProvider; },
+  getMyNotesTreeView() { return _myNotesTreeView; },
+  getTeamNotesProvider() { return _teamNotesProvider; },
+  getTeamNotesTreeView() { return _teamNotesTreeView; },
 };
 
 Module._load = function patchedLoad(request, parent, isMain) {
@@ -210,6 +218,10 @@ function resetState() {
   commandsState.executeCalls.length = 0;
   env.openExternalCalls.length = 0;
   _propertiesProvider = null;
+  _myNotesProvider = null;
+  _myNotesTreeView = null;
+  _teamNotesProvider = null;
+  _teamNotesTreeView = null;
 }
 
 module.exports = {
@@ -224,6 +236,20 @@ module.exports = {
   clearModel() { _currentModel = null; },
   setPropertiesProvider(mock) { _propertiesProvider = mock; },
   clearPropertiesProvider() { _propertiesProvider = null; },
+  setExtensionState(state) {
+    if (Object.prototype.hasOwnProperty.call(state || {}, 'myNotesProvider')) {
+      _myNotesProvider = state.myNotesProvider;
+    }
+    if (Object.prototype.hasOwnProperty.call(state || {}, 'myNotesTreeView')) {
+      _myNotesTreeView = state.myNotesTreeView;
+    }
+    if (Object.prototype.hasOwnProperty.call(state || {}, 'teamNotesProvider')) {
+      _teamNotesProvider = state.teamNotesProvider;
+    }
+    if (Object.prototype.hasOwnProperty.call(state || {}, 'teamNotesTreeView')) {
+      _teamNotesTreeView = state.teamNotesTreeView;
+    }
+  },
   resetState,
   makeUri,
 };

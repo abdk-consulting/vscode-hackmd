@@ -2,8 +2,15 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { getPropertiesProvider } from '../extension';
+import {
+  getMyNotesProvider,
+  getMyNotesTreeView,
+  getPropertiesProvider,
+  getTeamNotesProvider,
+  getTeamNotesTreeView
+} from '../extension';
 import { getHackmdModel, ModelFolder, ModelNote, ModelScope } from '../model';
+import { pickCreateLocation } from './model';
 import { collectNotes, pickEntity, pickFolder, pickNote, pickScope } from './pickers';
 
 // ---------------------------------------------------------------------------
@@ -160,6 +167,54 @@ function extractScopeContext(node: any): { teamPath?: string | null; parentFolde
   return {};
 }
 
+function toFolderTreeNode(folder: ModelFolder, teamPath: string | null): any {
+  return {
+    type: 'folder',
+    source: 'model',
+    id: folder.id,
+    name: folder.name,
+    parentId: folder.parentId,
+    clientId: folder.clientId || '',
+    teamPath,
+    children: folder.children,
+    notes: folder.notes,
+  };
+}
+
+async function ensureScopeLoadedForReveal(
+  model: ReturnType<typeof getHackmdModel>,
+  teamPath: ModelScope,
+): Promise<void> {
+  if (teamPath !== null && model.getScopeSnapshotSync(teamPath) === null) {
+    await model.refreshScope({ teamPath });
+  }
+}
+
+async function warmTreeCachesForReveal(
+  model: ReturnType<typeof getHackmdModel>,
+  teamPath: ModelScope,
+): Promise<void> {
+  if (teamPath === null) {
+    const provider = getMyNotesProvider();
+    if (provider) {
+      await provider.getChildren();
+    }
+    return;
+  }
+
+  const provider = getTeamNotesProvider();
+  if (!provider) {
+    return;
+  }
+
+  const team = model.getTeamByPath(teamPath);
+  if (!team) {
+    return;
+  }
+
+  await provider.getChildren({ type: 'team', source: 'model', team } as any);
+}
+
 // ---------------------------------------------------------------------------
 // Note URI resolution
 // ---------------------------------------------------------------------------
@@ -287,6 +342,169 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     await openSideBySide(uri);
   });
 
+  // ── hackmd.ui.revealNote ─────────────────────────────────────────────────
+  // Reveals and selects a note in the corresponding tree view.
+  // Arg: tree note node or undefined (interactive picker when absent).
+  register('hackmd.ui.revealNote', async (node?: any) => {
+    const model = getModel();
+    if (!model) {
+      return;
+    }
+
+    const noteFromNode = extractNote(node);
+    let noteId: string | undefined = noteFromNode?.id;
+    let teamPath: ModelScope = noteFromNode ? (noteFromNode.teamPath ?? null) : undefined;
+
+    if (!noteId) {
+      const picked = await pickNote(model, undefined, { allowCustom: false });
+      if (!picked) {
+        return;
+      }
+      noteId = picked.noteId;
+      teamPath = picked.teamPath;
+    } else if (teamPath === undefined) {
+      teamPath = null;
+    }
+
+    await ensureScopeLoadedForReveal(model, teamPath ?? null);
+    await warmTreeCachesForReveal(model, teamPath ?? null);
+
+    if ((teamPath ?? null) === null) {
+      const provider = getMyNotesProvider();
+      const treeView = getMyNotesTreeView();
+      if (!provider || !treeView) {
+        return;
+      }
+
+      const note = provider.findNoteInCache(noteId!) || model.getNoteSync(noteId!, null) || noteFromNode;
+      if (!note) {
+        vscode.window.showErrorMessage(`Note "${noteId}" was not found in My Notes.`);
+        return;
+      }
+
+      await treeView.reveal({ type: 'note', source: 'model', note }, { select: true, focus: false });
+      return;
+    }
+
+    const provider = getTeamNotesProvider();
+    const treeView = getTeamNotesTreeView();
+    if (!provider || !treeView) {
+      return;
+    }
+
+    const note = provider.findNoteInCache(noteId!, teamPath!) || model.getNoteSync(noteId!, teamPath!) || noteFromNode;
+    if (!note) {
+      vscode.window.showErrorMessage(`Note "${noteId}" was not found in team "${teamPath}".`);
+      return;
+    }
+
+    await treeView.reveal({ type: 'note', source: 'model', note }, { select: true, focus: false });
+  });
+
+  // ── hackmd.ui.revealFolder ───────────────────────────────────────────────
+  // Reveals and selects a folder in the corresponding tree view.
+  // Arg: tree folder node or undefined (interactive picker when absent).
+  register('hackmd.ui.revealFolder', async (node?: any) => {
+    const model = getModel();
+    if (!model) {
+      return;
+    }
+
+    const folderFromNode = node?.type === 'folder' && node?.id ? node : undefined;
+    let folderId: string | undefined = folderFromNode?.id;
+    let teamPath: ModelScope = folderFromNode ? (folderFromNode.teamPath ?? null) : undefined;
+
+    if (!folderId) {
+      const selectedScope = await pickScope(model, 'Choose scope for folder reveal');
+      if (selectedScope === undefined) {
+        return;
+      }
+      const pickedFolder = await pickFolder(model, selectedScope, 'Choose folder to reveal', false, { allowCustom: false });
+      if (!pickedFolder || !pickedFolder.folderId) {
+        return;
+      }
+      folderId = pickedFolder.folderId;
+      teamPath = pickedFolder.teamPath;
+    } else if (teamPath === undefined) {
+      teamPath = null;
+    }
+
+    await ensureScopeLoadedForReveal(model, teamPath ?? null);
+    await warmTreeCachesForReveal(model, teamPath ?? null);
+
+    const folder = model.getFolderById(folderId!, teamPath ?? null);
+    if (!folder) {
+      vscode.window.showErrorMessage(`Folder "${folderId}" was not found in the selected scope.`);
+      return;
+    }
+
+    if ((teamPath ?? null) === null) {
+      const treeView = getMyNotesTreeView();
+      if (!treeView) {
+        return;
+      }
+      await treeView.reveal(toFolderTreeNode(folder, null), { select: true, focus: false });
+      return;
+    }
+
+    const treeView = getTeamNotesTreeView();
+    if (!treeView) {
+      return;
+    }
+    await treeView.reveal(toFolderTreeNode(folder, teamPath!), { select: true, focus: false });
+  });
+
+  // ── hackmd.ui.revealTeam ─────────────────────────────────────────────────
+  // Reveals and selects a team in Team Notes.
+  // Arg: tree team node or undefined (interactive picker when absent).
+  register('hackmd.ui.revealTeam', async (node?: any) => {
+    const model = getModel();
+    if (!model) {
+      return;
+    }
+
+    let teamPath: string | undefined = node?.team?.path;
+
+    if (!teamPath) {
+      const teams = model.getTeams();
+      if (teams.length === 0) {
+        vscode.window.showInformationMessage('No teams are available to reveal.');
+        return;
+      }
+
+      const selected = await vscode.window.showQuickPick(
+        teams.map((team) => ({
+          label: team.name || team.path,
+          description: team.path,
+          teamPath: team.path,
+        })),
+        {
+          placeHolder: 'Choose team to reveal',
+          ignoreFocusOut: true,
+        }
+      );
+      if (!selected) {
+        return;
+      }
+      teamPath = selected.teamPath;
+    }
+
+    const treeView = getTeamNotesTreeView();
+    if (!treeView) {
+      return;
+    }
+
+    await ensureScopeLoadedForReveal(model, teamPath);
+
+    const team = model.getTeamByPath(teamPath) || model.getTeams().find((candidate) => candidate.path === teamPath);
+    if (!team) {
+      vscode.window.showErrorMessage(`Team "${teamPath}" was not found.`);
+      return;
+    }
+
+    await treeView.reveal({ type: 'team', source: 'model', team }, { select: true, focus: false });
+  });
+
   // ── hackmd.ui.openOnHackMD ───────────────────────────────────────────────
   // Opens the note (or team) on hackmd.io.
   // Arg: tree note/team node or undefined (interactive picker when absent).
@@ -391,18 +609,12 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     let parentFolderId: string | null | undefined = scope.parentFolderId ?? null;
 
     if (teamPath === undefined) {
-      teamPath = await pickScope(model, 'Choose scope to import notes into');
-      if (teamPath === undefined) {
+      const location = await pickCreateLocation(model, 'Choose where to import notes into');
+      if (!location) {
         return;
       }
-    }
-
-    if (parentFolderId === undefined) {
-      const dest = await pickFolder(model, teamPath, 'Choose parent folder (Root = top level)', true);
-      if (!dest) {
-        return;
-      }
-      parentFolderId = dest.folderId;
+      teamPath = location.teamPath;
+      parentFolderId = location.parentFolderId;
     }
 
     // 3. Create notes.
@@ -620,9 +832,9 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     await propertiesProvider.openNote(note);
   });
 
-  // ── hackmd.ui.importToMyNotes ───────────────────────────────────────────
+  // ── hackmd.ui.importMyNotes ───────────────────────────────────────────
   // Scoped variant: import files directly to My Notes (no team picker)
-  register('hackmd.ui.importToMyNotes', async (node?: any) => {
+  register('hackmd.ui.importMyNotes', async (node?: any) => {
     // Override scope to null (My Notes) regardless of node
     const model = getModel();
     if (!model) {
@@ -646,15 +858,12 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     }
     if (files.length === 0) { return; }
 
-    const dest = await pickFolder(model, null, 'Choose parent folder (Root = top level)', true);
-    if (!dest) { return; }
-
     const createdNotes = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Importing ${files.length} note${files.length === 1 ? '' : 's'}…`, cancellable: false },
       async () => {
         const results: ModelNote[] = [];
         for (const file of files) {
-          results.push(await model.createNote({ teamPath: null, title: file.title, content: file.content, parentFolderId: dest.folderId }));
+          results.push(await model.createNote({ teamPath: null, title: file.title, content: file.content, parentFolderId: null }));
         }
         return results;
       }
@@ -664,27 +873,5 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage(`Imported ${createdNotes.length} note${createdNotes.length === 1 ? '' : 's'} successfully.`);
   });
 
-  // ── hackmd.ui.importToTeam ──────────────────────────────────────────────
-  // Scoped variant: import files with team picker (or team node pre-populates)
-  register('hackmd.ui.importToTeam', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    const scope = extractScopeContext(node);
-    let teamPath = scope.teamPath;
-
-    if (!teamPath) {
-      const selectedTeam = await pickScope(model, 'Choose team to import notes into');
-      if (selectedTeam === undefined || selectedTeam === null) {
-        vscode.window.showInformationMessage('Please select a team.');
-        return;
-      }
-      teamPath = selectedTeam;
-    }
-
-    // Delegate to ui.import with the resolved team node context
-    await vscode.commands.executeCommand('hackmd.ui.import', { team: { path: teamPath }, type: 'team' });
-  });
 }
+

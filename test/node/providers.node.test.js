@@ -201,6 +201,28 @@ test('MyNotesProvider fires parent refresh when note upsert changes sibling sort
   assert.ok(events.some((e) => e === undefined));
 });
 
+test('MyNotesProvider note tree items pass the clicked note object to hackmd.ui.edit', async () => {
+  const model = createMockModel();
+  const snapshot = {
+    scope: null,
+    rootFolders: [],
+    rootNotes: [
+      { id: 'n1', title: 'Note One', teamPath: null, pendingOperation: false },
+    ],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+  const [noteNode] = await provider.getChildren();
+  const item = provider.getTreeItem(noteNode);
+
+  assert.equal(item.command.command, 'hackmd.ui.edit');
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
+});
+
 test('TeamNotesProvider sorts teams and children deterministically with folders before notes', async () => {
   const model = createMockModel();
   const teamA = { id: 't2', path: 'scope-b', name: 'Alpha', pendingOperation: false, rootFolders: [], rootNotes: [] };
@@ -279,6 +301,34 @@ test('TeamNotesProvider fires parent team refresh when root note sort order chan
   assert.ok(events.some((e) => e && e.type === 'team' && e.team.id === 't1'));
 });
 
+test('TeamNotesProvider note tree items pass the clicked note object to hackmd.ui.edit', async () => {
+  const model = createMockModel();
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  model.__state.teams = [team];
+  model.__state.teamById.set(team.id, team);
+  model.__state.teamByPath.set(team.path, team);
+
+  const snapshot = {
+    scope: 'scope-a',
+    rootFolders: [],
+    rootNotes: [
+      { id: 'n1', title: 'Team Note', teamPath: 'scope-a', pendingOperation: false },
+    ],
+  };
+
+  model.__state.snapshots.set('scope-a', snapshot);
+  indexSnapshot(snapshot, 'scope-a', model.__state);
+
+  setMockModel(model);
+  const provider = new TeamNotesProvider('/tmp');
+  const [teamNode] = await provider.getChildren();
+  const [noteNode] = await provider.getChildren(teamNode);
+  const item = provider.getTreeItem(noteNode);
+
+  assert.equal(item.command.command, 'hackmd.ui.edit');
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
+});
+
 test('HistoryProvider sorts by lastChangedAt desc then id and refreshes only when order changes', async () => {
   const model = createMockModel();
   model.__state.historyNotes = [
@@ -303,4 +353,19 @@ test('HistoryProvider sorts by lastChangedAt desc then id and refreshes only whe
 
   assert.equal(afterTitleOnly, 0);
   assert.ok(events.length > 0);
+});
+
+test('HistoryProvider note tree items pass the clicked note object to hackmd.ui.edit', async () => {
+  const model = createMockModel();
+  model.__state.historyNotes = [
+    { id: 'n1', title: 'Recent Note', teamPath: null, pendingOperation: false, lastChangedAt: '2024-01-01T00:00:00.000Z' },
+  ];
+
+  setMockModel(model);
+  const provider = new HistoryProvider('/tmp');
+  const [noteNode] = await provider.getChildren();
+  const item = provider.getTreeItem(noteNode);
+
+  assert.equal(item.command.command, 'hackmd.ui.edit');
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
 });

@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 
 import hljs from 'highlight.js/lib/core';
 import { solidity } from 'highlightjs-solidity';
-import * as markdownitContainer from 'markdown-it-container';
+import markdownitContainer from 'markdown-it-container';
 import * as S from 'string';
 
 import { API, initializeAPIClient } from './api';

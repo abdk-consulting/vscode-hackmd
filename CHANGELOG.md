@@ -6,6 +6,29 @@
 
 ### Changed
 
+- All three tree providers (`MyNotesProvider`, `TeamNotesProvider`, `HistoryProvider`) now pass `{ type: 'note', note }` as the argument to `hackmd.ui.edit` instead of the previous `{ noteId, teamPath }` shape, giving command handlers direct access to the full note object.
+- Page enhancer (`src/page.ts`) now lazy-loads `flowchart.js` and `js-sequence-diagrams` at call time instead of at module import time, preventing jQuery-plugin initialisation crashes during VS Code markdown preview startup.
+- Page enhancer migrates mermaid rendering from the deprecated `mermaid.init()` API to `mermaid.renderAsync()`, and calls `mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' })` once per update pass.
+- Fixed the `markdown-it-container` import in `src/extension.ts` to use the default export, matching the package's ESM-compatible interface.
+- Fixed the jQuery `ProvidePlugin` entries in `webpack.config.js` to use the `['jquery', 'default']` tuple form so that jQuery's ESM default export is correctly aliased as `$`, `jQuery`, and `window.jQuery`.
+
+### Added
+
+- Added `icon` declarations to all 15 model and UI commands in `package.json` so that tree-view inline buttons and command-palette entries display dedicated icons:
+  - `hackmd.model.createNote` / `hackmd.model.createMyNote` / `hackmd.model.createTeamNote` — custom `new-note.svg` (light/dark).
+  - `hackmd.model.createFolder` / `hackmd.model.createMyFolder` / `hackmd.model.createTeamFolder` — VS Code codicon `$(new-folder)`.
+  - `hackmd.ui.edit`, `hackmd.ui.preview`, `hackmd.ui.sideBySide`, `hackmd.ui.openOnHackMD`, `hackmd.ui.import` / `importToMyNotes` / `importToTeam`, `hackmd.ui.export`, `hackmd.ui.properties` — dedicated custom SVG icons (light/dark pairs).
+- Added `onLanguage:markdown` to the extension's `activationEvents` so that the extension activates as soon as a Markdown file is opened.
+- Added pure-Node test suite for the page-enhancer rendering logic (`test/node/page.node.test.js`) using `happy-dom` as a lightweight DOM implementation:
+  - 9 tests covering mermaid, sequence-diagram, flowchart, MathJax/KaTeX, ABC notation, Graphviz, multi-diagram documents, empty-diagram edge cases, and mixed-diagram integration.
+- Added `test:page` npm script (`node --test ./test/node/page.node.test.js`); included in the default `npm test` run.
+- Added 3 regression tests in `test/node/providers.node.test.js` asserting that each provider's note tree items pass `{ type: 'note', note }` to `hackmd.ui.edit`.
+
+### Chores
+
+- Added `happy-dom ^20.9.0` and `jsdom ^24.1.3` as dev dependencies for the test suite.
+- Deleted unused legacy icon assets under `images/icon/dark/`, `images/icon/light/`, and `images/icon/` (Browser-light.png, column-light.svg, folder.svg, new-file.svg, open-preview.svg, plus.svg, preview.svg, sync.svg, users.svg, view-light.svg, education.svg, eye.svg, notes.svg, refresh.svg, and their light-theme counterparts).
+
 - Simplified tree and context-menu actions around unified model commands.
   - Removed legacy separate move/delete command variants and routed tree interactions through the shared `hackmd.model.move` and `hackmd.model.delete` flows.
   - Removed obsolete tree-view wrapper command registrations and kept drag-and-drop behavior in a shared utility instead of command wiring.

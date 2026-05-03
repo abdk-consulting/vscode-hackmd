@@ -142,9 +142,9 @@ const pageConfig = {
   externals: 'fs',
   plugins: [
     new webpack.ProvidePlugin({
-      $: 'jquery',
-      jQuery: 'jquery',
-      'window.jQuery': 'jquery',
+      $: ['jquery', 'default'],
+      jQuery: ['jquery', 'default'],
+      'window.jQuery': ['jquery', 'default'],
     }),
     new MiniCssExtractPlugin({
       filename: '[name].css',

@@ -679,7 +679,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = {
         command: 'hackmd.ui.edit',
         title: 'Open Note',
-        arguments: [{ noteId: note.id, teamPath: note.teamPath || null }],
+        arguments: [{ type: 'note', note }],
       };
     }
 

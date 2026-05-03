@@ -13,6 +13,7 @@
     "theme": "dark"
   },
   "activationEvents": [
+    "onLanguage:markdown",
     "onView:hackmd.tree.my-notes",
     "onView:hackmd.tree.recent-notes",
     "onView:hackmd.tree.team-notes",
@@ -163,32 +164,47 @@
       {
         "command": "hackmd.model.createNote",
         "title": "Create Note",
-        "category": "HackMD Model"
+        "category": "HackMD Model",
+        "icon": {
+          "light": "images/icon/light/new-note.svg",
+          "dark": "images/icon/dark/new-note.svg"
+        }
       },
       {
         "command": "hackmd.model.createFolder",
         "title": "Create Folder",
-        "category": "HackMD Model"
+        "category": "HackMD Model",
+        "icon": "$(new-folder)"
       },
       {
         "command": "hackmd.model.createMyNote",
         "title": "Create Note in My Notes",
-        "category": "HackMD"
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/new-note.svg",
+          "dark": "images/icon/dark/new-note.svg"
+        }
       },
       {
         "command": "hackmd.model.createTeamNote",
         "title": "Create Note in Team",
-        "category": "HackMD"
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/new-note.svg",
+          "dark": "images/icon/dark/new-note.svg"
+        }
       },
       {
         "command": "hackmd.model.createMyFolder",
         "title": "Create Folder in My Notes",
-        "category": "HackMD"
+        "category": "HackMD",
+        "icon": "$(new-folder)"
       },
       {
         "command": "hackmd.model.createTeamFolder",
         "title": "Create Folder in Team",
-        "category": "HackMD"
+        "category": "HackMD",
+        "icon": "$(new-folder)"
       },
       {
         "command": "hackmd.model.loadNoteContent",
@@ -238,47 +254,83 @@
       {
         "command": "hackmd.ui.edit",
         "title": "Edit",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/edit.svg",
+          "dark": "images/icon/dark/edit.svg"
+        }
       },
       {
         "command": "hackmd.ui.preview",
         "title": "Preview",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/eye.svg",
+          "dark": "images/icon/dark/eye.svg"
+        }
       },
       {
         "command": "hackmd.ui.sideBySide",
         "title": "Side by Side",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/split-horizontal.svg",
+          "dark": "images/icon/dark/split-horizontal.svg"
+        }
       },
       {
         "command": "hackmd.ui.openOnHackMD",
         "title": "Open on HackMD",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/link-external.svg",
+          "dark": "images/icon/dark/link-external.svg"
+        }
       },
       {
         "command": "hackmd.ui.import",
         "title": "Import",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/cloud-upload.svg",
+          "dark": "images/icon/dark/cloud-upload.svg"
+        }
       },
       {
         "command": "hackmd.ui.importToMyNotes",
         "title": "Import to My Notes",
-        "category": "HackMD"
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/cloud-upload.svg",
+          "dark": "images/icon/dark/cloud-upload.svg"
+        }
       },
       {
         "command": "hackmd.ui.importToTeam",
         "title": "Import to Team",
-        "category": "HackMD"
+        "category": "HackMD",
+        "icon": {
+          "light": "images/icon/light/cloud-upload.svg",
+          "dark": "images/icon/dark/cloud-upload.svg"
+        }
       },
       {
         "command": "hackmd.ui.export",
         "title": "Export",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/file-text.svg",
+          "dark": "images/icon/dark/file-text.svg"
+        }
       },
       {
         "command": "hackmd.ui.properties",
         "title": "Properties...",
-        "category": "HackMD UI"
+        "category": "HackMD UI",
+        "icon": {
+          "light": "images/icon/light/gist-secret.svg",
+          "dark": "images/icon/dark/gist-secret.svg"
+        }
       }
     ],
     "menus": {
@@ -494,7 +546,8 @@
     "watch": "webpack --mode none --progress --watch",
     "test-compile": "tsc -p ./",
     "test:model:compile": "tsc --ignoreConfig --pretty false --module commonjs --target es2020 --lib es2020,dom --outDir out --rootDir src --sourceMap --strict false --allowSyntheticDefaultImports --allowArbitraryExtensions --types node,jquery src/model/index.ts src/model/hackmdModel.ts src/commands/pickers.ts src/commands/model.ts src/commands/ui.ts",
-    "test": "npm run test:model && npm run test:commands && npm run test:tree:dnd && npm run test:fs:provider && npm run test:properties && npm run test:completion && npm run test:providers && npm run test:menus",
+    "test": "npm run test:model && npm run test:commands && npm run test:tree:dnd && npm run test:fs:provider && npm run test:properties && npm run test:completion && npm run test:providers && npm run test:menus && npm run test:page",
+    "test:page": "node --test ./test/node/page.node.test.js",
     "test:model": "npm run test:model:compile && node --require ./test/node/registerVscodeStub.js --test ./test/node/hackmdModel.node.test.js",
     "test:commands:model": "npm run test:model:compile && node --require ./test/node/registerModelCommandsStub.js --test ./test/node/modelCommands.node.test.js",
     "test:commands:ui": "npm run test:model:compile && node --require ./test/node/registerUiCommandsStub.js --test ./test/node/uiCommands.node.test.js",
@@ -540,6 +593,8 @@
     "imports-loader": "^5.0.0",
     "jquery": "^4.0.0",
     "js-sequence-diagrams": "git+https://github.com/Moeditor/js-sequence-diagrams.git",
+    "happy-dom": "^20.9.0",
+    "jsdom": "^24.1.3",
     "katex": "^0.16.45",
     "lodash": "^4.17.21",
     "mermaid": "9.4.0",

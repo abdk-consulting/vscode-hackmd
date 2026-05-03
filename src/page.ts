@@ -11,13 +11,35 @@ import './css/markdown.css';
 import './css/style.css';
 
 import * as abcjs from 'abcjs';
-import * as flowchart from 'flowchart.js';
-import 'js-sequence-diagrams';
 import * as katex from 'katex';
 import mermaid from 'mermaid';
 import * as S from 'string';
 import Viz from 'viz.js';
 import { Module, render } from 'viz.js/full.render.js';
+
+declare const require: (moduleName: string) => any;
+
+let flowchartParse:
+  | ((input: string) => { drawSVG: (container: HTMLElement, options?: Record<string, unknown>) => void })
+  | null
+  | undefined;
+
+function getFlowchartParse() {
+  if (flowchartParse !== undefined) {
+    return flowchartParse;
+  }
+
+  try {
+    // Avoid loading flowchart.js package root because it initializes a jQuery plugin at import time.
+    // In VS Code markdown preview this can throw and abort the entire enhancer script.
+    flowchartParse = require('flowchart.js/src/flowchart.parse');
+  } catch (err) {
+    flowchartParse = null;
+    console.warn('flowchart parser unavailable', err);
+  }
+
+  return flowchartParse;
+}
 
 function init() {
   try {
@@ -111,6 +133,17 @@ function updateMathjax() {
 
 function updateSequences() {
   const sequences = $('span.sequence-diagram.raw');
+  if (!sequences.length) { return; }
+
+  try {
+    // Avoid loading js-sequence-diagrams at module level — it registers a jQuery plugin
+    // ($.fn.sequenceDiagram) immediately, which can crash before jQuery is ready.
+    require('js-sequence-diagrams');
+  } catch (e) {
+    console.warn('js-sequence-diagrams unavailable:', e);
+    return;
+  }
+
   sequences.removeClass('raw');
   sequences.each((key, value) => {
     let $ele;
@@ -138,6 +171,11 @@ function updateSequences() {
 }
 
 function updateFlowcharts() {
+  const parseFlowchart = getFlowchartParse();
+  if (!parseFlowchart) {
+    return;
+  }
+
   const flows = $('span.flow-chart.raw');
   flows.removeClass('raw');
   flows.each((key, value) => {
@@ -146,7 +184,7 @@ function updateFlowcharts() {
       const $value = $(value);
       $ele = $(value).parent().parent();
 
-      const chart = flowchart.parse($value.text());
+      const chart = parseFlowchart($value.text());
       $value.html('');
       chart.drawSVG(value, {
         'line-width': 2,
@@ -167,6 +205,13 @@ function updateFlowcharts() {
 
 function updateMermaid() {
   const mermaids = $('span.mermaid.raw');
+  if (!mermaids.length) { return; }
+
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+  });
+
   mermaids.removeClass('raw');
   mermaids.each((key, value) => {
     let $ele;
@@ -179,14 +224,16 @@ function updateMermaid() {
       if (mermaid.parse(text)) {
         $ele.addClass('mermaid');
         $ele.text(text);
-        mermaid.init(undefined, $ele);
+        // Use renderAsync to avoid internal state machine issues
+        mermaid.renderAsync(`mermaid-${key}`, text, $ele[0] as any).then((svg) => {
+          $ele.html(svg);
+        }).catch((err) => {
+          console.warn('mermaid renderAsync error:', err);
+        });
       }
     } catch (err) {
-      // $value.unwrap()
-      // $value.parent().append(`<div class="alert alert-warning">${S(err.str).escapeHTML().s}</div>`)
-      console.warn(err);
-      // console.log($value.text())
-      $ele.addClass('mermaid');
+      console.warn('mermaid error:', err);
+      $ele?.addClass('mermaid');
     }
   });
 }

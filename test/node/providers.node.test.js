@@ -280,6 +280,76 @@ test('MyNotesProvider emits pending-state changes without marking tree dirty', a
   assert.equal(treeEvents.length, 0);
 });
 
+test('MyNotesProvider refreshes folder node on personal folder pending events', async () => {
+  const model = createMockModel();
+  const folder = { id: 'f1', name: 'Folder One', children: [], notes: [], teamPath: null, pendingOperation: false, clientId: '' };
+  const snapshot = {
+    scope: null,
+    rootFolders: [folder],
+    rootNotes: [],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  folder.pendingOperation = true;
+  const indexedFolder = model.__state.foldersByScopeAndId.get('__personal__:f1');
+  indexedFolder.pendingOperation = true;
+  model.__emitPending({
+    targetType: 'folder',
+    pending: true,
+    scope: null,
+    id: 'f1',
+  });
+
+  assert.equal(treeEvents.length, 1);
+  assert.ok(treeEvents[0]);
+  assert.equal(treeEvents[0].type, 'folder');
+  assert.equal(treeEvents[0].id, 'f1');
+});
+
+test('MyNotesProvider reuses note TreeItem instance across pending toggles', async () => {
+  const model = createMockModel();
+  const snapshot = {
+    scope: null,
+    rootFolders: [],
+    rootNotes: [
+      { id: 'n1', title: 'Note One', teamPath: null, pendingOperation: false },
+    ],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+  const [initialNode] = await provider.getChildren();
+  const firstItem = provider.getTreeItem(initialNode);
+
+  snapshot.rootNotes[0].pendingOperation = true;
+  const indexedNote = model.__state.notesByScopeAndId.get('__personal__:n1');
+  indexedNote.pendingOperation = true;
+  model.__emitPending({
+    targetType: 'note',
+    pending: true,
+    scope: null,
+    id: 'n1',
+  });
+
+  const [updatedNode] = await provider.getChildren();
+  const secondItem = provider.getTreeItem(updatedNode);
+
+  assert.equal(secondItem, firstItem);
+  assert.equal(secondItem.contextValue, 'file-pending');
+});
+
 test('MyNotesProvider refreshes folder node on personal folder upsert events', async () => {
   const model = createMockModel();
   const folder = { id: 'f1', name: 'Folder One', children: [], notes: [], teamPath: null, pendingOperation: false };
@@ -312,6 +382,40 @@ test('MyNotesProvider refreshes folder node on personal folder upsert events', a
   assert.ok(treeEvents[0]);
   assert.equal(treeEvents[0].type, 'folder');
   assert.equal(treeEvents[0].id, 'f1');
+});
+
+test('MyNotesProvider folder upsert emits parent refresh only when root sorting changes', async () => {
+  const model = createMockModel();
+  const folderA = { id: 'f1', name: 'A', children: [], notes: [], teamPath: null, pendingOperation: false };
+  const folderB = { id: 'f2', name: 'B', children: [], notes: [], teamPath: null, pendingOperation: false };
+  const snapshot = {
+    scope: null,
+    rootFolders: [folderA, folderB],
+    rootNotes: [],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  folderB.name = '0';
+  const indexedFolder = model.__state.foldersByScopeAndId.get('__personal__:f2');
+  indexedFolder.name = '0';
+  model.__emitEntity({
+    entityType: 'folder',
+    changeType: 'upsert',
+    scope: null,
+    id: 'f2',
+  });
+
+  assert.equal(treeEvents.length, 1);
+  assert.equal(treeEvents[0], undefined);
 });
 
 test('TeamNotesProvider sorts teams and children deterministically with folders before notes', async () => {
@@ -459,7 +563,76 @@ test('TeamNotesProvider emits pending-state changes without marking tree dirty f
   assert.equal(treeEvents.length, 0);
 });
 
-test('HistoryProvider sorts by lastChangedAt desc then id and refreshes only when order changes', async () => {
+test('TeamNotesProvider refreshes team node on team pending events', async () => {
+  const model = createMockModel();
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  model.__state.teams = [team];
+  model.__state.teamById.set(team.id, team);
+  model.__state.teamByPath.set(team.path, team);
+
+  setMockModel(model);
+  const provider = new TeamNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  team.pendingOperation = true;
+  model.__emitPending({
+    targetType: 'team',
+    pending: true,
+    scope: 'scope-a',
+    id: 't1',
+  });
+
+  assert.equal(treeEvents.length, 1);
+  assert.ok(treeEvents[0]);
+  assert.equal(treeEvents[0].type, 'team');
+  assert.equal(treeEvents[0].team.id, 't1');
+});
+
+test('TeamNotesProvider refreshes folder node on team folder pending events', async () => {
+  const model = createMockModel();
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  model.__state.teams = [team];
+  model.__state.teamById.set(team.id, team);
+  model.__state.teamByPath.set(team.path, team);
+
+  const folder = { id: 'f1', name: 'Folder One', children: [], notes: [], teamPath: 'scope-a', pendingOperation: false, clientId: '' };
+  const snapshot = {
+    scope: 'scope-a',
+    rootFolders: [folder],
+    rootNotes: [],
+  };
+
+  model.__state.snapshots.set('scope-a', snapshot);
+  indexSnapshot(snapshot, 'scope-a', model.__state);
+
+  setMockModel(model);
+  const provider = new TeamNotesProvider('/tmp');
+  const [teamNode] = await provider.getChildren();
+  await provider.getChildren(teamNode);
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  folder.pendingOperation = true;
+  const indexedFolder = model.__state.foldersByScopeAndId.get('scope-a:f1');
+  indexedFolder.pendingOperation = true;
+  model.__emitPending({
+    targetType: 'folder',
+    pending: true,
+    scope: 'scope-a',
+    id: 'f1',
+  });
+
+  assert.equal(treeEvents.length, 1);
+  assert.ok(treeEvents[0]);
+  assert.equal(treeEvents[0].type, 'folder');
+  assert.equal(treeEvents[0].id, 'f1');
+});
+
+test('HistoryProvider sorts by lastChangedAt desc then id and refreshes targeted note when order is unchanged', async () => {
   const model = createMockModel();
   model.__state.historyNotes = [
     { id: 'n2', title: 'N2', teamPath: null, pendingOperation: false, lastChangedAt: '2024-01-01T00:00:00.000Z' },
@@ -481,8 +654,11 @@ test('HistoryProvider sorts by lastChangedAt desc then id and refreshes only whe
   model.__state.historyNotes[0].lastChangedAt = '2025-01-01T00:00:00.000Z';
   model.__emitEntity({ entityType: 'note', changeType: 'upsert', scope: null, id: 'n2' });
 
-  assert.equal(afterTitleOnly, 0);
-  assert.ok(events.length > 0);
+  assert.equal(afterTitleOnly, 1);
+  assert.ok(events[0]);
+  assert.equal(events[0].type, 'note');
+  assert.equal(events[0].note.id, 'n2');
+  assert.ok(events.some((event) => event === undefined));
 });
 
 test('HistoryProvider note tree items bind single-click open with preserveFocus', async () => {

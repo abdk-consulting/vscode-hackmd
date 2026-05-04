@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 
 import { getHackmdModel, ModelFolder, ModelNote, ModelScopeSnapshot } from '../model';
 
-const ICON_FOLDER = new vscode.ThemeIcon('folder');
-const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
+const ICON_FOLDER = new vscode.ThemeIcon('symbol-folder');
 const ICON_FILE = new vscode.ThemeIcon('file');
+const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
 
 type TreeNode = FolderNode | NoteNode | PlaceholderNode;
 
@@ -13,6 +13,7 @@ interface FolderNode {
   source: 'model';
   id: string;
   name: string;
+  pendingOperation: boolean;
   icon?: string;
   color?: string;
   parentId?: string;
@@ -87,6 +88,8 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly childOrderSignatureByParent = new Map<string, string>();
   private readonly folderNodeCache = new Map<string, FolderNode>();
   private readonly noteNodeCache = new Map<string, NoteNode>();
+  private readonly folderTreeItemCache = new Map<string, vscode.TreeItem>();
+  private readonly noteTreeItemCache = new Map<string, vscode.TreeItem>();
 
   constructor(private extensionPath: string) {
     try {
@@ -106,6 +109,11 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           return;
         }
         if (event.scope !== null) {
+          return;
+        }
+
+        if (event.targetType === 'folder' && event.id) {
+          this.fireFolderPendingRefresh(event.id);
           return;
         }
 
@@ -192,12 +200,14 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     for (const folderId of [...this.folderNodeCache.keys()]) {
       if (!seenFolderIds.has(folderId)) {
         this.folderNodeCache.delete(folderId);
+        this.folderTreeItemCache.delete(folderId);
       }
     }
 
     for (const noteId of [...this.noteNodeCache.keys()]) {
       if (!seenNoteIds.has(noteId)) {
         this.noteNodeCache.delete(noteId);
+        this.noteTreeItemCache.delete(noteId);
       }
     }
 
@@ -251,6 +261,15 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this._onDidChangeTreeData.fire(parentFolder ? this.toFolderNode(parentFolder) : undefined);
   }
 
+  private fireFolderPendingRefresh(folderId: string): void {
+    if (!this.loaded) {
+      return;
+    }
+
+    const folder = this.folderById.get(folderId) || this.model?.getFolderById(folderId, null);
+    this._onDidChangeTreeData.fire(folder ? this.toFolderNode(folder) : undefined);
+  }
+
   private handleEntityUpsert(entityType: 'team' | 'folder' | 'note', entityId: string): void {
     const previousNoteParent = this.noteParentFolderById.get(entityId) || null;
     const previousFolderParent = this.folderParentById.get(entityId) || null;
@@ -270,11 +289,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     this.refreshSnapshotAndIndexes();
-
-    if (entityType === 'folder') {
-      const folder = this.folderById.get(entityId);
-      this._onDidChangeTreeData.fire(folder ? this.toFolderNode(folder) : undefined);
-    }
+    let parentOrderChanged = false;
 
     if (!this.model) {
       return;
@@ -296,7 +311,18 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       this.childOrderSignatureByParent.set(key, next);
       if (previous !== next) {
         this.fireParentRefresh(parentId);
+        parentOrderChanged = true;
       }
+    }
+
+    if (entityType === 'folder' && !parentOrderChanged) {
+      const folder = this.folderById.get(entityId);
+      this._onDidChangeTreeData.fire(folder ? this.toFolderNode(folder) : undefined);
+    }
+
+    if (entityType === 'note' && !parentOrderChanged) {
+      const note = this.noteById.get(entityId) || this.model?.getNoteById(entityId, null);
+      this._onDidChangeTreeData.fire(note ? this.toNoteNode(note) : undefined);
     }
   }
 
@@ -369,6 +395,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         source: 'model',
         id: folder.id,
         name: folder.name,
+        pendingOperation: !!folder.pendingOperation,
         icon: undefined,
         color: undefined,
         parentId: this.folderParentById.get(folder.id) || undefined,
@@ -382,6 +409,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     node.id = folder.id;
     node.name = folder.name;
+    node.pendingOperation = !!folder.pendingOperation;
     node.parentId = this.folderParentById.get(folder.id) || undefined;
     node.clientId = folder.clientId || '';
     node.teamPath = null;
@@ -476,10 +504,16 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   private getFolderTreeItem(folderNode: FolderNode): vscode.TreeItem {
-    const item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
+    let item = this.folderTreeItemCache.get(folderNode.id);
+    if (!item) {
+      item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
+      this.folderTreeItemCache.set(folderNode.id, item);
+    }
+
+    item.label = folderNode.name;
     item.id = `folder-${folderNode.id}`;
 
-    const isPending = this.model?.isFolderPendingOperation(folderNode.id, null) || false;
+    const isPending = !!folderNode.pendingOperation;
     const hasClientId = !!folderNode.clientId;
 
     item.contextValue = hasClientId
@@ -506,7 +540,13 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private getNoteTreeItem(noteNode: NoteNode): vscode.TreeItem {
     const note = noteNode.note;
     const label = note.title || note.shortId || 'Unnamed';
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    let item = this.noteTreeItemCache.get(note.id);
+    if (!item) {
+      item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+      this.noteTreeItemCache.set(note.id, item);
+    }
+
+    item.label = label;
     item.id = `note-${note.id}`;
 
     const isPending = !!note.pendingOperation;
@@ -517,6 +557,8 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         title: 'Open Note',
         arguments: [{ type: 'note', note, preserveFocus: true }],
       };
+    } else {
+      item.command = undefined;
     }
 
     (item as any).source = 'model';

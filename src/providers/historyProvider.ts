@@ -47,6 +47,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private lastError: string | null = null;
   private readonly model: ReturnType<typeof getHackmdModel> | null;
   private lastOrderSignature = '';
+  private readonly noteTreeItemCache = new Map<string, vscode.TreeItem>();
 
   constructor(private extensionPath: string) {
     try {
@@ -54,7 +55,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       this.historyPendingOperation = !!this.model.isRecentNotesPendingOperation();
       this.model.onDidChangeEntity((event) => {
         if (event.entityType === 'note' && event.changeType === 'upsert' && this.loaded) {
-          this.fireIfOrderChanged();
+          this.handleNoteUpsert(event.id);
         }
       });
       this.model.onDidChangePending((event) => {
@@ -63,6 +64,11 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
             this.historyPendingOperation = event.pending;
             this._onDidChangePendingState.fire(event.pending);
           }
+          return;
+        }
+
+        if (event.targetType === 'note' && event.id && this.loaded) {
+          this.fireNoteRefresh(event.id);
         }
       });
     } catch {
@@ -117,12 +123,29 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     return ids.join('|');
   }
 
-  private fireIfOrderChanged(): void {
+  private fireIfOrderChanged(): boolean {
     const next = this.computeOrderSignature();
     if (next !== this.lastOrderSignature) {
       this.lastOrderSignature = next;
       this._onDidChangeTreeData.fire(undefined);
+      return true;
     }
+    return false;
+  }
+
+  private handleNoteUpsert(noteId: string): void {
+    if (this.fireIfOrderChanged()) {
+      return;
+    }
+    this.fireNoteRefresh(noteId);
+  }
+
+  private fireNoteRefresh(noteId: string): void {
+    if (!this.model) {
+      return;
+    }
+    const note = this.model.getHistoryNotes().find((entry) => entry.id === noteId);
+    this._onDidChangeTreeData.fire(note ? ({ type: 'note', note } as NoteNode) : undefined);
   }
 
   removeNoteFromCache(noteId: string): void {
@@ -165,6 +188,12 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
 
         const notes = [...this.model.getHistoryNotes()].sort(compareHistoryNotes);
         this.lastOrderSignature = notes.map((note) => note.id).join('|');
+        const validIds = new Set(notes.map((note) => note.id));
+        for (const noteId of [...this.noteTreeItemCache.keys()]) {
+          if (!validIds.has(noteId)) {
+            this.noteTreeItemCache.delete(noteId);
+          }
+        }
 
         if (notes.length === 0) {
           return [{ type: 'placeholder', message: 'No history' }];
@@ -184,7 +213,13 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private getNoteTreeItem(noteNode: NoteNode): vscode.TreeItem {
     const note = noteNode.note;
     const label = note.title || note.shortId || 'Unnamed';
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    let item = this.noteTreeItemCache.get(note.id);
+    if (!item) {
+      item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+      this.noteTreeItemCache.set(note.id, item);
+    }
+
+    item.label = label;
     item.id = `note-${note.id}`; // Stable ID for VS Code to track this item
 
     const isPending = !!note.pendingOperation;
@@ -195,6 +230,8 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
         title: 'Open Note',
         arguments: [{ type: 'note', note, preserveFocus: true }],
       };
+    } else {
+      item.command = undefined;
     }
 
     // Store note ID for commands

@@ -4,6 +4,25 @@
 
 ## Recent Changes (Unreleased)
 
+### Fixed
+
+- Fixed visual jitter/jumping of tree nodes during pending (spinner) operations in My Notes and Team Notes views:
+  - Root cause: VS Code treats the built-in `'folder'` ThemeIcon specially and uses it to compute sibling indentation/alignment. Switching from `'folder'` to `'sync~spin'` (spinner) and back caused all sibling nodes to reposition.
+  - Fix: replaced `'folder'` with `'symbol-folder'` in `MyNotesProvider` and `TeamNotesProvider`. The icon is visually identical but is not subject to VS Code's special alignment treatment.
+- Fixed duplicate model events when a pending flag toggles:
+  - `setPendingForFolder()`, `setPendingForNote()`, and `setPendingForTeam()` previously emitted both an entity-upsert event and a pending-changed event. The spurious upsert emission has been removed; only the pending event fires.
+- Fixed double tree refresh on folder/note upsert when sort order changed:
+  - `handleEntityUpsert` in `MyNotesProvider` and `TeamNotesProvider` now takes either a parent-level refresh (when sort order changes) or a node-level refresh (when only data changes), never both.
+
+### Changed
+
+- Added `TreeItem` instance reuse across all three tree providers (`MyNotesProvider`, `TeamNotesProvider`, `HistoryProvider`):
+  - Providers now cache `TreeItem` objects in per-entity `Map` caches (`folderTreeItemCache`, `noteTreeItemCache`, `teamTreeItemCache`).
+  - `getTreeItem()` mutates cached instances in place rather than creating new objects, enabling VS Code to update the existing tree row without a full row replacement.
+- Pending state changes now trigger targeted, node-level tree refreshes instead of broad parent or root refreshes:
+  - `fireFolderPendingRefresh()`, `fireNotePendingRefresh()`, and `fireTeamPendingRefresh()` fire the specific cached `TreeItem` for the affected entity.
+  - Avoids triggering children re-queries during spinner icon transitions.
+
 ### Removed
 
 - Removed query-only model commands that just passed through to model methods without additional logic:

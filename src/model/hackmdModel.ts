@@ -1600,12 +1600,6 @@ export class HackmdModel {
     const team = this.teamsByPath.get(teamPath);
     if (team && team.pendingOperation !== pending) {
       team.pendingOperation = pending;
-      this.emitEntityChanged({
-        entityType: 'team',
-        changeType: 'upsert',
-        scope: team.path,
-        id: team.id,
-      });
     }
 
     this.didChangePending.emit({
@@ -1620,12 +1614,6 @@ export class HackmdModel {
     const folder = this.getFolderById(folderId, scope);
     if (folder && folder.pendingOperation !== pending) {
       folder.pendingOperation = pending;
-      this.emitEntityChanged({
-        entityType: 'folder',
-        changeType: 'upsert',
-        scope,
-        id: folder.id,
-      });
     }
 
     this.didChangePending.emit({
@@ -1640,12 +1628,6 @@ export class HackmdModel {
     const note = this.getNoteById(noteId, scope);
     if (note && note.pendingOperation !== pending) {
       note.pendingOperation = pending;
-      this.emitEntityChanged({
-        entityType: 'note',
-        changeType: 'upsert',
-        scope,
-        id: note.id,
-      });
     }
 
     this.didChangePending.emit({

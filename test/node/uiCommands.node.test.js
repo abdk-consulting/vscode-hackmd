@@ -292,9 +292,10 @@ test('registers all hackmd.ui commands', async () => {
   assert.ok(stub.registeredHandlers.has('hackmd.ui.edit'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.preview'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.sideBySide'));
-  assert.ok(stub.registeredHandlers.has('hackmd.ui.revealNote'));
-  assert.ok(stub.registeredHandlers.has('hackmd.ui.revealFolder'));
-  assert.ok(stub.registeredHandlers.has('hackmd.ui.revealTeam'));
+  assert.ok(stub.registeredHandlers.has('hackmd.ui.reveal'));
+  assert.ok(!stub.registeredHandlers.has('hackmd.ui.revealNote'));
+  assert.ok(!stub.registeredHandlers.has('hackmd.ui.revealFolder'));
+  assert.ok(!stub.registeredHandlers.has('hackmd.ui.revealTeam'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.openOnHackMD'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.import'));
   assert.ok(stub.registeredHandlers.has('hackmd.ui.importMyNotes'));
@@ -362,7 +363,7 @@ test('sideBySide: opens editor and then markdown.showPreviewToSide', async () =>
   assert.equal(stub.commandsState.executeCalls[0][0], 'markdown.showPreviewToSide');
 });
 
-test('revealNote: reveals in My Notes tree from node argument', async () => {
+test('reveal: reveals note in My Notes from node argument', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -381,7 +382,7 @@ test('revealNote: reveals in My Notes tree from node argument', async () => {
     },
   });
 
-  await invoke('hackmd.ui.revealNote', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.reveal', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'note');
@@ -389,15 +390,13 @@ test('revealNote: reveals in My Notes tree from node argument', async () => {
   assert.equal(calls[0][1].select, true);
 });
 
-test('revealNote: refreshes unloaded team scope before reveal', async () => {
+test('reveal: does not refresh scope before reveal', async () => {
   const model = new MockUiModel();
-  model.acmeSnapshot = null;
   stub.setModel(model);
 
   const calls = [];
   stub.setExtensionState({
     teamNotesProvider: {
-      async getChildren() { return []; },
       findNoteInCache(noteId, teamPath) {
         return { id: noteId, title: 'Team Note', teamPath, parentFolderId: null };
       },
@@ -409,15 +408,50 @@ test('revealNote: refreshes unloaded team scope before reveal', async () => {
     },
   });
 
-  await invoke('hackmd.ui.revealNote', { type: 'note', note: { id: 'tn1', teamPath: 'acme' } });
+  await invoke('hackmd.ui.reveal', { type: 'note', note: { id: 'tn1', teamPath: 'acme' } });
 
-  assert.equal(callCount(model, 'refreshScope'), 1);
-  assert.deepEqual(model.calls.refreshScope[0], ['acme']);
+  assert.equal(callCount(model, 'refreshScope'), 0);
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].note.id, 'tn1');
 });
 
-test('revealFolder: interactive picker reveals selected folder', async () => {
+test('reveal: mixed picker lists teams, folders, and notes', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  const calls = [];
+  stub.setExtensionState({
+    myNotesProvider: {
+      findNoteInCache(noteId) {
+        return { id: noteId, title: 'Root Note', teamPath: null, parentFolderId: null };
+      },
+    },
+    myNotesTreeView: {
+      async reveal(node, options) {
+        calls.push([node, options]);
+      },
+    },
+  });
+
+  let pickerKinds;
+  stub.window.showQuickPick = async (items) => {
+    pickerKinds = {
+      hasTeam: items.some((it) => it.targetType === 'team'),
+      hasFolder: items.some((it) => it.targetType === 'folder'),
+      hasNote: items.some((it) => it.targetType === 'note'),
+    };
+    return items.find((it) => it.targetType === 'note' && it.noteId === 'n1');
+  };
+
+  await invoke('hackmd.ui.reveal');
+
+  assert.deepEqual(pickerKinds, { hasTeam: true, hasFolder: true, hasNote: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0].type, 'note');
+  assert.equal(calls[0][0].note.id, 'n1');
+});
+
+test('reveal: interactive picker can reveal selected folder', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -433,12 +467,9 @@ test('revealFolder: interactive picker reveals selected folder', async () => {
     },
   });
 
-  new Interactions()
-    .qp('My Notes')
-    .qp('FolderOne')
-    .install();
+  stub.window.showQuickPick = async (items) => items.find((it) => it.targetType === 'folder' && it.folderId === 'f1');
 
-  await invoke('hackmd.ui.revealFolder');
+  await invoke('hackmd.ui.reveal');
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'folder');
@@ -446,7 +477,7 @@ test('revealFolder: interactive picker reveals selected folder', async () => {
   assert.equal(calls[0][1].select, true);
 });
 
-test('revealFolder: direct folder node reveals with select=true', async () => {
+test('reveal: direct folder node reveals with select=true', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -462,7 +493,7 @@ test('revealFolder: direct folder node reveals with select=true', async () => {
     },
   });
 
-  await invoke('hackmd.ui.revealFolder', { type: 'folder', id: 'f1', teamPath: null });
+  await invoke('hackmd.ui.reveal', { type: 'folder', id: 'f1', teamPath: null });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'folder');
@@ -470,7 +501,7 @@ test('revealFolder: direct folder node reveals with select=true', async () => {
   assert.equal(calls[0][1].select, true);
 });
 
-test('revealTeam: interactive picker reveals selected team', async () => {
+test('reveal: interactive picker can reveal selected team', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -483,11 +514,9 @@ test('revealTeam: interactive picker reveals selected team', async () => {
     },
   });
 
-  new Interactions()
-    .qp((it) => it.teamPath === 'acme')
-    .install();
+  stub.window.showQuickPick = async (items) => items.find((it) => it.targetType === 'team' && it.teamPath === 'acme');
 
-  await invoke('hackmd.ui.revealTeam');
+  await invoke('hackmd.ui.reveal');
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'team');
@@ -495,7 +524,7 @@ test('revealTeam: interactive picker reveals selected team', async () => {
   assert.equal(calls[0][1].select, true);
 });
 
-test('revealTeam: direct team node reveals with select=true', async () => {
+test('reveal: direct team node reveals with select=true', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -508,7 +537,7 @@ test('revealTeam: direct team node reveals with select=true', async () => {
     },
   });
 
-  await invoke('hackmd.ui.revealTeam', { type: 'team', team: { path: 'acme' } });
+  await invoke('hackmd.ui.reveal', { type: 'team', team: { path: 'acme' } });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'team');
@@ -650,40 +679,20 @@ test('import: open-dialog cancellation exits without creating notes', async () =
   assert.equal(callCount(model, 'createNote'), 0);
 });
 
-test('importMyNotes: imports into My Notes root without destination picker', async () => {
+test('importMyNotes: delegates to unified import with My Notes container', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
-
-  const f1 = stub.makeUri('file', '/tmp/one.md');
-  const f2 = stub.makeUri('file', '/tmp/two.md');
-  stub.workspaceState.fileBytesByUri.set(f1.toString(), Buffer.from('# One', 'utf8'));
-  stub.workspaceState.fileBytesByUri.set(f2.toString(), Buffer.from('# Two', 'utf8'));
 
   stub.window.showQuickPick = async () => {
     throw new Error('showQuickPick should not be called for importMyNotes');
   };
 
-  new Interactions()
-    .od([f1, f2])
-    .install();
-
   await invoke('hackmd.ui.importMyNotes');
 
-  assert.equal(callCount(model, 'createNote'), 2);
-  assert.deepEqual(model.calls.createNote[0][0], {
-    teamPath: null,
-    title: 'one',
-    content: '# One',
-    parentFolderId: null,
-  });
-  assert.deepEqual(model.calls.createNote[1][0], {
-    teamPath: null,
-    title: 'two',
-    content: '# Two',
-    parentFolderId: null,
-  });
-  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
-  assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
+  assert.equal(callCount(model, 'createNote'), 0);
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.ui.import');
+  assert.equal(stub.commandsState.executeCalls[0][1]?.container, 'my-notes');
+  assert.equal(stub.commandsState.executeCalls[0][1]?.viewId, 'hackmd.tree.my-notes');
 });
 
 test('export: single note uses save dialog then writes one file', async () => {

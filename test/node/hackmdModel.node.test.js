@@ -623,6 +623,19 @@ test('create, update, move, and delete note workflow', async () => {
   assert.equal(deleted, null);
 });
 
+test('createNote marks created content as loaded for instant reads', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const created = await model.createNote({ title: 'Instant Read' });
+  const getNoteCallsBeforeRead = api.calls.getNote || 0;
+
+  const content = await model.getNoteContent(created.id, null);
+
+  assert.equal(content, '');
+  assert.equal(api.calls.getNote || 0, getNoteCallsBeforeRead);
+});
+
 test('model index requires explicit initialization with injected API', async () => {
   resetHackmdModelForTests();
   assert.throws(() => getHackmdModel(), /not initialized/i);

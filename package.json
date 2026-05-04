@@ -224,18 +224,8 @@
         }
       },
       {
-        "command": "hackmd.ui.revealNote",
-        "title": "Reveal Note",
-        "category": "HackMD"
-      },
-      {
-        "command": "hackmd.ui.revealFolder",
-        "title": "Reveal Folder",
-        "category": "HackMD"
-      },
-      {
-        "command": "hackmd.ui.revealTeam",
-        "title": "Reveal Team",
+        "command": "hackmd.ui.reveal",
+        "title": "Reveal",
         "category": "HackMD"
       },
       {

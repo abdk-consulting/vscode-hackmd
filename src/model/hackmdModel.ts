@@ -682,12 +682,20 @@ export class HackmdModel {
 
     const teamPath = input.teamPath || null;
     return this.withScopePending(teamPath, async () => {
+      const getScopeSnapshotPromise = this.getScopeSnapshot(teamPath);
       const note = teamPath
         ? await recordUsage(this.api.createTeamNote(teamPath, payload, { unwrapData: false }))
         : await recordUsage(this.api.createNote(payload, { unwrapData: false }));
+      await getScopeSnapshotPromise;
 
-      await this.refreshScope({ teamPath });
-      return this.getNoteById(note.id, teamPath) || this.upsertNote(teamPath, note);
+      const createdContent = note.content !== undefined
+        ? note.content
+        : (input.content !== undefined ? input.content : '');
+      const entity = this.upsertNote(teamPath, { ...note, content: createdContent }, true);
+      if (this.reconcileNotePlacement(teamPath, entity)) {
+        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
+      }
+      return entity;
     });
   }
 
@@ -702,12 +710,17 @@ export class HackmdModel {
 
     const teamPath = input.teamPath || null;
     return this.withScopePending(teamPath, async () => {
+      const getScopeSnapshotPromise = this.getScopeSnapshot(teamPath);
       const folder = teamPath
         ? await recordUsage(this.api.createTeamFolder(teamPath, payload, { unwrapData: false }))
         : await recordUsage(this.api.createFolder(payload, { unwrapData: false }));
+      await getScopeSnapshotPromise;
 
-      await this.refreshScope({ teamPath });
-      return this.getFolderById(folder.id, teamPath) || this.upsertFolder(teamPath, folder);
+      const entity = this.upsertFolder(teamPath, folder);
+      if (this.reconcileFolderPlacement(teamPath, entity)) {
+        this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
+      }
+      return entity;
     });
   }
 
@@ -1068,6 +1081,54 @@ export class HackmdModel {
     return entity;
   }
 
+  private reconcileFolderPlacement(teamPath: ModelScope, folder: ModelFolder): boolean {
+    const key = scopeKey(teamPath);
+    if (!this.loadedScopes.has(key)) {
+      return false;
+    }
+
+    const map = this.getFolderScopeMap(teamPath);
+    const roots = teamPath
+      ? this.teamsByPath.get(teamPath)?.rootFolders
+      : this.personalRootFolders;
+
+    if (!roots) {
+      return false;
+    }
+
+    let changed = false;
+
+    for (const candidate of map.values()) {
+      if (candidate === folder) {
+        continue;
+      }
+      const nextChildren = candidate.children.filter((child) => child !== folder);
+      if (nextChildren.length !== candidate.children.length) {
+        replaceArrayContents(candidate.children, nextChildren);
+        changed = true;
+      }
+    }
+
+    const nextRoots = roots.filter((candidate) => candidate !== folder);
+    if (nextRoots.length !== roots.length) {
+      replaceArrayContents(roots, nextRoots);
+      changed = true;
+    }
+
+    const parent = folder.parentId ? map.get(folder.parentId) : undefined;
+    if (parent) {
+      if (parent.children.indexOf(folder) === -1) {
+        parent.children.push(folder);
+        changed = true;
+      }
+    } else if (roots.indexOf(folder) === -1) {
+      roots.push(folder);
+      changed = true;
+    }
+
+    return changed;
+  }
+
   private upsertNote(teamPath: string | null, note: Note, markContentLoaded = false): ModelNote {
     const map = this.getNoteScopeMap(teamPath);
     let entity = map.get(note.id);
@@ -1183,6 +1244,51 @@ export class HackmdModel {
     }
 
     return entity;
+  }
+
+  private reconcileNotePlacement(teamPath: ModelScope, note: ModelNote): boolean {
+    const key = scopeKey(teamPath);
+    if (!this.loadedScopes.has(key)) {
+      return false;
+    }
+
+    const folderMap = this.getFolderScopeMap(teamPath);
+    const roots = teamPath
+      ? this.teamsByPath.get(teamPath)?.rootNotes
+      : this.personalRootNotes;
+
+    if (!roots) {
+      return false;
+    }
+
+    let changed = false;
+
+    for (const folder of folderMap.values()) {
+      const nextNotes = folder.notes.filter((candidate) => candidate !== note);
+      if (nextNotes.length !== folder.notes.length) {
+        replaceArrayContents(folder.notes, nextNotes);
+        changed = true;
+      }
+    }
+
+    const nextRoots = roots.filter((candidate) => candidate !== note);
+    if (nextRoots.length !== roots.length) {
+      replaceArrayContents(roots, nextRoots);
+      changed = true;
+    }
+
+    const parent = note.parentFolderId ? folderMap.get(note.parentFolderId) : undefined;
+    if (parent) {
+      if (parent.notes.indexOf(note) === -1) {
+        parent.notes.push(note);
+        changed = true;
+      }
+    } else if (roots.indexOf(note) === -1) {
+      roots.push(note);
+      changed = true;
+    }
+
+    return changed;
   }
 
   private emitEntityChanged(event: ModelEntityChangedEvent): void {

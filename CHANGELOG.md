@@ -18,6 +18,19 @@
 
 ### Changed
 
+- Unified tree reveal actions into a single command: `hackmd.ui.reveal`.
+  - Removed legacy reveal command variants (`hackmd.ui.revealNote`, `hackmd.ui.revealFolder`, `hackmd.ui.revealTeam`) from command contributions and runtime registration.
+  - `hackmd.ui.reveal` now supports team/folder/note targets from one entry point, and interactive reveal uses a mixed picker listing known teams plus loaded folders and notes.
+  - Reveal no longer refreshes scope implicitly; it only reveals already-loaded tree items.
+- Scoped My Notes helper commands now delegate to unified command flows instead of duplicating logic:
+  - `hackmd.model.createMyNote` -> `hackmd.model.createNote`
+  - `hackmd.model.createMyFolder` -> `hackmd.model.createFolder`
+  - `hackmd.ui.importMyNotes` -> `hackmd.ui.import`
+  - Unified scope extraction now accepts explicit My Notes container arguments (for example `container: 'my-notes'`, `viewId: 'hackmd.tree.my-notes'`).
+- Newly created notes are now upserted as content-loaded in the model.
+  - `createNote` stores known created content immediately (API content when present, otherwise provided input content, otherwise empty string).
+  - Opening a just-created note can read content from model cache immediately without an extra fetch.
+
 - Team export context menu now restricted to `team-loaded` viewItem only (previously allowed both `team` and `team-loaded`), ensuring export is only available for teams that have already been loaded.
 - Fixed context menu visibility for delete and export actions on notes and folders:
   - Delete now appears on both individual notes/folders and multiselection.

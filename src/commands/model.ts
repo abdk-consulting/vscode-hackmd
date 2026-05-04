@@ -72,6 +72,14 @@ function extractFolder(node: any): any | undefined {
 /** Extract scope context (teamPath + optional parentFolderId) from any tree node. */
 function extractScopeContext(node: any): { teamPath?: string | null; parentFolderId?: string } {
   if (!node) { return {}; }
+  if (
+    node?.container === 'my-notes'
+    || node?.containerId === 'my-notes'
+    || node?.id === 'my-notes'
+    || node?.viewId === 'hackmd.tree.my-notes'
+  ) {
+    return { teamPath: null };
+  }
   // Team node: { team: { path: '...' }, type: 'team' }
   if (node.team !== undefined) { return { teamPath: node.team?.path ?? null }; }
   // Folder node: { type: 'folder', id, teamPath }
@@ -591,7 +599,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     const created = await model.createNote({ teamPath, parentFolderId });
-    await vscode.commands.executeCommand('hackmd.ui.revealNote', { type: 'note', note: created });
+    await vscode.commands.executeCommand('hackmd.ui.reveal', { type: 'note', note: created });
     await vscode.commands.executeCommand('hackmd.ui.edit', { type: 'note', note: created });
     return created;
   });
@@ -628,32 +636,21 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
 
   // Scoped variants for command palette discoverability
   register('hackmd.model.createMyNote', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    const created = await model.createNote({ teamPath: null, parentFolderId: null });
-    await vscode.commands.executeCommand('hackmd.ui.revealNote', { type: 'note', note: created });
-    await vscode.commands.executeCommand('hackmd.ui.edit', { type: 'note', note: created });
-    return created;
+    const targetNode = {
+      type: 'container',
+      container: 'my-notes',
+      viewId: 'hackmd.tree.my-notes',
+    };
+    return vscode.commands.executeCommand('hackmd.model.createNote', targetNode);
   });
 
   register('hackmd.model.createMyFolder', async (node?: any) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    const scope = extractScopeContext(node);
-    const parentFolderId = scope.parentFolderId ?? null;
-
-    const name = await promptRequiredInput('Folder name');
-    if (!name) {
-      return;
-    }
-
-    return model.createFolder({ teamPath: null, name, parentFolderId });
+    const targetNode = node || {
+      type: 'container',
+      container: 'my-notes',
+      viewId: 'hackmd.tree.my-notes',
+    };
+    return vscode.commands.executeCommand('hackmd.model.createFolder', targetNode);
   });
 
   register('hackmd.model.rename', async (node?: any) => {

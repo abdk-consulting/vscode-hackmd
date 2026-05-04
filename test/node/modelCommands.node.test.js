@@ -386,7 +386,7 @@ test('createNote — with all args provided', async () => {
   const result = await invoke('hackmd.model.createNote', { type: 'folder', id: null, teamPath: null });
   assert.ok(result);
   assert.equal('title' in model.calls.createNote[0][0], false);
-  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
@@ -408,7 +408,7 @@ test('createNote — fully interactive (single location picker → creates untit
   assert.equal('content' in args, false);
   assert.equal(args.teamPath, null);
   assert.equal(args.parentFolderId, null);
-  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
@@ -442,13 +442,13 @@ test('createNote — can target a team root from unified location picker', async
   assert.ok(result);
   assert.equal(model.calls.createNote[0][0].teamPath, 'acme');
   assert.equal(model.calls.createNote[0][0].parentFolderId, null);
-  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createMyNote — creates untitled root note without prompts', async () => {
-  const model = setupModel();
+test('createMyNote — delegates to createNote with My Notes container', async () => {
+  setupModel();
   const executeCalls = [];
   stub.vscodeStub.commands.executeCommand = async (...args) => {
     executeCalls.push(args);
@@ -463,26 +463,22 @@ test('createMyNote — creates untitled root note without prompts', async () => 
   };
 
   const result = await invoke('hackmd.model.createMyNote');
-  assert.ok(result);
-
-  const args = model.calls.createNote[0][0];
-  assert.equal(args.teamPath, null);
-  assert.equal(args.parentFolderId, null);
-  assert.equal('title' in args, false);
-  assert.equal('content' in args, false);
-  assert.equal(executeCalls.length, 2);
-  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
-  assert.equal(executeCalls[0][1]?.type, 'note');
-  assert.equal(executeCalls[0][1]?.note?.id, 'new1');
-  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
-  assert.equal(executeCalls[1][1]?.type, 'note');
-  assert.equal(executeCalls[1][1]?.note?.id, 'new1');
+  assert.equal(result, undefined);
+  assert.equal(executeCalls.length, 1);
+  assert.equal(executeCalls[0][0], 'hackmd.model.createNote');
+  assert.equal(executeCalls[0][1]?.container, 'my-notes');
+  assert.equal(executeCalls[0][1]?.viewId, 'hackmd.tree.my-notes');
 
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createMyNote — ignores folder node and creates untitled note at root', async () => {
-  const model = setupModel();
+test('createMyNote — ignores folder node and delegates to My Notes container', async () => {
+  setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
 
   stub.window.showQuickPick = async () => {
     throw new Error('showQuickPick should not be called for createMyNote folder action');
@@ -492,17 +488,17 @@ test('createMyNote — ignores folder node and creates untitled note at root', a
   };
 
   const result = await invoke('hackmd.model.createMyNote', { type: 'folder', id: 'pf1', teamPath: null });
-  assert.ok(result);
+  assert.equal(result, undefined);
+  assert.equal(executeCalls.length, 1);
+  assert.equal(executeCalls[0][0], 'hackmd.model.createNote');
+  assert.equal(executeCalls[0][1]?.container, 'my-notes');
+  assert.equal(executeCalls[0][1]?.viewId, 'hackmd.tree.my-notes');
 
-  const args = model.calls.createNote[0][0];
-  assert.equal(args.teamPath, null);
-  assert.equal(args.parentFolderId, null);
-  assert.equal('title' in args, false);
-  assert.equal('content' in args, false);
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createMyNote — delegates reveal command before opening editor', async () => {
-  const model = setupModel();
+test('createMyNote — delegates to createNote command', async () => {
+  setupModel();
   const executeCalls = [];
 
   stub.vscodeStub.commands.executeCommand = async (...args) => {
@@ -511,9 +507,9 @@ test('createMyNote — delegates reveal command before opening editor', async ()
   };
 
   const result = await invoke('hackmd.model.createMyNote');
-  assert.ok(result);
-  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
-  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+  assert.equal(result, undefined);
+  assert.equal(executeCalls.length, 1);
+  assert.equal(executeCalls[0][0], 'hackmd.model.createNote');
 
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
@@ -533,7 +529,7 @@ test('createNote — delegates reveal command before opening editor', async () =
 
   const result = await invoke('hackmd.model.createNote');
   assert.ok(result);
-  assert.equal(executeCalls[0][0], 'hackmd.ui.revealNote');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
 
   stub.vscodeStub.commands.executeCommand = async () => undefined;
@@ -590,44 +586,48 @@ test('createFolder — can target a team root from unified location picker', asy
   assert.equal(args.name, 'Team Folder');
 });
 
-test('createMyFolder — creates folder at root without location picker', async () => {
-  const model = setupModel();
+test('createMyFolder — delegates to createFolder with My Notes container', async () => {
+  setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
 
   stub.window.showQuickPick = async () => {
     throw new Error('showQuickPick should not be called for createMyFolder title action');
   };
 
-  new Interactions()
-    .ib('Root Folder')
-    .install();
-
   const result = await invoke('hackmd.model.createMyFolder');
-  assert.ok(result);
-  assert.deepEqual(model.calls.createFolder[0][0], {
-    teamPath: null,
-    name: 'Root Folder',
-    parentFolderId: null,
-  });
+  assert.equal(result, undefined);
+  assert.equal(executeCalls.length, 1);
+  assert.equal(executeCalls[0][0], 'hackmd.model.createFolder');
+  assert.equal(executeCalls[0][1]?.container, 'my-notes');
+  assert.equal(executeCalls[0][1]?.viewId, 'hackmd.tree.my-notes');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createMyFolder — folder node creates inside that folder without location picker', async () => {
-  const model = setupModel();
+test('createMyFolder — delegates folder node to createFolder command', async () => {
+  setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
 
   stub.window.showQuickPick = async () => {
     throw new Error('showQuickPick should not be called for createMyFolder folder action');
   };
 
-  new Interactions()
-    .ib('Child Folder')
-    .install();
+  const node = { type: 'folder', id: 'pf1', teamPath: null };
+  const result = await invoke('hackmd.model.createMyFolder', node);
+  assert.equal(result, undefined);
+  assert.equal(executeCalls.length, 1);
+  assert.equal(executeCalls[0][0], 'hackmd.model.createFolder');
+  assert.equal(executeCalls[0][1], node);
 
-  const result = await invoke('hackmd.model.createMyFolder', { type: 'folder', id: 'pf1', teamPath: null });
-  assert.ok(result);
-  assert.deepEqual(model.calls.createFolder[0][0], {
-    teamPath: null,
-    name: 'Child Folder',
-    parentFolderId: 'pf1',
-  });
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
 // ─────────────────────────────────────────────────────────────

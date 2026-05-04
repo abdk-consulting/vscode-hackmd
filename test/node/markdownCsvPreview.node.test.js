@@ -78,7 +78,7 @@ function renderCsvPreviewTable(content, params, md) {
   const escaped = (text) => md.utils.escapeHtml(String(text ?? ''));
   const header = Boolean(parseOptions.header);
   let headers = [];
-  let rows = [];
+  let rows;
 
   if (header) {
     headers = Array.isArray(parsed.meta?.fields) ? parsed.meta.fields : [];

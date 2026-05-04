@@ -93,7 +93,9 @@ function createMockJQuery(doc) {
             if (el.matches?.(selector)) {
               return $([el]);
             }
-          } catch (e) { }
+          } catch (e) {
+            // Ignore selector engine errors for invalid mock selectors.
+          }
           el = el.parentElement;
         }
       }

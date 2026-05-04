@@ -285,7 +285,7 @@ function renderCsvPreviewTable(
   const escaped = (text: unknown) => md.utils.escapeHtml(String(text ?? ''));
   const header = Boolean(parseOptions.header);
   let headers: string[] = [];
-  let rows: unknown[][] = [];
+  let rows: unknown[][];
 
   if (header) {
     headers = Array.isArray(parsed.meta?.fields) ? parsed.meta.fields : [];

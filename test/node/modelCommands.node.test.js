@@ -540,15 +540,29 @@ test('createNote — delegates reveal command before opening editor', async () =
 // ─────────────────────────────────────────────────────────────
 test('createFolder — with all args provided', async () => {
   const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
   new Interactions()
     .ib('Archive')  // name
     .install();
   await invoke('hackmd.model.createFolder', { type: 'folder', id: null, teamPath: null });
   assert.equal(model.calls.createFolder[0][0].name, 'Archive');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
+  assert.equal(executeCalls[0][1]?.type, 'folder');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
 test('createFolder — fully interactive (single location picker → name)', async () => {
   const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
   new Interactions()
     .qp((it) => String(it.label || '').includes('My Notes'))
     .ib('My Folder')
@@ -558,6 +572,10 @@ test('createFolder — fully interactive (single location picker → name)', asy
   assert.equal(model.calls.createFolder[0][0].name, 'My Folder');
   assert.equal(model.calls.createFolder[0][0].teamPath, null);
   assert.equal(model.calls.createFolder[0][0].parentFolderId, null);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
+  assert.equal(executeCalls[0][1]?.type, 'folder');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
 test('createFolder — name input cancelled returns undefined', async () => {
@@ -572,6 +590,11 @@ test('createFolder — name input cancelled returns undefined', async () => {
 
 test('createFolder — can target a team root from unified location picker', async () => {
   const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
   new Interactions()
     .qp((it) => String(it.label || '').includes('Acme Corp'))
     .ib('Team Folder')
@@ -584,6 +607,33 @@ test('createFolder — can target a team root from unified location picker', asy
   assert.equal(args.teamPath, 'acme');
   assert.equal(args.parentFolderId, null);
   assert.equal(args.name, 'Team Folder');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
+  assert.equal(executeCalls[0][1]?.type, 'folder');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createFolder — delegates reveal command after create', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  new Interactions()
+    .qp((it) => String(it.label || '').includes('My Notes'))
+    .ib('Shown Folder')
+    .install();
+
+  const result = await invoke('hackmd.model.createFolder');
+  assert.ok(result);
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
+  assert.equal(executeCalls[0][1]?.type, 'folder');
+  assert.equal(executeCalls[0][1]?.id, result.id);
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
 test('createMyFolder — delegates to createFolder with My Notes container', async () => {

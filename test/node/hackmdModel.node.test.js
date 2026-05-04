@@ -623,6 +623,104 @@ test('create, update, move, and delete note workflow', async () => {
   assert.equal(deleted, null);
 });
 
+test('createNote skips scope refresh when scope is already loaded', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const getNoteListBefore = api.calls.getNoteList || 0;
+  const getFoldersBefore = api.calls.getFolders || 0;
+
+  await model.createNote({ title: 'No extra refresh' });
+
+  assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
+  assert.equal(api.calls.getFolders || 0, getFoldersBefore);
+  assert.equal(api.calls.createNote || 0, 1);
+});
+
+test('createFolder skips scope refresh when scope is already loaded', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const getNoteListBefore = api.calls.getNoteList || 0;
+  const getFoldersBefore = api.calls.getFolders || 0;
+
+  await model.createFolder({ name: 'No extra refresh' });
+
+  assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
+  assert.equal(api.calls.getFolders || 0, getFoldersBefore);
+  assert.equal(api.calls.createFolder || 0, 1);
+});
+
+test('createNote refreshes unloaded scope in parallel with create call', async () => {
+  const { api, model } = createModelAndApi();
+  const delayMs = 120;
+
+  api.setDelay('createNote', delayMs);
+  api.setDelay('getNoteList', delayMs);
+  api.setDelay('getFolders', delayMs);
+
+  const start = Date.now();
+  await model.createNote({ title: 'Parallel note' });
+  const elapsedMs = Date.now() - start;
+
+  assert.equal(api.calls.createNote || 0, 1);
+  assert.equal(api.calls.getNoteList || 0, 1);
+  assert.equal(api.calls.getFolders || 0, 1);
+  assert.ok(elapsedMs < (delayMs * 2) - 40, `Expected overlapping refresh/create, got ${elapsedMs}ms`);
+});
+
+test('createNote skips team scope refresh when scope is already loaded', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshTeams();
+  await model.refreshScope({ teamPath: 'foo-team' });
+  const getTeamNotesBefore = api.calls.getTeamNotes || 0;
+  const getTeamFoldersBefore = api.calls.getTeamFolders || 0;
+
+  await model.createNote({ teamPath: 'foo-team', title: 'No extra team refresh' });
+
+  assert.equal(api.calls.getTeamNotes || 0, getTeamNotesBefore);
+  assert.equal(api.calls.getTeamFolders || 0, getTeamFoldersBefore);
+  assert.equal(api.calls.createTeamNote || 0, 1);
+});
+
+test('createFolder refreshes unloaded scope in parallel with create call', async () => {
+  const { api, model } = createModelAndApi();
+  const delayMs = 120;
+
+  api.setDelay('createFolder', delayMs);
+  api.setDelay('getNoteList', delayMs);
+  api.setDelay('getFolders', delayMs);
+
+  const start = Date.now();
+  await model.createFolder({ name: 'Parallel folder' });
+  const elapsedMs = Date.now() - start;
+
+  assert.equal(api.calls.createFolder || 0, 1);
+  assert.equal(api.calls.getNoteList || 0, 1);
+  assert.equal(api.calls.getFolders || 0, 1);
+  assert.ok(elapsedMs < (delayMs * 2) - 40, `Expected overlapping refresh/create, got ${elapsedMs}ms`);
+});
+
+test('createFolder refreshes unloaded team scope in parallel with create call', async () => {
+  const { api, model } = createModelAndApi();
+  const delayMs = 120;
+
+  await model.refreshTeams();
+  api.setDelay('createTeamFolder', delayMs);
+  api.setDelay('getTeamNotes', delayMs);
+  api.setDelay('getTeamFolders', delayMs);
+
+  const start = Date.now();
+  await model.createFolder({ teamPath: 'foo-team', name: 'Parallel team folder' });
+  const elapsedMs = Date.now() - start;
+
+  assert.equal(api.calls.createTeamFolder || 0, 1);
+  assert.equal(api.calls.getTeamNotes || 0, 1);
+  assert.equal(api.calls.getTeamFolders || 0, 1);
+  assert.ok(elapsedMs < (delayMs * 2) - 40, `Expected overlapping team refresh/create, got ${elapsedMs}ms`);
+});
+
 test('createNote marks created content as loaded for instant reads', async () => {
   const { api, model } = createModelAndApi();
 

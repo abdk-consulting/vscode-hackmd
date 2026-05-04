@@ -18,6 +18,21 @@
 
 ### Changed
 
+- New folder flows now reveal and select the created folder via the unified reveal command:
+  - `hackmd.model.createFolder` now delegates to `hackmd.ui.reveal` with the created folder target after creation completes.
+  - Scoped folder-create delegates inherit the same reveal behavior through the shared command path.
+- Added explicit regression coverage for create flows that hydrate unloaded scopes in parallel while avoiding redundant refreshes for loaded scopes:
+  - `createNote` and `createFolder` now have model tests verifying no extra scope refresh when scope data is already loaded.
+  - Added timing-based regressions for both personal and team scopes confirming create and initial scope hydration overlap (parallel execution) for unloaded scopes.
+- Type-checking is now integrated into webpack builds to keep editor and build diagnostics aligned:
+  - Added webpack TypeScript checking via `fork-ts-checker-webpack-plugin` in build config.
+  - `compile` and `vscode:prepublish` now rely on webpack-integrated checks (no separate pre-step typecheck command required).
+  - `tsconfig.json` now includes Node type definitions so editor diagnostics recognize Node globals used by extension sources.
+- Lint configuration and sources were aligned to remove current lint errors without changing runtime behavior:
+  - Disabled JS-side `@typescript-eslint/no-unused-vars` in flat config for existing test/stub patterns.
+  - Fixed `no-useless-assignment` findings in CSV-preview table helpers.
+  - Fixed `no-empty` catch-block lint finding in page tests.
+
 - Unified tree reveal actions into a single command: `hackmd.ui.reveal`.
   - Removed legacy reveal command variants (`hackmd.ui.revealNote`, `hackmd.ui.revealFolder`, `hackmd.ui.revealTeam`) from command contributions and runtime registration.
   - `hackmd.ui.reveal` now supports team/folder/note targets from one entry point, and interactive reveal uses a mixed picker listing known teams plus loaded folders and notes.

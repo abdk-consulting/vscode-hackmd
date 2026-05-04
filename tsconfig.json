@@ -18,6 +18,7 @@
 		"allowSyntheticDefaultImports": true,
 		"allowArbitraryExtensions": true,
 		"types": [
+			"node",
 			"jquery"
 		]
 	},

@@ -631,7 +631,13 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    return model.createFolder({ teamPath, name, parentFolderId });
+    const created = await model.createFolder({ teamPath, name, parentFolderId });
+    await vscode.commands.executeCommand('hackmd.ui.reveal', {
+      type: 'folder',
+      id: created.id,
+      teamPath: created.teamPath,
+    });
+    return created;
   });
 
   // Scoped variants for command palette discoverability

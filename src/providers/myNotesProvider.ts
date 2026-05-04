@@ -85,26 +85,16 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly noteById = new Map<string, ModelNote>();
   private readonly noteParentFolderById = new Map<string, string | null>();
   private readonly childOrderSignatureByParent = new Map<string, string>();
+  private readonly folderNodeCache = new Map<string, FolderNode>();
+  private readonly noteNodeCache = new Map<string, NoteNode>();
 
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
       this.myNotesPendingOperation = !!this.model.isMyNotesPendingOperation();
-      this.model.onDidChangeState((event) => {
-        const affectsMyNotes = event.reason === 'refreshAll'
-          || (event.reason === 'refreshScope' && event.scope === null);
-        if (affectsMyNotes) {
-          this.loaded = false;
-          this._onDidChangeTreeData.fire(undefined);
-        }
-      });
       this.model.onDidChangeEntity((event) => {
         if (event.scope === null && event.changeType === 'upsert' && this.loaded) {
           this.handleEntityUpsert(event.entityType, event.id);
-          return;
-        }
-        if (event.scope === null) {
-          this._onDidChangeTreeData.fire(undefined);
         }
       });
       this.model.onDidChangePending((event) => {
@@ -115,11 +105,12 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           }
           return;
         }
-        if (
-          (event.targetType === 'folder' && event.scope === null)
-          || (event.targetType === 'note' && event.scope === null)
-        ) {
-          this._onDidChangeTreeData.fire(undefined);
+        if (event.scope !== null) {
+          return;
+        }
+
+        if (event.targetType === 'note' && event.id) {
+          this.fireNotePendingRefresh(event.id);
         }
       });
     } catch {
@@ -165,6 +156,9 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this.noteById.clear();
     this.noteParentFolderById.clear();
 
+    const seenFolderIds = new Set<string>();
+    const seenNoteIds = new Set<string>();
+
     if (!snapshot) {
       return;
     }
@@ -172,10 +166,12 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     const walk = (folder: ModelFolder, parentId: string | null) => {
       this.folderById.set(folder.id, folder);
       this.folderParentById.set(folder.id, parentId);
+      seenFolderIds.add(folder.id);
 
       for (const note of folder.notes) {
         this.noteById.set(note.id, note);
         this.noteParentFolderById.set(note.id, folder.id);
+        seenNoteIds.add(note.id);
       }
 
       for (const child of folder.children) {
@@ -190,6 +186,19 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     for (const note of snapshot.rootNotes) {
       this.noteById.set(note.id, note);
       this.noteParentFolderById.set(note.id, null);
+      seenNoteIds.add(note.id);
+    }
+
+    for (const folderId of [...this.folderNodeCache.keys()]) {
+      if (!seenFolderIds.has(folderId)) {
+        this.folderNodeCache.delete(folderId);
+      }
+    }
+
+    for (const noteId of [...this.noteNodeCache.keys()]) {
+      if (!seenNoteIds.has(noteId)) {
+        this.noteNodeCache.delete(noteId);
+      }
     }
 
     this.rebuildAllChildOrderSignatures();
@@ -262,6 +271,11 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     this.refreshSnapshotAndIndexes();
 
+    if (entityType === 'folder') {
+      const folder = this.folderById.get(entityId);
+      this._onDidChangeTreeData.fire(folder ? this.toFolderNode(folder) : undefined);
+    }
+
     if (!this.model) {
       return;
     }
@@ -286,10 +300,18 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  private fireNotePendingRefresh(noteId: string): void {
+    if (!this.loaded) {
+      return;
+    }
+
+    const note = this.noteById.get(noteId) || this.model?.getNoteById(noteId, null);
+    this._onDidChangeTreeData.fire(note ? this.toNoteNode(note) : undefined);
+  }
+
   refresh(): void {
     this.loaded = false;
     void this.ensureLoaded(true);
-    this._onDidChangeTreeData.fire(undefined);
   }
 
   refreshElement(_element?: TreeNode): void {
@@ -339,58 +361,44 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return path;
   }
 
-
-
-  renameFolderInCache(_folderId: string, _newName: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  addFolderToCache(_folderData: any): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  moveFolderInCache(_folderId: string, _parentFolderId: string | null): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  removeFolderFromCache(_folderId: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  async addNoteToCache(note: any): Promise<NoteNode> {
-    this._onDidChangeTreeData.fire(undefined);
-    return { type: 'note', source: 'model', note };
-  }
-
-  removeNoteFromCache(_noteId: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  updateNoteInCache(_noteId: string, _updatedNote: any, emitEvents = true): any {
-    if (emitEvents) {
-      this._onDidChangeTreeData.fire(undefined);
-    }
-    return undefined;
-  }
-
-  emitMoveChangeEvents(_oldNote: any, _updatedNote: any): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
   private toFolderNode(folder: ModelFolder): FolderNode {
-    return {
-      type: 'folder',
-      source: 'model',
-      id: folder.id,
-      name: folder.name,
-      icon: undefined,
-      color: undefined,
-      parentId: this.folderParentById.get(folder.id) || undefined,
-      clientId: folder.clientId || '',
-      teamPath: null,
-      children: folder.children.map((child) => this.toFolderNode(child)),
-      notes: [...folder.notes],
-    };
+    let node = this.folderNodeCache.get(folder.id);
+    if (!node) {
+      node = {
+        type: 'folder',
+        source: 'model',
+        id: folder.id,
+        name: folder.name,
+        icon: undefined,
+        color: undefined,
+        parentId: this.folderParentById.get(folder.id) || undefined,
+        clientId: folder.clientId || '',
+        teamPath: null,
+        children: [],
+        notes: [],
+      };
+      this.folderNodeCache.set(folder.id, node);
+    }
+
+    node.id = folder.id;
+    node.name = folder.name;
+    node.parentId = this.folderParentById.get(folder.id) || undefined;
+    node.clientId = folder.clientId || '';
+    node.teamPath = null;
+    // Keep node payload shallow and stable; children are resolved via getChildren.
+    node.children = [];
+    node.notes = [];
+    return node;
+  }
+
+  private toNoteNode(note: ModelNote): NoteNode {
+    let node = this.noteNodeCache.get(note.id);
+    if (!node) {
+      node = { type: 'note', source: 'model', note };
+      this.noteNodeCache.set(note.id, node);
+    }
+    node.note = note;
+    return node;
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
@@ -424,7 +432,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     if (!element) {
       const rootFolders = sortedFolders(snapshot.rootFolders).map((folder) => this.toFolderNode(folder));
-      const rootNotes = sortedNotes(snapshot.rootNotes).map((note) => ({ type: 'note', source: 'model', note } as NoteNode));
+      const rootNotes = sortedNotes(snapshot.rootNotes).map((note) => this.toNoteNode(note));
       if (rootFolders.length === 0 && rootNotes.length === 0) {
         return [{ type: 'placeholder', message: 'No notes' }];
       }
@@ -438,7 +446,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       }
       const children: TreeNode[] = [];
       children.push(...sortedFolders(folder.children).map((child) => this.toFolderNode(child)));
-      children.push(...sortedNotes(folder.notes).map((note) => ({ type: 'note', source: 'model', note } as NoteNode)));
+      children.push(...sortedNotes(folder.notes).map((note) => this.toNoteNode(note)));
       return children;
     }
 
@@ -507,7 +515,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = {
         command: 'hackmd.ui.edit',
         title: 'Open Note',
-        arguments: [{ type: 'note', note }],
+        arguments: [{ type: 'note', note, preserveFocus: true }],
       };
     }
 

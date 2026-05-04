@@ -52,18 +52,9 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     try {
       this.model = getHackmdModel();
       this.historyPendingOperation = !!this.model.isRecentNotesPendingOperation();
-      this.model.onDidChangeState((event) => {
-        if (event.reason === 'refreshHistory' || event.reason === 'refreshScope') {
-          this._onDidChangeTreeData.fire(undefined);
-        }
-      });
       this.model.onDidChangeEntity((event) => {
         if (event.entityType === 'note' && event.changeType === 'upsert' && this.loaded) {
           this.fireIfOrderChanged();
-          return;
-        }
-        if (event.entityType === 'note') {
-          this._onDidChangeTreeData.fire(undefined);
         }
       });
       this.model.onDidChangePending((event) => {
@@ -72,10 +63,6 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
             this.historyPendingOperation = event.pending;
             this._onDidChangePendingState.fire(event.pending);
           }
-          return;
-        }
-        if (event.targetType === 'note') {
-          this._onDidChangeTreeData.fire(undefined);
         }
       });
     } catch {
@@ -118,7 +105,6 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     this.loaded = false;
     this.lastOrderSignature = '';
     void this.ensureHistoryLoaded(true);
-    this._onDidChangeTreeData.fire(undefined);
   }
 
   private computeOrderSignature(): string {
@@ -140,13 +126,11 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   removeNoteFromCache(noteId: string): void {
-    this._onDidChangeTreeData.fire(undefined);
+    // No-op: cache invalidation is driven by model events
   }
 
   updateNoteInCache(noteId: string, updatedNote: any, emitEvent = true): void {
-    if (emitEvent) {
-      this._onDidChangeTreeData.fire(undefined);
-    }
+    // No-op: cache invalidation is driven by model events
   }
 
   // Find a note in cache and return it
@@ -209,7 +193,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = {
         command: 'hackmd.ui.edit',
         title: 'Open Note',
-        arguments: [{ type: 'note', note }],
+        arguments: [{ type: 'note', note, preserveFocus: true }],
       };
     }
 

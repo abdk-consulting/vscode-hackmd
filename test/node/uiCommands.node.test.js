@@ -621,7 +621,25 @@ test('openOnHackMD: folder uses folderClientId in team scope URL', async () => {
   assert.equal(stub.env.openExternalCalls[0].toString(), 'https://hackmd.io/team/acme/folders/cid-123');
 });
 
-test('import: programmatic files create notes and refresh personal tree', async () => {
+test('openOnHackMD: folder without clientId is a silent no-op', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  let err;
+  stub.window.showErrorMessage = async (msg) => { err = msg; };
+
+  await invoke('hackmd.ui.openOnHackMD', {
+    type: 'folder',
+    id: 'folder-raw-id',
+    teamPath: null,
+    value: { context: {} },
+  });
+
+  assert.equal(err, undefined);
+  assert.equal(stub.env.openExternalCalls.length, 0);
+});
+
+test('import: programmatic files create notes without post-import refresh', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -637,8 +655,8 @@ test('import: programmatic files create notes and refresh personal tree', async 
   await invoke('hackmd.ui.import', { type: 'folder', id: null, teamPath: null });
 
   assert.equal(callCount(model, 'createNote'), 2);
-  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
-  assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
+  const refreshCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.model.refreshTeam');
+  assert.equal(refreshCalls.length, 0);
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
   assert.equal(revealCalls.length, 1);
   assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
@@ -667,8 +685,8 @@ test('import: interactive file picker + single location picker create notes', as
     content: '# first',
     parentFolderId: null,
   });
-  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
-  assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
+  const refreshCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.model.refreshTeam');
+  assert.equal(refreshCalls.length, 0);
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
   assert.equal(revealCalls.length, 1);
   assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
@@ -686,7 +704,8 @@ test('import: reveals imported item when exactly one note was imported', async (
   await invoke('hackmd.ui.import', { type: 'folder', id: null, teamPath: null });
 
   assert.equal(callCount(model, 'createNote'), 1);
-  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
+  const refreshCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.model.refreshTeam');
+  assert.equal(refreshCalls.length, 0);
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
   assert.equal(revealCalls.length, 1);
   assert.equal(revealCalls[0][1]?.type, 'note');
@@ -738,7 +757,7 @@ test('import: open-dialog cancellation exits without creating notes', async () =
   assert.equal(callCount(model, 'createNote'), 0);
 });
 
-test('importMyNotes: delegates to unified import with My Notes container', async () => {
+test('importMyNotes: ignores provided node and delegates to unified import with My Notes container', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -746,7 +765,7 @@ test('importMyNotes: delegates to unified import with My Notes container', async
     throw new Error('showQuickPick should not be called for importMyNotes');
   };
 
-  await invoke('hackmd.ui.importMyNotes');
+  await invoke('hackmd.ui.importMyNotes', { type: 'folder', id: 'f1', teamPath: null });
 
   assert.equal(callCount(model, 'createNote'), 0);
   assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.ui.import');

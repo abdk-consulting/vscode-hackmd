@@ -543,57 +543,44 @@ test('async URI lookup fetches entities not yet loaded', async () => {
   assert.equal(api.calls.getTeamNote, 1);
 });
 
-test('refresh with unchanged personal scope emits no entity/state events', async () => {
+test('refresh with unchanged personal scope emits no entity events', async () => {
   const { model } = createModelAndApi();
   const entityEvents = [];
-  const stateEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
-  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshScope({ teamPath: null });
   entityEvents.length = 0;
-  stateEvents.length = 0;
 
   await model.refreshScope({ teamPath: null });
 
   assert.equal(entityEvents.length, 0);
-  assert.equal(stateEvents.length, 0);
   d1.dispose();
-  d2.dispose();
 });
 
-test('refreshHistory with unchanged data emits no entity/state events', async () => {
+test('refreshHistory with unchanged data emits no entity events', async () => {
   const { model } = createModelAndApi();
   const entityEvents = [];
-  const stateEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
-  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshHistory();
   entityEvents.length = 0;
-  stateEvents.length = 0;
 
   await model.refreshHistory();
 
   assert.equal(entityEvents.length, 0);
-  assert.equal(stateEvents.length, 0);
   d1.dispose();
-  d2.dispose();
 });
 
 test('refreshTeams keeps existing order on reorder-only backend changes and emits no entity events', async () => {
   const { api, model } = createModelAndApi();
   const entityEvents = [];
-  const stateEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
-  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshTeams();
   const initialOrder = model.getTeams().map((t) => t.path);
   assert.deepEqual(initialOrder, ['bar-team', 'foo-team']);
 
   entityEvents.length = 0;
-  stateEvents.length = 0;
   api.teams = [
     { id: 't1', path: 'foo-team', name: 'Foo' },
     { id: 't2', path: 'bar-team', name: 'Bar' },
@@ -604,9 +591,7 @@ test('refreshTeams keeps existing order on reorder-only backend changes and emit
   const finalOrder = model.getTeams().map((t) => t.path);
   assert.deepEqual(finalOrder, ['bar-team', 'foo-team']);
   assert.equal(entityEvents.length, 0);
-  assert.equal(stateEvents.length, 0);
   d1.dispose();
-  d2.dispose();
 });
 
 test('refreshScope keeps existing root note order on reorder-only backend changes and emits no entity events', async () => {
@@ -616,16 +601,13 @@ test('refreshScope keeps existing root note order on reorder-only backend change
   api.personalNotes[0].folderPaths = undefined;
 
   const entityEvents = [];
-  const stateEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
-  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshScope({ teamPath: null });
   const initialRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
   assert.deepEqual(initialRootOrder, ['pn1', 'pn2']);
 
   entityEvents.length = 0;
-  stateEvents.length = 0;
   api.personalNotes = [api.personalNotes[1], api.personalNotes[0]];
 
   await model.refreshScope({ teamPath: null });
@@ -633,9 +615,7 @@ test('refreshScope keeps existing root note order on reorder-only backend change
   const finalRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
   assert.deepEqual(finalRootOrder, ['pn1', 'pn2']);
   assert.equal(entityEvents.length, 0);
-  assert.equal(stateEvents.length, 0);
   d1.dispose();
-  d2.dispose();
 });
 
 test('create, update, move, and delete note workflow', async () => {
@@ -683,6 +663,76 @@ test('createFolder skips scope refresh when scope is already loaded', async () =
   assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
   assert.equal(api.calls.getFolders || 0, getFoldersBefore);
   assert.equal(api.calls.createFolder || 0, 1);
+});
+
+test('createFolder under personal parent sets pending on parent folder and updates local placement', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  api.setDelay('createFolder', 30);
+
+  const pendingEvents = [];
+  const d = model.onDidChangePending((event) => pendingEvents.push(event));
+
+  const inflight = model.createFolder({ name: 'Nested Child', parentFolderId: 'pf1' });
+  await new Promise((resolve) => setTimeout(resolve, 1));
+
+  assert.equal(model.isFolderPendingOperation('pf1', null), true);
+  assert.equal(model.isMyNotesPendingOperation(), false);
+
+  const created = await inflight;
+
+  assert.equal(model.isFolderPendingOperation('pf1', null), false);
+  assert.equal(created.parentId, 'pf1');
+
+  const parent = model.getFolderById('pf1', null);
+  assert.ok(parent);
+  assert.ok(parent.children.some((child) => child.id === created.id));
+
+  const folderPendingEvents = pendingEvents.filter((event) => event.targetType === 'folder' && event.id === 'pf1');
+  assert.equal(folderPendingEvents.length, 2);
+  assert.equal(folderPendingEvents[0].pending, true);
+  assert.equal(folderPendingEvents[1].pending, false);
+
+  const myNotesPendingEvents = pendingEvents.filter((event) => event.targetType === 'container' && event.container === 'my-notes');
+  assert.equal(myNotesPendingEvents.length, 0);
+
+  d.dispose();
+});
+
+test('createNote under personal parent sets pending on parent folder and updates local placement', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  api.setDelay('createNote', 30);
+
+  const pendingEvents = [];
+  const d = model.onDidChangePending((event) => pendingEvents.push(event));
+
+  const inflight = model.createNote({ title: 'Nested Note', parentFolderId: 'pf1' });
+  await new Promise((resolve) => setTimeout(resolve, 1));
+
+  assert.equal(model.isFolderPendingOperation('pf1', null), true);
+  assert.equal(model.isMyNotesPendingOperation(), false);
+
+  const created = await inflight;
+
+  assert.equal(model.isFolderPendingOperation('pf1', null), false);
+  assert.equal(created.parentFolderId, 'pf1');
+
+  const parent = model.getFolderById('pf1', null);
+  assert.ok(parent);
+  assert.ok(parent.notes.some((note) => note.id === created.id));
+
+  const folderPendingEvents = pendingEvents.filter((event) => event.targetType === 'folder' && event.id === 'pf1');
+  assert.equal(folderPendingEvents.length, 2);
+  assert.equal(folderPendingEvents[0].pending, true);
+  assert.equal(folderPendingEvents[1].pending, false);
+
+  const myNotesPendingEvents = pendingEvents.filter((event) => event.targetType === 'container' && event.container === 'my-notes');
+  assert.equal(myNotesPendingEvents.length, 0);
+
+  d.dispose();
 });
 
 test('createNote refreshes unloaded scope in parallel with create call', async () => {

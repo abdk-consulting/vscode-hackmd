@@ -299,7 +299,7 @@ test('getModel() returns undefined and shows error when model not initialized', 
   stub.clearModel();
   let errorShown = false;
   stub.window.showErrorMessage = async () => { errorShown = true; return undefined; };
-  const result = await invoke('hackmd.model.refreshAll');
+  const result = await invoke('hackmd.model.refreshMyNotes');
   assert.equal(result, undefined);
   assert.equal(errorShown, true);
   stub.window.showErrorMessage = async () => undefined; // reset
@@ -308,16 +308,9 @@ test('getModel() returns undefined and shows error when model not initialized', 
 // ─────────────────────────────────────────────────────────────
 // Simple no-picker commands
 // ─────────────────────────────────────────────────────────────
-test('refreshAll — calls model.refreshAll() and returns true', async () => {
-  const model = setupModel();
-  const result = await invoke('hackmd.model.refreshAll');
-  assert.equal(result, true);
-  assert.equal(model.calls.refreshAll.length, 1);
-});
-
 test('refreshPersonalScope — calls model.refreshScope(personal) and returns true', async () => {
   const model = setupModel();
-  const result = await invoke('hackmd.model.refreshPersonalScope');
+  const result = await invoke('hackmd.model.refreshMyNotes');
   assert.equal(result, true);
   assert.deepEqual(model.calls.refreshScope[0], [null]);
 });
@@ -330,7 +323,7 @@ test('refreshTeams — calls model.refreshTeams()', async () => {
 
 test('refreshHistory — calls model.refreshHistory()', async () => {
   const model = setupModel();
-  await invoke('hackmd.model.refreshHistory');
+  await invoke('hackmd.model.refreshRecentNotes');
   assert.equal(model.calls.refreshHistory.length, 1);
 });
 
@@ -339,21 +332,21 @@ test('refreshHistory — calls model.refreshHistory()', async () => {
 // ─────────────────────────────────────────────────────────────
 test('refreshScope — with explicit null teamPath', async () => {
   const model = setupModel();
-  const result = await invoke('hackmd.model.refreshScope', { teamPath: null });
+  const result = await invoke('hackmd.model.refreshTeam', { teamPath: null });
   assert.equal(result, true);
   assert.deepEqual(model.calls.refreshScope[0], [null]);
 });
 
 test('refreshScope — with explicit team path', async () => {
   const model = setupModel();
-  const result = await invoke('hackmd.model.refreshScope', { teamPath: 'acme' });
+  const result = await invoke('hackmd.model.refreshTeam', { teamPath: 'acme' });
   assert.equal(result, true);
   assert.deepEqual(model.calls.refreshScope[0], ['acme']);
 });
 
 test('refreshScope — with tree team node argument', async () => {
   const model = setupModel();
-  const result = await invoke('hackmd.model.refreshScope', { type: 'team', team: { path: 'acme' } });
+  const result = await invoke('hackmd.model.refreshTeam', { type: 'team', team: { path: 'acme' } });
   assert.equal(result, true);
   assert.deepEqual(model.calls.refreshScope[0], ['acme']);
 });
@@ -361,7 +354,7 @@ test('refreshScope — with tree team node argument', async () => {
 test('refreshScope — no args, picks personal scope via picker', async () => {
   const model = setupModel();
   new Interactions().qp('My Notes').install();
-  const result = await invoke('hackmd.model.refreshScope');
+  const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, true);
   assert.deepEqual(model.calls.refreshScope[0], [null]);
 });
@@ -369,7 +362,7 @@ test('refreshScope — no args, picks personal scope via picker', async () => {
 test('refreshScope — picker cancelled returns undefined', async () => {
   setupModel();
   new Interactions().qp(null).install();
-  const result = await invoke('hackmd.model.refreshScope');
+  const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, undefined);
 });
 
@@ -472,7 +465,7 @@ test('createMyNote — delegates to createNote with My Notes container', async (
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createMyNote — ignores folder node and delegates to My Notes container', async () => {
+test('createMyNote — ignores provided node and delegates with My Notes container', async () => {
   setupModel();
   const executeCalls = [];
   stub.vscodeStub.commands.executeCommand = async (...args) => {
@@ -493,6 +486,34 @@ test('createMyNote — ignores folder node and delegates to My Notes container',
   assert.equal(executeCalls[0][0], 'hackmd.model.createNote');
   assert.equal(executeCalls[0][1]?.container, 'my-notes');
   assert.equal(executeCalls[0][1]?.viewId, 'hackmd.tree.my-notes');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createNote — folder context works with wrapped folder node shape', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  const wrappedFolderNode = {
+    type: 'folder',
+    value: {
+      context: {
+        folderId: 'pf1',
+        teamPath: null,
+      },
+    },
+  };
+
+  const result = await invoke('hackmd.model.createNote', wrappedFolderNode);
+  assert.ok(result);
+  assert.equal(model.calls.createNote[0][0].teamPath, null);
+  assert.equal(model.calls.createNote[0][0].parentFolderId, 'pf1');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
 
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
@@ -658,7 +679,7 @@ test('createMyFolder — delegates to createFolder with My Notes container', asy
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
 
-test('createMyFolder — delegates folder node to createFolder command', async () => {
+test('createMyFolder — ignores provided node and delegates with My Notes container', async () => {
   setupModel();
   const executeCalls = [];
   stub.vscodeStub.commands.executeCommand = async (...args) => {
@@ -670,12 +691,12 @@ test('createMyFolder — delegates folder node to createFolder command', async (
     throw new Error('showQuickPick should not be called for createMyFolder folder action');
   };
 
-  const node = { type: 'folder', id: 'pf1', teamPath: null };
-  const result = await invoke('hackmd.model.createMyFolder', node);
+  const result = await invoke('hackmd.model.createMyFolder', { type: 'folder', id: 'pf1', teamPath: null });
   assert.equal(result, undefined);
   assert.equal(executeCalls.length, 1);
   assert.equal(executeCalls[0][0], 'hackmd.model.createFolder');
-  assert.equal(executeCalls[0][1], node);
+  assert.equal(executeCalls[0][1]?.container, 'my-notes');
+  assert.equal(executeCalls[0][1]?.viewId, 'hackmd.tree.my-notes');
 
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
@@ -720,27 +741,6 @@ test('rename (folder) — fully interactive (single picker → name)', async () 
   await invoke('hackmd.model.rename');
   assert.equal(model.calls.renameFolder[0][0], 'pf1');
   assert.equal(model.calls.renameFolder[0][1], 'Old Work');
-});
-
-// ─────────────────────────────────────────────────────────────
-// updateFolder
-// ─────────────────────────────────────────────────────────────
-test('updateFolder — with explicit args', async () => {
-  const model = setupModel();
-  const update = { name: 'Foo' };
-  await invoke('hackmd.model.updateFolder', { folderId: 'pf1', teamPath: null, update });
-  assert.deepEqual(model.calls.updateFolder[0], ['pf1', update, null]);
-});
-
-test('updateFolder — picks scope → folder → JSON', async () => {
-  const model = setupModel();
-  new Interactions()
-    .qp('My Notes')
-    .qp('Work')
-    .ib('{"name":"Updated Work"}')
-    .install();
-  await invoke('hackmd.model.updateFolder');
-  assert.deepEqual(model.calls.updateFolder[0][1], { name: 'Updated Work' });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -961,7 +961,7 @@ test('pickScope — custom path input used as team path', async () => {
     .qp('Custom Team Path...')
     .ib('custom-team')
     .install();
-  const result = await invoke('hackmd.model.refreshScope');
+  const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, true);
   assert.equal(model.calls.refreshScope[0][0], 'custom-team');
 });
@@ -972,7 +972,7 @@ test('pickScope — custom path empty string treated as personal (null)', async 
     .qp('Custom Team Path...')
     .ib('')
     .install();
-  const result = await invoke('hackmd.model.refreshScope');
+  const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, true);
   assert.equal(model.calls.refreshScope[0][0], null);
 });

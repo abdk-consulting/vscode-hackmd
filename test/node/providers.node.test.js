@@ -25,7 +25,6 @@ function createEventBus() {
 }
 
 function createMockModel(overrides = {}) {
-  const stateBus = createEventBus();
   const entityBus = createEventBus();
   const pendingBus = createEventBus();
 
@@ -47,7 +46,6 @@ function createMockModel(overrides = {}) {
   const key = (scope, id) => `${scope ?? '__personal__'}:${id}`;
 
   const api = {
-    onDidChangeState: (listener) => stateBus.on(listener),
     onDidChangeEntity: (listener) => entityBus.on(listener),
     onDidChangePending: (listener) => pendingBus.on(listener),
 
@@ -74,7 +72,6 @@ function createMockModel(overrides = {}) {
     isRecentNotesPendingOperation: () => !!state.recentNotesPendingOperation,
     isFolderPendingOperation: () => false,
 
-    __emitState: (payload) => stateBus.emit(payload),
     __emitEntity: (payload) => entityBus.emit(payload),
     __emitPending: (payload) => {
       if (payload?.targetType === 'container' && payload?.container === 'my-notes') {
@@ -215,7 +212,7 @@ test('MyNotesProvider fires parent refresh when note upsert changes sibling sort
   assert.ok(events.some((e) => e === undefined));
 });
 
-test('MyNotesProvider note tree items pass the clicked note object to hackmd.ui.edit', async () => {
+test('MyNotesProvider note tree items bind single-click open with preserveFocus', async () => {
   const model = createMockModel();
   const snapshot = {
     scope: null,
@@ -234,7 +231,7 @@ test('MyNotesProvider note tree items pass the clicked note object to hackmd.ui.
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note, preserveFocus: true }]);
 });
 
 test('MyNotesProvider emits pending-state changes without marking tree dirty', async () => {
@@ -281,6 +278,40 @@ test('MyNotesProvider emits pending-state changes without marking tree dirty', a
 
   assert.deepEqual(pendingEvents, [true, false]);
   assert.equal(treeEvents.length, 0);
+});
+
+test('MyNotesProvider refreshes folder node on personal folder upsert events', async () => {
+  const model = createMockModel();
+  const folder = { id: 'f1', name: 'Folder One', children: [], notes: [], teamPath: null, pendingOperation: false };
+  const snapshot = {
+    scope: null,
+    rootFolders: [folder],
+    rootNotes: [
+      { id: 'n1', title: 'Root Note', teamPath: null, pendingOperation: false },
+    ],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  model.__emitEntity({
+    entityType: 'folder',
+    changeType: 'upsert',
+    scope: null,
+    id: 'f1',
+  });
+
+  assert.equal(treeEvents.length, 1);
+  assert.ok(treeEvents[0]);
+  assert.equal(treeEvents[0].type, 'folder');
+  assert.equal(treeEvents[0].id, 'f1');
 });
 
 test('TeamNotesProvider sorts teams and children deterministically with folders before notes', async () => {
@@ -361,7 +392,7 @@ test('TeamNotesProvider fires parent team refresh when root note sort order chan
   assert.ok(events.some((e) => e && e.type === 'team' && e.team.id === 't1'));
 });
 
-test('TeamNotesProvider note tree items pass the clicked note object to hackmd.ui.edit', async () => {
+test('TeamNotesProvider note tree items bind single-click open with preserveFocus', async () => {
   const model = createMockModel();
   const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
   model.__state.teams = [team];
@@ -386,7 +417,7 @@ test('TeamNotesProvider note tree items pass the clicked note object to hackmd.u
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note, preserveFocus: true }]);
 });
 
 test('TeamNotesProvider emits pending-state changes without marking tree dirty for container transitions', async () => {
@@ -454,7 +485,7 @@ test('HistoryProvider sorts by lastChangedAt desc then id and refreshes only whe
   assert.ok(events.length > 0);
 });
 
-test('HistoryProvider note tree items pass the clicked note object to hackmd.ui.edit', async () => {
+test('HistoryProvider note tree items bind single-click open with preserveFocus', async () => {
   const model = createMockModel();
   model.__state.historyNotes = [
     { id: 'n1', title: 'Recent Note', teamPath: null, pendingOperation: false, lastChangedAt: '2024-01-01T00:00:00.000Z' },
@@ -466,30 +497,7 @@ test('HistoryProvider note tree items pass the clicked note object to hackmd.ui.
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
-});
-
-test('MyNotesProvider does not invalidate on refreshHistory/refreshTeams state events', async () => {
-  const model = createMockModel();
-  model.__state.snapshots.set(null, {
-    scope: null,
-    rootFolders: [],
-    rootNotes: [{ id: 'n1', title: 'Personal', teamPath: null, pendingOperation: false }],
-  });
-
-  setMockModel(model);
-  const provider = new MyNotesProvider('/tmp');
-
-  await provider.getChildren();
-  const initialRefreshCalls = model.__state.calls.refreshScope;
-
-  model.__emitState({ reason: 'refreshHistory', scope: null });
-  await provider.getChildren();
-  assert.equal(model.__state.calls.refreshScope, initialRefreshCalls);
-
-  model.__emitState({ reason: 'refreshTeams', scope: null });
-  await provider.getChildren();
-  assert.equal(model.__state.calls.refreshScope, initialRefreshCalls);
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note, preserveFocus: true }]);
 });
 
 test('HistoryProvider emits pending-state changes around refresh lifecycle', async () => {

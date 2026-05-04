@@ -1,18 +1,18 @@
 import * as vscode from 'vscode';
 
+import * as extensionApi from '../extension';
+
 import {
   getHackmdModel,
   ModelFolder,
   ModelNote,
   ModelScope,
-  ModelScopeSnapshot,
-  UpdateFolderInput
+  ModelScopeSnapshot
 } from '../model';
 import {
   collectFolders,
   collectNotes,
   pickEntity,
-  pickFolder,
   pickNote,
   pickScope,
   promptRequiredInput
@@ -69,6 +69,16 @@ function extractFolder(node: any): any | undefined {
   return undefined;
 }
 
+function getSelectedTreeNodeFallback(): any | undefined {
+  const selection = extensionApi.getActiveTreeSelection?.() || [];
+  return selection[0];
+}
+
+function getSelectedTreeNodesFallback(): any[] {
+  const selection = extensionApi.getActiveTreeSelection?.() || [];
+  return [...selection];
+}
+
 /** Extract scope context (teamPath + optional parentFolderId) from any tree node. */
 function extractScopeContext(node: any): { teamPath?: string | null; parentFolderId?: string } {
   if (!node) { return {}; }
@@ -82,8 +92,20 @@ function extractScopeContext(node: any): { teamPath?: string | null; parentFolde
   }
   // Team node: { team: { path: '...' }, type: 'team' }
   if (node.team !== undefined) { return { teamPath: node.team?.path ?? null }; }
-  // Folder node: { type: 'folder', id, teamPath }
-  if (node.type === 'folder') { return { teamPath: node.teamPath ?? null, parentFolderId: node.id }; }
+  // Folder node can be a direct provider node or a wrapped context-menu node.
+  if (node.type === 'folder') {
+    const parentFolderId = node.id
+      || node.folderId
+      || node.value?.context?.folderId
+      || node.value?.context?.folderClientId;
+    const teamPath = node.teamPath
+      ?? node.value?.context?.teamPath
+      ?? null;
+    return {
+      teamPath,
+      parentFolderId: parentFolderId || undefined,
+    };
+  }
   // Note node: inherit scope only
   const note = extractNote(node);
   if (note) { return { teamPath: note.teamPath ?? null }; }
@@ -519,16 +541,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(vscode.commands.registerCommand(id, handler));
   };
 
-  register('hackmd.model.refreshAll', async () => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-    await model.refreshAll();
-    return true;
-  });
-
-  register('hackmd.model.refreshPersonalScope', async () => {
+  register('hackmd.model.refreshMyNotes', async () => {
     const model = getModel();
     if (!model) {
       return;
@@ -545,7 +558,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return model.refreshTeams();
   });
 
-  register('hackmd.model.refreshHistory', async () => {
+  register('hackmd.model.refreshRecentNotes', async () => {
     const model = getModel();
     if (!model) {
       return;
@@ -553,7 +566,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return model.refreshHistory();
   });
 
-  register('hackmd.model.refreshScope', async (args?: { teamPath?: string | null; team?: { path?: string } } | any) => {
+  register('hackmd.model.refreshTeam', async (args?: { teamPath?: string | null; team?: { path?: string } } | any) => {
     const model = getModel();
     if (!model) {
       return;
@@ -641,7 +654,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
   });
 
   // Scoped variants for command palette discoverability
-  register('hackmd.model.createMyNote', async (node?: any) => {
+  register('hackmd.model.createMyNote', async () => {
     const targetNode = {
       type: 'container',
       container: 'my-notes',
@@ -650,8 +663,8 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return vscode.commands.executeCommand('hackmd.model.createNote', targetNode);
   });
 
-  register('hackmd.model.createMyFolder', async (node?: any) => {
-    const targetNode = node || {
+  register('hackmd.model.createMyFolder', async () => {
+    const targetNode = {
       type: 'container',
       container: 'my-notes',
       viewId: 'hackmd.tree.my-notes',
@@ -665,7 +678,8 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const noteFromNode = extractNote(node);
+    const targetNode = node ?? getSelectedTreeNodeFallback();
+    const noteFromNode = extractNote(targetNode);
     if (noteFromNode?.id) {
       const noteId: string = noteFromNode.id;
       const teamPath: string | null = noteFromNode.teamPath ?? null;
@@ -679,7 +693,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return model.renameNote(noteId, newTitle, teamPath);
     }
 
-    const folderFromNode = extractFolder(node);
+    const folderFromNode = extractFolder(targetNode);
     if (folderFromNode?.id) {
       const folderId: string = folderFromNode.id;
       const teamPath: string | null = folderFromNode.teamPath ?? null;
@@ -691,6 +705,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       }
 
       return model.renameFolder(folderId, newName, teamPath);
+    }
+
+    if (targetNode !== undefined) {
+      return;
     }
 
     const selected = await pickRenameTarget(model);
@@ -719,50 +737,26 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return undefined;
   });
 
-  register('hackmd.model.updateFolder', async (args?: { folderId?: string; teamPath?: string | null; update?: UpdateFolderInput }) => {
-    const model = getModel();
-    if (!model) {
-      return;
-    }
-
-    let folderId = args?.folderId;
-    let teamPath = args?.teamPath;
-    let update = args?.update;
-
-    if (!folderId) {
-      if (teamPath === undefined) {
-        const selectedScope = await pickScope(model, 'Choose scope for folder');
-        if (selectedScope === undefined) {
-          return;
-        }
-        teamPath = selectedScope;
-      }
-
-      const selectedFolder = await pickFolder(model, teamPath || null, 'Choose folder to update');
-      if (!selectedFolder || !selectedFolder.folderId) {
-        return;
-      }
-      folderId = selectedFolder.folderId;
-    }
-
-    if (!update) {
-      update = await promptJson<UpdateFolderInput>('Folder update payload as JSON', {});
-      if (!update) {
-        return;
-      }
-    }
-
-    return model.updateFolder(folderId, update, teamPath);
-  });
-
   const runMove = async (activeItem?: any, selectedItems?: any[], targetFolder?: any) => {
     const model = getModel();
     if (!model) {
       return;
     }
 
-    const candidates = await resolveMoveCandidates(model, activeItem, selectedItems);
+    const fallbackSelection = (!activeItem && (!selectedItems || selectedItems.length === 0))
+      ? getSelectedTreeNodesFallback()
+      : [];
+    const resolvedActiveItem = activeItem ?? fallbackSelection[0];
+    const resolvedSelectedItems = (selectedItems && selectedItems.length > 0)
+      ? selectedItems
+      : fallbackSelection;
+    const hasTreeSelectionContext = resolvedActiveItem !== undefined || resolvedSelectedItems.length > 0;
+
+    const candidates = await resolveMoveCandidates(model, resolvedActiveItem, resolvedSelectedItems);
     if (!candidates || candidates.length === 0) {
+      if (hasTreeSelectionContext) {
+        return;
+      }
       return;
     }
 
@@ -831,8 +825,12 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    let note = extractNote(node);
+    const targetNode = node ?? getSelectedTreeNodeFallback();
+    let note = extractNote(targetNode);
     if (!note) {
+      if (targetNode !== undefined) {
+        return;
+      }
       const picked = await pickNote(model);
       if (!picked) { return; }
       note = picked.note ?? { id: picked.noteId, teamPath: picked.teamPath ?? null };
@@ -857,7 +855,15 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const effectiveNodes = selectedNodes?.length ? selectedNodes : node ? [node] : [];
+    const fallbackSelection = (!node && (!selectedNodes || selectedNodes.length === 0))
+      ? getSelectedTreeNodesFallback()
+      : [];
+    const effectiveNodes = selectedNodes?.length
+      ? selectedNodes
+      : node
+        ? [node]
+        : fallbackSelection;
+    const hasTreeSelectionContext = effectiveNodes.length > 0;
     const notes: any[] = [];
     const folders: any[] = [];
     for (const n of effectiveNodes) {
@@ -869,6 +875,9 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
 
     // Command-palette fallback: pick a single note
     if (notes.length === 0 && folders.length === 0) {
+      if (hasTreeSelectionContext) {
+        return;
+      }
       const picked = await pickNote(model);
       if (!picked) { return; }
       notes.push({ id: picked.noteId, teamPath: picked.teamPath ?? null });

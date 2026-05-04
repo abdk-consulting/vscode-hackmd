@@ -18,6 +18,26 @@
 
 ### Changed
 
+- TeamNotesProvider now detects team-level entity changes (team name updates) and fires root-level tree refresh when sort order changes:
+  - Added `computeTeamsOrderSignature()` to track team sort order by computing a deterministic signature of sorted team IDs.
+  - Added `handleTeamEntityChange()` to detect when team metadata changes (name/path updates) and compare before/after signatures.
+  - Team entity upsert events now trigger signature comparison; root tree fires `fire(undefined)` only when teams sort order actually changes.
+  - Completes the architectural pattern: personal notes, history notes, and team list all now escalate granular entity changes to root refresh only when sort order is affected.
+
+- Tree-view keyboard interaction was expanded with dedicated keybindings across My Notes, Team Notes, and Recent Notes:
+  - Added shortcuts for refresh (`F5`), create note/folder (`N` / `F`), rename (`R`), move (`M`), duplicate (`D`), delete (`Delete`), open (`Enter`), preview (`V`), side-by-side preview (`Cmd/Ctrl+Enter`), open on HackMD (`O`), import (`I`), export (`E`), and properties (`P`).
+  - Keybinding `when` clauses now scope actions to active tree view and selection context to avoid cross-view collisions.
+- Tree action dispatch is now selection-aware through internal extension commands:
+  - Added `hackmd.internal.executeTreeAction` to execute model/UI actions against the current tree selection.
+  - Added `hackmd.internal.refreshCurrentTreeContainer` to make refresh behavior view-aware (My Notes, Team Notes, Recent Notes).
+- Note items in all three tree providers no longer bind `TreeItem.command` for open-on-click behavior:
+  - Removed single-click note opening from `MyNotesProvider`, `TeamNotesProvider`, and `HistoryProvider`.
+  - Opening notes from tree focus now relies on explicit keyboard actions (for example `Enter`) and context-menu commands.
+- Model/UI refresh command naming was consolidated in command wiring and tests:
+  - Personal refresh uses `hackmd.model.refreshMyNotes`.
+  - Team-scope refresh uses `hackmd.model.refreshTeam`.
+  - Recent-notes refresh is wired via `hackmd.model.hackmd.model.refreshRecentNotes`.
+
 - Model mutation flows now apply local predicted tree effects instead of refreshing scope after note/folder updates:
   - `saveNoteContent`, `updateNoteProperties`, `updateFolder`, `moveNote`, `deleteNote`, and `deleteFolder` no longer trigger scope refresh for loaded scopes.
   - Scope loading remains only for insert operations into unloaded scopes (to materialize revealable tree state).

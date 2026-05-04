@@ -31,6 +31,9 @@ let myNotesProgressResolve: (() => void) | null = null;
 let teamNotesProgressResolve: (() => void) | null = null;
 let historyProgressResolve: (() => void) | null = null;
 
+type TreeViewId = 'hackmd.tree.my-notes' | 'hackmd.tree.team-notes' | 'hackmd.tree.recent-notes';
+let lastActiveTreeViewId: TreeViewId | null = null;
+
 export function getTeamNotesProvider(): TeamNotesProvider | undefined {
   return teamNotesProvider;
 }
@@ -57,6 +60,27 @@ export function getHistoryTreeView(): vscode.TreeView<any> | undefined {
 
 export function getPropertiesProvider(): NotePropertiesProvider | undefined {
   return propertiesProvider;
+}
+
+export function getActiveTreeSelection(): readonly any[] {
+  const preferredSelection = lastActiveTreeViewId
+    ? (getTreeViewById(lastActiveTreeViewId)?.selection || [])
+    : [];
+  if (preferredSelection.length > 0) {
+    return preferredSelection;
+  }
+
+  const historySelection = historyTreeView?.selection || [];
+  if (historySelection.length > 0) {
+    return historySelection;
+  }
+
+  const teamSelection = teamNotesTreeView?.selection || [];
+  if (teamSelection.length > 0) {
+    return teamSelection;
+  }
+
+  return myNotesTreeView?.selection || [];
 }
 
 function isSelectedNoteNode(node: any): boolean {
@@ -105,13 +129,65 @@ function updateTreeSelectionContexts(prefix: string, selection: readonly any[]):
   void vscode.commands.executeCommand('setContext', `${prefix}.hasSingleScopeActionableSelection`, hasSingleScopeActionableSelection);
 }
 
-function bindTreeSelectionContexts(treeView: vscode.TreeView<any>, prefix: string, context: vscode.ExtensionContext): void {
+function bindTreeSelectionContexts(
+  treeView: vscode.TreeView<any>,
+  prefix: string,
+  context: vscode.ExtensionContext,
+  viewId: TreeViewId,
+): void {
+  if (treeView.selection.length > 0) {
+    lastActiveTreeViewId = viewId;
+  }
   updateTreeSelectionContexts(prefix, treeView.selection);
   context.subscriptions.push(
     treeView.onDidChangeSelection((event) => {
+      if (event.selection.length > 0) {
+        lastActiveTreeViewId = viewId;
+      }
       updateTreeSelectionContexts(prefix, event.selection);
     })
   );
+}
+
+function getTreeViewById(viewId: TreeViewId): vscode.TreeView<any> | undefined {
+  switch (viewId) {
+    case 'hackmd.tree.my-notes':
+      return myNotesTreeView;
+    case 'hackmd.tree.team-notes':
+      return teamNotesTreeView;
+    case 'hackmd.tree.recent-notes':
+      return historyTreeView;
+    default:
+      return undefined;
+  }
+}
+
+function getTeamPathFromNode(node: any): string | null | undefined {
+  if (!node) {
+    return undefined;
+  }
+  if (typeof node.teamPath === 'string') {
+    return node.teamPath;
+  }
+  if (node.teamPath === null) {
+    return null;
+  }
+  if (typeof node?.team?.path === 'string') {
+    return node.team.path;
+  }
+  if (typeof node?.note?.teamPath === 'string') {
+    return node.note.teamPath;
+  }
+  if (node?.note?.teamPath === null) {
+    return null;
+  }
+  if (typeof node?.value?.context?.teamPath === 'string') {
+    return node.value.context.teamPath;
+  }
+  if (node?.value?.context?.teamPath === null) {
+    return null;
+  }
+  return undefined;
 }
 
 if (process.env.RUNTIME !== 'browser') {
@@ -470,6 +546,56 @@ export async function activate(context: vscode.ExtensionContext) {
 
   registerCommands(context);
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'hackmd.internal.executeTreeAction',
+      async (args?: { viewId?: TreeViewId; command?: string }) => {
+        if (!args?.viewId || !args?.command) {
+          return;
+        }
+
+        const treeView = getTreeViewById(args.viewId);
+        const selection = treeView?.selection ?? [];
+        const primary = selection[0];
+
+        await vscode.commands.executeCommand(args.command, primary, selection);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'hackmd.internal.refreshCurrentTreeContainer',
+      async (args?: { viewId?: TreeViewId }) => {
+        const viewId = args?.viewId;
+        if (!viewId) {
+          return;
+        }
+
+        if (viewId === 'hackmd.tree.my-notes') {
+          await vscode.commands.executeCommand('hackmd.model.refreshMyNotes');
+          return;
+        }
+
+        if (viewId === 'hackmd.tree.recent-notes') {
+          await vscode.commands.executeCommand('hackmd.model.refreshRecentNotes');
+          return;
+        }
+
+        const treeView = getTreeViewById('hackmd.tree.team-notes');
+        const primary = treeView?.selection?.[0];
+        const teamPath = getTeamPathFromNode(primary);
+
+        if (typeof teamPath === 'string' && teamPath.length > 0) {
+          await vscode.commands.executeCommand('hackmd.model.refreshTeam', { teamPath });
+          return;
+        }
+
+        await vscode.commands.executeCommand('hackmd.model.refreshTeams');
+      }
+    )
+  );
+
   try {
     await initializeAPIClient(context);
     if (API) {
@@ -507,7 +633,7 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
   context.subscriptions.push(myNotesTreeView);
-  bindTreeSelectionContexts(myNotesTreeView, 'hackmd.myNotesSelection', context);
+  bindTreeSelectionContexts(myNotesTreeView, 'hackmd.myNotesSelection', context, 'hackmd.tree.my-notes');
 
   historyProvider = new HistoryProvider(context.extensionPath);
   historyTreeView = vscode.window.createTreeView('hackmd.tree.recent-notes', {
@@ -534,7 +660,7 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
   context.subscriptions.push(historyTreeView);
-  bindTreeSelectionContexts(historyTreeView, 'hackmd.historySelection', context);
+  bindTreeSelectionContexts(historyTreeView, 'hackmd.historySelection', context, 'hackmd.tree.recent-notes');
 
   teamNotesProvider = new TeamNotesProvider(context.extensionPath);
   teamNotesTreeView = vscode.window.createTreeView('hackmd.tree.team-notes', {
@@ -561,7 +687,7 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
   context.subscriptions.push(teamNotesTreeView);
-  bindTreeSelectionContexts(teamNotesTreeView, 'hackmd.teamNotesSelection', context);
+  bindTreeSelectionContexts(teamNotesTreeView, 'hackmd.teamNotesSelection', context, 'hackmd.tree.team-notes');
 
   // Register properties webview provider
   propertiesProvider = new NotePropertiesProvider(context.extensionUri);

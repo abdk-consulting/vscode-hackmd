@@ -101,12 +101,7 @@
         "category": "HackMD"
       },
       {
-        "command": "hackmd.model.refreshAll",
-        "title": "Refresh",
-        "category": "HackMD"
-      },
-      {
-        "command": "hackmd.model.refreshPersonalScope",
+        "command": "hackmd.model.refreshMyNotes",
         "title": "Refresh",
         "category": "HackMD My Notes",
         "icon": {
@@ -124,7 +119,7 @@
         }
       },
       {
-        "command": "hackmd.model.refreshHistory",
+        "command": "hackmd.model.refreshRecentNotes",
         "title": "Refresh",
         "category": "HackMD Recent Notes",
         "icon": {
@@ -133,7 +128,7 @@
         }
       },
       {
-        "command": "hackmd.model.refreshScope",
+        "command": "hackmd.model.refreshTeam",
         "title": "Refresh",
         "category": "HackMD Team",
         "icon": {
@@ -175,11 +170,6 @@
         "command": "hackmd.model.rename",
         "title": "Rename...",
         "category": "HackMD"
-      },
-      {
-        "command": "hackmd.model.updateFolder",
-        "title": "Update Folder",
-        "category": "HackMD Model"
       },
       {
         "command": "hackmd.model.move",
@@ -291,12 +281,12 @@
       ],
       "view/title": [
         {
-          "command": "hackmd.model.refreshPersonalScope",
+          "command": "hackmd.model.refreshMyNotes",
           "when": "view =~ /hackmd.tree.my-notes/",
           "group": "navigation@3"
         },
         {
-          "command": "hackmd.model.refreshHistory",
+          "command": "hackmd.model.refreshRecentNotes",
           "when": "view =~ /hackmd.tree.recent-notes/",
           "group": "navigation"
         },
@@ -409,7 +399,7 @@
         },
         {
           "command": "hackmd.model.createNote",
-          "when": "(viewItem == folder || viewItem == folder-pending) && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection))",
+          "when": "(viewItem == folder || viewItem == folder-pending || viewItem == folder-no-client-id || viewItem == folder-no-client-id-pending) && ((view == hackmd.tree.my-notes && !hackmd.myNotesSelection.hasMixedSelection && !hackmd.myNotesSelection.hasMultiNoteSelection) || (view == hackmd.tree.team-notes && !hackmd.teamNotesSelection.hasMixedSelection && !hackmd.teamNotesSelection.hasMultiNoteSelection))",
           "group": "inline@1"
         },
         {
@@ -508,12 +498,12 @@
           "group": "1_teamMain@3"
         },
         {
-          "command": "hackmd.model.refreshScope",
+          "command": "hackmd.model.refreshTeam",
           "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
           "group": "1_teamMain@4"
         },
         {
-          "command": "hackmd.model.refreshScope",
+          "command": "hackmd.model.refreshTeam",
           "when": "view == hackmd.tree.team-notes && viewItem == team-loaded",
           "group": "inline@4"
         },
@@ -528,7 +518,110 @@
           "group": "2_teamTransfer@2"
         }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "hackmd.model.refreshMyNotes",
+        "key": "f5",
+        "when": "focusedView == hackmd.tree.my-notes"
+      },
+      {
+        "command": "hackmd.model.refreshTeam",
+        "key": "f5",
+        "when": "focusedView == hackmd.tree.team-notes && viewItem == team-loaded"
+      },
+      {
+        "command": "hackmd.model.refreshTeams",
+        "key": "f5",
+        "when": "focusedView == hackmd.tree.team-notes && viewItem != team-loaded"
+      },
+      {
+        "command": "hackmd.model.refreshRecentNotes",
+        "key": "f5",
+        "when": "focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.model.createMyNote",
+        "key": "n",
+        "when": "focusedView == hackmd.tree.my-notes"
+      },
+      {
+        "command": "hackmd.model.createNote",
+        "key": "n",
+        "when": "focusedView == hackmd.tree.team-notes"
+      },
+      {
+        "command": "hackmd.model.createMyFolder",
+        "key": "f",
+        "when": "focusedView == hackmd.tree.my-notes"
+      },
+      {
+        "command": "hackmd.model.createFolder",
+        "key": "f",
+        "when": "focusedView == hackmd.tree.team-notes"
+      },
+      {
+        "command": "hackmd.model.rename",
+        "key": "r",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.model.move",
+        "key": "m",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.model.duplicateNote",
+        "key": "d",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.model.delete",
+        "key": "delete",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.ui.edit",
+        "key": "enter",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.ui.preview",
+        "key": "v",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.ui.sideBySide",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.ui.openOnHackMD",
+        "key": "o",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.ui.importMyNotes",
+        "key": "i",
+        "when": "focusedView == hackmd.tree.my-notes"
+      },
+      {
+        "command": "hackmd.ui.import",
+        "key": "i",
+        "when": "focusedView == hackmd.tree.team-notes"
+      },
+      {
+        "command": "hackmd.ui.export",
+        "key": "e",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      },
+      {
+        "command": "hackmd.ui.properties",
+        "key": "p",
+        "when": "focusedView == hackmd.tree.my-notes || focusedView == hackmd.tree.team-notes || focusedView == hackmd.tree.recent-notes"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "webpack --mode production",

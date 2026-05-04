@@ -82,11 +82,6 @@ export interface ModelNote {
   lastChangedAt?: string;
 }
 
-export interface ModelStateChangedEvent {
-  reason: string;
-  scope: ModelScope;
-}
-
 export interface ModelEntityChangedEvent {
   entityType: 'team' | 'folder' | 'note';
   changeType: 'upsert' | 'delete';
@@ -304,7 +299,6 @@ export class HackmdModel {
   private readonly folderFetchPromises = new Map<string, Promise<ModelFolder>>();
   private readonly entityByUriPromises = new Map<string, Promise<ModelNote | ModelFolder | ModelTeam | null>>();
 
-  private readonly didChangeState = new EventSignal<ModelStateChangedEvent>();
   private readonly didChangeEntity = new EventSignal<ModelEntityChangedEvent>();
   private readonly didChangePending = new EventSignal<ModelPendingChangedEvent>();
   private entityEventBatchDepth = 0;
@@ -318,7 +312,6 @@ export class HackmdModel {
   private static readonly EMPTY_FOLDERS: ModelFolder[] = [];
   private static readonly EMPTY_NOTES: ModelNote[] = [];
 
-  readonly onDidChangeState = this.didChangeState.event;
   readonly onDidChangeEntity = this.didChangeEntity.event;
   readonly onDidChangePending = this.didChangePending.event;
 
@@ -596,14 +589,9 @@ export class HackmdModel {
       { targetType: 'container', container: 'team-notes' },
       async () => {
         const teams = await recordUsage(this.api.getTeams({ unwrapData: false }));
-        const beforeVersion = this.entityChangeVersion;
-        let structureChanged = false;
         this.withEntityEventBatch(() => {
-          structureChanged = this.syncTeams(teams || []);
+          this.syncTeams(teams || []);
         });
-        if (structureChanged || this.entityChangeVersion !== beforeVersion) {
-          this.didChangeState.emit({ reason: 'refreshTeams', scope: null });
-        }
         return this.orderedTeams;
       }
     );
@@ -634,14 +622,9 @@ export class HackmdModel {
           recordUsage(this.api.getTeamNotes(teamPath, { unwrapData: false })),
           recordUsage(this.api.getTeamFolders(teamPath, { unwrapData: false })),
         ]);
-        const beforeVersion = this.entityChangeVersion;
-        let structureChanged = false;
         this.withEntityEventBatch(() => {
-          structureChanged = this.rebuildScope(teamPath, notes || [], folders || []);
+          this.rebuildScope(teamPath, notes || [], folders || []);
         });
-        if (structureChanged || this.entityChangeVersion !== beforeVersion) {
-          this.didChangeState.emit({ reason: 'refreshScope', scope: teamPath });
-        }
         return;
       }
 
@@ -649,14 +632,9 @@ export class HackmdModel {
         recordUsage(this.api.getNoteList({ unwrapData: false })),
         recordUsage(this.api.getFolders({ unwrapData: false })),
       ]);
-      const beforeVersion = this.entityChangeVersion;
-      let structureChanged = false;
       this.withEntityEventBatch(() => {
-        structureChanged = this.rebuildScope(null, notes || [], folders || []);
+        this.rebuildScope(null, notes || [], folders || []);
       });
-      if (structureChanged || this.entityChangeVersion !== beforeVersion) {
-        this.didChangeState.emit({ reason: 'refreshScope', scope: null });
-      }
     });
 
     this.refreshScopePromises.set(key, promise);
@@ -677,7 +655,6 @@ export class HackmdModel {
       async () => {
         const notes = await recordUsage(this.api.getHistory({ unwrapData: false }));
         const next: ModelNote[] = [];
-        const beforeVersion = this.entityChangeVersion;
 
         this.withEntityEventBatch(() => {
           for (const note of notes || []) {
@@ -687,10 +664,7 @@ export class HackmdModel {
           }
         });
 
-        const historyCollectionChanged = reconcileArrayAsSetPreserveOrder(this.historyNotes, next);
-        if (historyCollectionChanged || this.entityChangeVersion !== beforeVersion) {
-          this.didChangeState.emit({ reason: 'refreshHistory', scope: null });
-        }
+        reconcileArrayAsSetPreserveOrder(this.historyNotes, next);
         return this.historyNotes;
       }
     );
@@ -715,22 +689,51 @@ export class HackmdModel {
     }
 
     const teamPath = input.teamPath || null;
-    return this.withScopePending(teamPath, async () => {
+    const parentFolderId = input.parentFolderId || null;
+
+    const create = async () => {
       const getScopeSnapshotPromise = this.getScopeSnapshot(teamPath);
       const note = teamPath
         ? await recordUsage(this.api.createTeamNote(teamPath, payload, { unwrapData: false }))
         : await recordUsage(this.api.createNote(payload, { unwrapData: false }));
       await getScopeSnapshotPromise;
 
+      const responseParentFolderId = resolveParentFolderId(note as any);
+      const effectiveParentFolderId = responseParentFolderId ?? parentFolderId;
+
       const createdContent = note.content !== undefined
         ? note.content
         : (input.content !== undefined ? input.content : '');
-      const entity = this.upsertNote(teamPath, { ...note, content: createdContent }, true);
+      const entity = this.upsertNote(
+        teamPath,
+        {
+          ...note,
+          content: createdContent,
+          parentFolderId: effectiveParentFolderId,
+        },
+        true
+      );
+
+      if (entity.parentFolderId !== effectiveParentFolderId) {
+        entity.parentFolderId = effectiveParentFolderId;
+        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
+      }
+
       if (this.reconcileNotePlacement(teamPath, entity)) {
         this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
       }
       return entity;
-    });
+    };
+
+    if (parentFolderId) {
+      return this.withPendingOperation({ targetType: 'folder', scope: teamPath, id: parentFolderId }, create);
+    }
+
+    if (teamPath) {
+      return this.withPendingOperation({ targetType: 'team', teamPath }, create);
+    }
+
+    return this.withPendingOperation({ targetType: 'container', container: 'my-notes' }, create);
   }
 
   async createFolder(input: CreateFolderInput): Promise<ModelFolder> {
@@ -743,26 +746,48 @@ export class HackmdModel {
     }
 
     const teamPath = input.teamPath || null;
-    return this.withScopePending(teamPath, async () => {
+    const parentFolderId = input.parentFolderId || null;
+
+    const create = async () => {
       const getScopeSnapshotPromise = this.getScopeSnapshot(teamPath);
       const folder = teamPath
         ? await recordUsage(this.api.createTeamFolder(teamPath, payload, { unwrapData: false }))
         : await recordUsage(this.api.createFolder(payload, { unwrapData: false }));
       await getScopeSnapshotPromise;
 
-      const entity = this.upsertFolder(teamPath, folder);
+      const responseParentFolderId = resolveParentFolderId(folder as any);
+      const effectiveParentFolderId = responseParentFolderId ?? parentFolderId;
+      const entity = this.upsertFolder(teamPath, {
+        ...folder,
+        parentFolderId: effectiveParentFolderId,
+      });
+
+      if (entity.parentId !== effectiveParentFolderId) {
+        entity.parentId = effectiveParentFolderId;
+        this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
+      }
+
       if (this.reconcileFolderPlacement(teamPath, entity)) {
         this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
       }
       return entity;
-    });
+    };
+
+    if (parentFolderId) {
+      return this.withPendingOperation({ targetType: 'folder', scope: teamPath, id: parentFolderId }, create);
+    }
+
+    if (teamPath) {
+      return this.withPendingOperation({ targetType: 'team', teamPath }, create);
+    }
+
+    return this.withPendingOperation({ targetType: 'container', container: 'my-notes' }, create);
   }
 
   async loadNoteContent(noteId: string, teamPath?: string | null): Promise<ModelNote> {
     const scope = teamPath || null;
     return this.withPendingOperation({ targetType: 'note', scope, id: noteId }, async () => {
       const entity = await this.fetchNote(scope, noteId);
-      this.didChangeState.emit({ reason: 'loadNoteContent', scope });
       return entity;
     });
   }

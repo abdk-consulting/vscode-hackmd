@@ -2,6 +2,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import * as extensionApi from '../extension';
 import {
   getMyNotesProvider,
   getMyNotesTreeView,
@@ -30,11 +31,11 @@ function getModel(): ReturnType<typeof getHackmdModel> | undefined {
 // VS Code UI helpers
 // ---------------------------------------------------------------------------
 
-async function openEditor(uri: vscode.Uri): Promise<void> {
+async function openEditor(uri: vscode.Uri, preserveFocus = false): Promise<void> {
   const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(doc, {
     preview: false,
-    preserveFocus: false,
+    preserveFocus,
     viewColumn: vscode.ViewColumn.One,
   });
 }
@@ -131,16 +132,24 @@ function extractNote(node: any): any | undefined {
   return undefined;
 }
 
+function getSelectedTreeNodeFallback(): any | undefined {
+  const selection = extensionApi.getActiveTreeSelection?.() || [];
+  return selection[0];
+}
+
+function getSelectedTreeNodesFallback(): any[] {
+  const selection = extensionApi.getActiveTreeSelection?.() || [];
+  return [...selection];
+}
+
 function extractFolderWebContext(node: any): { folderId?: string; teamPath: string | null } | undefined {
   if (!node || node.type !== 'folder') {
     return undefined;
   }
 
   const rawFolderId = node.value?.context?.folderClientId
-    || node.value?.context?.folderId
     || node.folderClientId
-    || node.clientId
-    || node.id;
+    || node.clientId;
 
   if (!rawFolderId) {
     return undefined;
@@ -413,7 +422,11 @@ async function resolveNoteUri(
   model: ReturnType<typeof getHackmdModel>,
   node: any | undefined
 ): Promise<vscode.Uri | undefined> {
-  const noteFromNode = extractNote(node);
+  const targetNode = node ?? getSelectedTreeNodeFallback();
+  const noteFromNode = extractNote(targetNode);
+  if (targetNode !== undefined && !noteFromNode) {
+    return undefined;
+  }
   let noteId: string | undefined = noteFromNode?.id;
   let teamPath: ModelScope = noteFromNode ? (noteFromNode.teamPath ?? null) : undefined;
   let note: ModelNote | undefined;
@@ -481,7 +494,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    await openEditor(uri);
+    const preserveFocus = !!node?.preserveFocus;
+    await openEditor(uri, preserveFocus);
   });
 
   // ── hackmd.ui.preview ────────────────────────────────────────────────────
@@ -546,8 +560,10 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
+    const targetNode = node ?? getSelectedTreeNodeFallback();
+
     // Folder node: open folder URL directly.
-    const folder = extractFolderWebContext(node);
+    const folder = extractFolderWebContext(targetNode);
     if (folder) {
       const url = folder.teamPath
         ? `https://hackmd.io/team/${folder.teamPath}/folders/${folder.folderId}`
@@ -556,18 +572,20 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (node?.type === 'folder') {
-      vscode.window.showErrorMessage('Folder ID not found');
+    if (targetNode?.type === 'folder') {
       return;
     }
 
     // Team node: open the team workspace URL
-    if (node?.team?.path) {
-      await vscode.env.openExternal(vscode.Uri.parse(`https://hackmd.io/team/${node.team.path}`));
+    if (targetNode?.team?.path) {
+      await vscode.env.openExternal(vscode.Uri.parse(`https://hackmd.io/team/${targetNode.team.path}`));
       return;
     }
 
-    const noteFromNode = extractNote(node);
+    const noteFromNode = extractNote(targetNode);
+    if (targetNode !== undefined && !noteFromNode) {
+      return;
+    }
     let noteId: string | undefined = noteFromNode?.id;
     let teamPath: ModelScope = noteFromNode ? (noteFromNode.teamPath ?? null) : undefined;
 
@@ -667,13 +685,6 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       })))
     );
 
-    // 4. Refresh the relevant scope so provider updates are model-event-driven.
-    try {
-      await vscode.commands.executeCommand('hackmd.model.refreshScope', { teamPath: resolvedTeamPath ?? null });
-    } catch {
-      // Tree view may not be registered during testing.
-    }
-
     if (createdNotes.length > 0) {
       await vscode.commands.executeCommand('hackmd.ui.reveal', {
         type: 'note',
@@ -702,9 +713,13 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
     // Resolve targets from node / selectedNodes, or fall back to interactive picker.
     let targets: ExportTarget[] | undefined;
+    const fallbackSelection = (!node && (!selectedNodes || selectedNodes.length === 0))
+      ? getSelectedTreeNodesFallback()
+      : [];
+    const hasTreeSelectionContext = fallbackSelection.length > 0 || !!node || !!(selectedNodes && selectedNodes.length > 0);
 
-    if (node || (selectedNodes && selectedNodes.length > 0)) {
-      const effectiveNodes = selectedNodes?.length ? selectedNodes : node ? [node] : [];
+    if (node || (selectedNodes && selectedNodes.length > 0) || fallbackSelection.length > 0) {
+      const effectiveNodes = selectedNodes?.length ? selectedNodes : node ? [node] : fallbackSelection;
       const noteTargets: ExportNoteTarget[] = [];
       const folderTargets: ExportFolderTarget[] = [];
 
@@ -731,6 +746,9 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     }
 
     if (!targets || targets.length === 0) {
+      if (hasTreeSelectionContext) {
+        return;
+      }
       const picked = await pickEntity(model, 'Choose a note or folder to export');
       if (!picked) {
         return;
@@ -839,7 +857,11 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const noteFromNode = extractNote(node);
+    const targetNode = node ?? getSelectedTreeNodeFallback();
+    const noteFromNode = extractNote(targetNode);
+    if (targetNode !== undefined && !noteFromNode) {
+      return;
+    }
     let noteId: string | undefined = noteFromNode?.id;
     let teamPath: string | null = noteFromNode ? (noteFromNode.teamPath ?? null) : null;
 
@@ -869,8 +891,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
   // ── hackmd.ui.importMyNotes ───────────────────────────────────────────
   // Scoped variant: import files directly to My Notes (no team picker)
-  register('hackmd.ui.importMyNotes', async (node?: any) => {
-    const targetNode = node || {
+  register('hackmd.ui.importMyNotes', async () => {
+    const targetNode = {
       type: 'container',
       container: 'my-notes',
       viewId: 'hackmd.tree.my-notes',

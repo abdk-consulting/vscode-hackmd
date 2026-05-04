@@ -99,26 +99,20 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly folderParentByTeamPath = new Map<string, Map<string, string | null>>();
   private readonly noteParentByTeamPath = new Map<string, Map<string, string | null>>();
   private readonly childOrderSignatureByParent = new Map<string, string>();
+  private lastTeamsOrderSignature = '';
 
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
       this.teamNotesPendingOperation = !!this.model.isTeamNotesPendingOperation();
-      this.model.onDidChangeState((event) => {
-        if (event.reason === 'refreshTeams' || event.reason === 'refreshScope' || event.reason === 'refreshAll') {
-          if (event.reason === 'refreshTeams' || event.reason === 'refreshAll') {
-            this.teamsLoaded = true;
-          }
-          this._onDidChangeTreeData.fire(undefined);
-        }
-      });
       this.model.onDidChangeEntity((event) => {
-        if (event.scope !== null && event.changeType === 'upsert' && this.teamsLoaded) {
-          this.handleEntityUpsert(event.scope, event.entityType, event.id);
+        if (event.changeType !== 'upsert' || !this.teamsLoaded) {
           return;
         }
-        if (event.scope !== null) {
-          this._onDidChangeTreeData.fire(undefined);
+        if (event.entityType === 'team') {
+          this.handleTeamEntityChange();
+        } else if (event.scope !== null) {
+          this.handleEntityUpsert(event.scope, event.entityType, event.id);
         }
       });
       this.model.onDidChangePending((event) => {
@@ -127,11 +121,6 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
             this.teamNotesPendingOperation = event.pending;
             this._onDidChangePendingState.fire(event.pending);
           }
-          return;
-        }
-
-        if (event.targetType === 'team' || event.targetType === 'folder' || event.targetType === 'note') {
-          this._onDidChangeTreeData.fire(undefined);
         }
       });
     } catch {
@@ -157,6 +146,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this.teamsLoadingPromise = (async () => {
       try {
         await this.model!.refreshTeams();
+        this.lastTeamsOrderSignature = this.computeTeamsOrderSignature();
         this.teamsLoaded = true;
         this.lastError = null;
       } catch (error: any) {
@@ -323,6 +313,21 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  private computeTeamsOrderSignature(): string {
+    const teams = this.model?.getTeams() || [];
+    const parts = teams.map((team) => `team:${team.id}`);
+    return parts.join('|');
+  }
+
+  private handleTeamEntityChange(): void {
+    const previous = this.lastTeamsOrderSignature;
+    const next = this.computeTeamsOrderSignature();
+    this.lastTeamsOrderSignature = next;
+    if (previous !== next) {
+      this._onDidChangeTreeData.fire(undefined);
+    }
+  }
+
   private getCachedTeamNode(team: ModelTeam): TeamNode {
     const existing = this.teamNodesCache.get(team.id);
     if (existing) {
@@ -342,7 +347,6 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   refresh(): void {
     this.teamsLoaded = false;
     void this.ensureTeamsLoaded(true);
-    this._onDidChangeTreeData.fire(undefined);
   }
 
   refreshTeam(teamId: string): void {
@@ -351,7 +355,6 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       return;
     }
     void this.ensureScopeLoaded(team.path, true);
-    this._onDidChangeTreeData.fire(undefined);
   }
 
   refreshElement(element: TreeNode): void {
@@ -361,13 +364,11 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     if (element.type === 'team') {
       void this.ensureScopeLoaded(element.team.path, true);
-      this._onDidChangeTreeData.fire(undefined);
       return;
     }
 
     if (element.type === 'folder') {
       void this.ensureScopeLoaded(element.teamPath, true);
-      this._onDidChangeTreeData.fire(undefined);
     }
   }
 
@@ -640,7 +641,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = {
         command: 'hackmd.ui.edit',
         title: 'Open Note',
-        arguments: [{ type: 'note', note }],
+        arguments: [{ type: 'note', note, preserveFocus: true }],
       };
     }
 

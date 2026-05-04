@@ -233,67 +233,34 @@ test('writeFile throws FileNotFound when URI misses noteId', async () => {
   );
 });
 
-test('writeFile (personal) sets pending and calls model.saveNoteContent', async () => {
+test('writeFile (personal) calls model.saveNoteContent', async () => {
   const model = new MockModel();
   stub.setModel(model);
-
-  const my = stub.createPendingProvider();
-  const team = stub.createPendingProvider();
-  const history = stub.createPendingProvider();
-  stub.setProviders({ myNotesProvider: my, teamNotesProvider: team, historyProvider: history });
 
   const provider = new HackMDFsProvider();
   const uri = uriFor('n1', null);
 
-  const originalSetImmediate = global.setImmediate;
-  global.setImmediate = () => { };
-  try {
-    await provider.writeFile(uri, Buffer.from('# save'), { create: false, overwrite: true });
-  } finally {
-    global.setImmediate = originalSetImmediate;
-  }
+  await provider.writeFile(uri, Buffer.from('# save'), { create: false, overwrite: true });
 
-  assert.deepEqual(my.setPendingCalls, ['n1']);
-  assert.deepEqual(history.setPendingCalls, ['n1']);
-  assert.equal(team.setPendingCalls.length, 0);
   assert.deepEqual(model.calls.saveNoteContent[0], ['n1', '# save', null]);
 });
 
-test('writeFile (team) sets team pending and calls model.saveNoteContent with teamPath', async () => {
+test('writeFile (team) calls model.saveNoteContent with teamPath', async () => {
   const model = new MockModel();
   stub.setModel(model);
-
-  const my = stub.createPendingProvider();
-  const team = stub.createPendingProvider();
-  const history = stub.createPendingProvider();
-  stub.setProviders({ myNotesProvider: my, teamNotesProvider: team, historyProvider: history });
 
   const provider = new HackMDFsProvider();
   const uri = uriFor('n1', 'acme');
 
-  const originalSetImmediate = global.setImmediate;
-  global.setImmediate = () => { };
-  try {
-    await provider.writeFile(uri, Buffer.from('# team save'), { create: false, overwrite: true });
-  } finally {
-    global.setImmediate = originalSetImmediate;
-  }
+  await provider.writeFile(uri, Buffer.from('# team save'), { create: false, overwrite: true });
 
-  assert.deepEqual(team.setPendingCalls, ['n1']);
-  assert.deepEqual(history.setPendingCalls, ['n1']);
-  assert.equal(my.setPendingCalls.length, 0);
   assert.deepEqual(model.calls.saveNoteContent[0], ['n1', '# team save', 'acme']);
 });
 
-test('writeFile clears pending and throws Unavailable when model save fails', async () => {
+test('writeFile throws Unavailable when model save fails', async () => {
   const model = new MockModel();
   model.saveShouldThrow = new Error('network down');
   stub.setModel(model);
-
-  const my = stub.createPendingProvider();
-  const team = stub.createPendingProvider();
-  const history = stub.createPendingProvider();
-  stub.setProviders({ myNotesProvider: my, teamNotesProvider: team, historyProvider: history });
 
   const provider = new HackMDFsProvider();
 
@@ -301,10 +268,6 @@ test('writeFile clears pending and throws Unavailable when model save fails', as
     provider.writeFile(uriFor('n1'), Buffer.from('x'), { create: false, overwrite: true }),
     (err) => err.code === 'Unavailable' && String(err.message).includes('network down')
   );
-
-  assert.deepEqual(my.clearPendingCalls, ['n1']);
-  assert.deepEqual(team.clearPendingCalls, ['n1']);
-  assert.deepEqual(history.clearPendingCalls, ['n1']);
 });
 
 test('watch returns disposable', () => {
@@ -333,11 +296,6 @@ test('readFile throws FileNotFound when model is not initialized', async () => {
 
 test('writeFile throws Unavailable when model is not initialized', async () => {
   stub.clearModel();
-  const my = stub.createPendingProvider();
-  const team = stub.createPendingProvider();
-  const history = stub.createPendingProvider();
-  stub.setProviders({ myNotesProvider: my, teamNotesProvider: team, historyProvider: history });
-
   const provider = new HackMDFsProvider();
 
   await assert.rejects(

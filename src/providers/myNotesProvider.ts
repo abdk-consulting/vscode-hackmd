@@ -72,7 +72,6 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangePendingState = new vscode.EventEmitter<boolean>();
   readonly onDidChangePendingState = this._onDidChangePendingState.event;
 
-  private readonly pendingContainers = new Set<string>();
   private myNotesPendingOperation = false;
 
   private readonly model: ReturnType<typeof getHackmdModel> | null;
@@ -92,7 +91,9 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       this.model = getHackmdModel();
       this.myNotesPendingOperation = !!this.model.isMyNotesPendingOperation();
       this.model.onDidChangeState((event) => {
-        if (event.scope === null || event.reason === 'refreshAll') {
+        const affectsMyNotes = event.reason === 'refreshAll'
+          || (event.reason === 'refreshScope' && event.scope === null);
+        if (affectsMyNotes) {
           this.loaded = false;
           this._onDidChangeTreeData.fire(undefined);
         }
@@ -338,25 +339,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return path;
   }
 
-  setPendingNote(_noteId: string, _noteObject?: any): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
 
-  clearPendingNote(_noteId: string, _noteObject?: any, emitEvent = true): void {
-    if (emitEvent) {
-      this._onDidChangeTreeData.fire(undefined);
-    }
-  }
-
-  setPendingContainer(containerId: string): void {
-    this.pendingContainers.add(containerId);
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  clearPendingContainer(containerId: string): void {
-    this.pendingContainers.delete(containerId);
-    this._onDidChangeTreeData.fire(undefined);
-  }
 
   renameFolderInCache(_folderId: string, _newName: string): void {
     this._onDidChangeTreeData.fire(undefined);
@@ -488,8 +471,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `folder-${folderNode.id}`;
 
-    const modelPending = this.model?.isFolderPendingOperation(folderNode.id, null) || false;
-    const isPending = modelPending || this.pendingContainers.has(`folder-${folderNode.id}`);
+    const isPending = this.model?.isFolderPendingOperation(folderNode.id, null) || false;
     const hasClientId = !!folderNode.clientId;
 
     item.contextValue = hasClientId

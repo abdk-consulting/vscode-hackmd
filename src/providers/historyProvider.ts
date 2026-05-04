@@ -39,8 +39,11 @@ function compareHistoryNotes(a: ModelNote, b: ModelNote): number {
 export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly _onDidChangePendingState = new vscode.EventEmitter<boolean>();
+  readonly onDidChangePendingState = this._onDidChangePendingState.event;
   private loadingPromise: Promise<void> | null = null;
   private loaded = false;
+  private historyPendingOperation = false;
   private lastError: string | null = null;
   private readonly model: ReturnType<typeof getHackmdModel> | null;
   private lastOrderSignature = '';
@@ -48,6 +51,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
+      this.historyPendingOperation = !!this.model.isRecentNotesPendingOperation();
       this.model.onDidChangeState((event) => {
         if (event.reason === 'refreshHistory' || event.reason === 'refreshScope') {
           this._onDidChangeTreeData.fire(undefined);
@@ -63,6 +67,13 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       });
       this.model.onDidChangePending((event) => {
+        if (event.targetType === 'container' && event.container === 'recent-notes') {
+          if (this.historyPendingOperation !== event.pending) {
+            this.historyPendingOperation = event.pending;
+            this._onDidChangePendingState.fire(event.pending);
+          }
+          return;
+        }
         if (event.targetType === 'note') {
           this._onDidChangeTreeData.fire(undefined);
         }
@@ -70,6 +81,10 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     } catch {
       this.model = null;
     }
+  }
+
+  isPendingOperation(): boolean {
+    return this.historyPendingOperation;
   }
 
   private async ensureHistoryLoaded(force = false): Promise<void> {
@@ -140,17 +155,6 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       return undefined;
     }
     return this.model.getHistoryNotes().find(n => n.id === noteId);
-  }
-
-  // Pending operation management
-  setPendingNote(noteId: string, noteObject?: any): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  clearPendingNote(noteId: string, noteObject?: any, emitEvent = true): void {
-    if (emitEvent) {
-      this._onDidChangeTreeData.fire(undefined);
-    }
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {

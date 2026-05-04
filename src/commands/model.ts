@@ -882,12 +882,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     );
     if (confirm !== 'Delete') { return; }
 
-    for (const note of notes) {
-      await model.deleteNote(note.id, note.teamPath ?? null);
-    }
-    for (const folder of folders) {
-      await model.deleteFolder(folder.id, folder.teamPath ?? null);
-    }
+    await Promise.all([
+      ...notes.map((note) => model.deleteNote(note.id, note.teamPath ?? null)),
+      ...folders.map((folder) => model.deleteFolder(folder.id, folder.teamPath ?? null)),
+    ]);
     return true;
   });
 }

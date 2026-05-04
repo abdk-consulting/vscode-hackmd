@@ -94,7 +94,7 @@ export interface ModelEntityChangedEvent {
   id: string;
 }
 
-export type ModelPendingContainer = 'my-notes' | 'team-notes';
+export type ModelPendingContainer = 'my-notes' | 'team-notes' | 'recent-notes';
 
 export interface ModelPendingChangedEvent {
   targetType: 'container' | 'team' | 'folder' | 'note';
@@ -194,6 +194,16 @@ function replaceArrayContentsIfChanged<T>(target: T[], next: T[]): boolean {
   }
   replaceArrayContents(target, next);
   return true;
+}
+
+function mergeDefinedProps<T extends Record<string, any>>(base: T, patch: Partial<T>): T {
+  const merged: T = { ...base };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (value !== undefined) {
+      (merged as any)[key] = value;
+    }
+  }
+  return merged;
 }
 
 function reconcileArrayAsSetPreserveOrder<T>(target: T[], next: readonly T[]): boolean {
@@ -299,9 +309,11 @@ export class HackmdModel {
   private readonly didChangePending = new EventSignal<ModelPendingChangedEvent>();
   private entityEventBatchDepth = 0;
   private readonly batchedEntityEvents: ModelEntityChangedEvent[] = [];
+  private entityChangeVersion = 0;
   private readonly pendingCounts = new Map<string, number>();
   private myNotesPendingOperation = false;
   private teamNotesPendingOperation = false;
+  private recentNotesPendingOperation = false;
 
   private static readonly EMPTY_FOLDERS: ModelFolder[] = [];
   private static readonly EMPTY_NOTES: ModelNote[] = [];
@@ -316,6 +328,10 @@ export class HackmdModel {
 
   isTeamNotesPendingOperation(): boolean {
     return this.teamNotesPendingOperation;
+  }
+
+  isRecentNotesPendingOperation(): boolean {
+    return this.recentNotesPendingOperation;
   }
 
   isTeamPendingOperation(teamPath: string): boolean {
@@ -580,10 +596,14 @@ export class HackmdModel {
       { targetType: 'container', container: 'team-notes' },
       async () => {
         const teams = await recordUsage(this.api.getTeams({ unwrapData: false }));
+        const beforeVersion = this.entityChangeVersion;
+        let structureChanged = false;
         this.withEntityEventBatch(() => {
-          this.syncTeams(teams || []);
+          structureChanged = this.syncTeams(teams || []);
         });
-        this.didChangeState.emit({ reason: 'refreshTeams', scope: null });
+        if (structureChanged || this.entityChangeVersion !== beforeVersion) {
+          this.didChangeState.emit({ reason: 'refreshTeams', scope: null });
+        }
         return this.orderedTeams;
       }
     );
@@ -614,10 +634,14 @@ export class HackmdModel {
           recordUsage(this.api.getTeamNotes(teamPath, { unwrapData: false })),
           recordUsage(this.api.getTeamFolders(teamPath, { unwrapData: false })),
         ]);
+        const beforeVersion = this.entityChangeVersion;
+        let structureChanged = false;
         this.withEntityEventBatch(() => {
-          this.rebuildScope(teamPath, notes || [], folders || []);
+          structureChanged = this.rebuildScope(teamPath, notes || [], folders || []);
         });
-        this.didChangeState.emit({ reason: 'refreshScope', scope: teamPath });
+        if (structureChanged || this.entityChangeVersion !== beforeVersion) {
+          this.didChangeState.emit({ reason: 'refreshScope', scope: teamPath });
+        }
         return;
       }
 
@@ -625,10 +649,14 @@ export class HackmdModel {
         recordUsage(this.api.getNoteList({ unwrapData: false })),
         recordUsage(this.api.getFolders({ unwrapData: false })),
       ]);
+      const beforeVersion = this.entityChangeVersion;
+      let structureChanged = false;
       this.withEntityEventBatch(() => {
-        this.rebuildScope(null, notes || [], folders || []);
+        structureChanged = this.rebuildScope(null, notes || [], folders || []);
       });
-      this.didChangeState.emit({ reason: 'refreshScope', scope: null });
+      if (structureChanged || this.entityChangeVersion !== beforeVersion) {
+        this.didChangeState.emit({ reason: 'refreshScope', scope: null });
+      }
     });
 
     this.refreshScopePromises.set(key, promise);
@@ -644,22 +672,28 @@ export class HackmdModel {
       return this.refreshHistoryPromise;
     }
 
-    this.refreshHistoryPromise = (async () => {
-      const notes = await recordUsage(this.api.getHistory({ unwrapData: false }));
-      const next: ModelNote[] = [];
+    this.refreshHistoryPromise = this.withPendingOperation(
+      { targetType: 'container', container: 'recent-notes' },
+      async () => {
+        const notes = await recordUsage(this.api.getHistory({ unwrapData: false }));
+        const next: ModelNote[] = [];
+        const beforeVersion = this.entityChangeVersion;
 
-      this.withEntityEventBatch(() => {
-        for (const note of notes || []) {
-          const teamPath = note.teamPath || null;
-          const modelNote = this.upsertNote(teamPath, note);
-          next.push(modelNote);
+        this.withEntityEventBatch(() => {
+          for (const note of notes || []) {
+            const teamPath = note.teamPath || null;
+            const modelNote = this.upsertNote(teamPath, note);
+            next.push(modelNote);
+          }
+        });
+
+        const historyCollectionChanged = reconcileArrayAsSetPreserveOrder(this.historyNotes, next);
+        if (historyCollectionChanged || this.entityChangeVersion !== beforeVersion) {
+          this.didChangeState.emit({ reason: 'refreshHistory', scope: null });
         }
-      });
-
-      reconcileArrayAsSetPreserveOrder(this.historyNotes, next);
-      this.didChangeState.emit({ reason: 'refreshHistory', scope: null });
-      return this.historyNotes;
-    })();
+        return this.historyNotes;
+      }
+    );
 
     try {
       return await this.refreshHistoryPromise;
@@ -736,12 +770,13 @@ export class HackmdModel {
   async saveNoteContent(noteId: string, content: string, teamPath?: string | null): Promise<ModelNote> {
     const scope = teamPath || null;
     return this.withPendingOperation({ targetType: 'note', scope, id: noteId }, async () => {
-      const note = scope
+      const updated = scope
         ? await recordUsage(this.api.updateTeamNote(scope, noteId, { content }, { unwrapData: false }))
         : await recordUsage(this.api.updateNote(noteId, { content }, { unwrapData: false }));
 
+      const note = this.hydrateUpdatedNotePayload(scope, noteId, updated);
       const entity = this.upsertNote(scope, note, true);
-      await this.refreshScope({ teamPath: scope });
+      this.applyPredictedNotePlacement(scope, entity);
       return entity;
     });
   }
@@ -749,12 +784,20 @@ export class HackmdModel {
   async updateNoteProperties(noteId: string, input: UpdateNoteInput, teamPath?: string | null): Promise<ModelNote> {
     const scope = teamPath || null;
     return this.withPendingOperation({ targetType: 'note', scope, id: noteId }, async () => {
-      const note = scope
+      const updated = scope
         ? await recordUsage(this.api.updateTeamNote(scope, noteId, input as any, { unwrapData: false }))
         : await recordUsage(this.api.updateNote(noteId, input as any, { unwrapData: false }));
 
+      const note = this.hydrateUpdatedNotePayload(scope, noteId, updated);
       const entity = this.upsertNote(scope, note);
-      await this.refreshScope({ teamPath: scope });
+      if (Object.prototype.hasOwnProperty.call(input, 'parentFolderId')) {
+        const requestedParentFolderId = input.parentFolderId;
+        if (requestedParentFolderId !== undefined && entity.parentFolderId !== requestedParentFolderId) {
+          entity.parentFolderId = requestedParentFolderId;
+          this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope, id: entity.id });
+        }
+      }
+      this.applyPredictedNotePlacement(scope, entity);
       return entity;
     });
   }
@@ -770,12 +813,20 @@ export class HackmdModel {
   async updateFolder(folderId: string, input: UpdateFolderInput, teamPath?: string | null): Promise<ModelFolder> {
     const scope = teamPath || null;
     return this.withPendingOperation({ targetType: 'folder', scope, id: folderId }, async () => {
-      const folder = scope
+      const updated = scope
         ? await recordUsage(this.api.updateTeamFolder(scope, folderId, input as any, { unwrapData: false }))
         : await recordUsage(this.api.updateFolder(folderId, input as any, { unwrapData: false }));
 
+      const folder = this.hydrateUpdatedFolderPayload(scope, folderId, updated);
       const entity = this.upsertFolder(scope, folder);
-      await this.refreshScope({ teamPath: scope });
+      if (Object.prototype.hasOwnProperty.call(input, 'parentFolderId')) {
+        const requestedParentFolderId = input.parentFolderId;
+        if (requestedParentFolderId !== undefined && entity.parentId !== requestedParentFolderId) {
+          entity.parentId = requestedParentFolderId;
+          this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope, id: entity.id });
+        }
+      }
+      this.applyPredictedFolderPlacement(scope, entity);
       return entity;
     });
   }
@@ -786,12 +837,15 @@ export class HackmdModel {
 
     return this.withPendingOperation({ targetType: 'note', scope: sourceScope, id: input.noteId }, async () => {
       if (sourceScope === targetScope) {
+        const patch: UpdateNoteInput = {};
+        if (Object.prototype.hasOwnProperty.call(input, 'targetParentFolderId')) {
+          patch.parentFolderId = input.targetParentFolderId;
+        }
         const updated = await this.updateNoteProperties(
           input.noteId,
-          { parentFolderId: input.targetParentFolderId || null },
+          patch,
           sourceScope
         );
-        await this.refreshScope({ teamPath: sourceScope });
         return updated;
       }
 
@@ -804,10 +858,6 @@ export class HackmdModel {
       });
 
       await this.deleteNote(input.noteId, sourceScope);
-      await Promise.all([
-        this.refreshScope({ teamPath: sourceScope }),
-        this.refreshScope({ teamPath: targetScope }),
-      ]);
 
       return created;
     });
@@ -833,10 +883,7 @@ export class HackmdModel {
         await recordUsage(this.api.deleteNote(noteId, { unwrapData: false }));
       }
 
-      this.getNoteScopeMap(scope).delete(noteId);
-      this.getContentLoadedSet(scope).delete(noteId);
-      this.emitEntityChanged({ entityType: 'note', changeType: 'delete', scope, id: noteId });
-      await this.refreshScope({ teamPath: scope });
+      this.applyPredictedNoteDelete(scope, noteId);
     });
   }
 
@@ -849,15 +896,140 @@ export class HackmdModel {
         await recordUsage(this.api.deleteFolder(folderId, { unwrapData: false }));
       }
 
-      this.getFolderScopeMap(scope).delete(folderId);
-      this.emitEntityChanged({ entityType: 'folder', changeType: 'delete', scope, id: folderId });
-      await this.refreshScope({ teamPath: scope });
+      this.applyPredictedFolderDelete(scope, folderId);
     });
   }
 
-  private syncTeams(teams: Team[]): void {
+  private applyPredictedNotePlacement(scope: ModelScope, note: ModelNote): void {
+    if (this.reconcileNotePlacement(scope, note)) {
+      this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope, id: note.id });
+    }
+  }
+
+  private applyPredictedFolderPlacement(scope: ModelScope, folder: ModelFolder): void {
+    if (this.reconcileFolderPlacement(scope, folder)) {
+      this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope, id: folder.id });
+    }
+  }
+
+  private applyPredictedNoteDelete(scope: ModelScope, noteId: string): void {
+    const noteMap = this.getNoteScopeMap(scope);
+    const existing = noteMap.get(noteId);
+    if (!existing) {
+      return;
+    }
+
+    noteMap.delete(noteId);
+    this.getContentLoadedSet(scope).delete(noteId);
+
+    for (const folder of this.getFolderScopeMap(scope).values()) {
+      const nextNotes = folder.notes.filter((candidate) => candidate.id !== noteId);
+      if (nextNotes.length !== folder.notes.length) {
+        replaceArrayContents(folder.notes, nextNotes);
+      }
+    }
+
+    const roots = scope
+      ? this.teamsByPath.get(scope)?.rootNotes
+      : this.personalRootNotes;
+    if (roots) {
+      const nextRoots = roots.filter((candidate) => candidate.id !== noteId);
+      if (nextRoots.length !== roots.length) {
+        replaceArrayContents(roots, nextRoots);
+      }
+    }
+
+    const nextHistory = this.historyNotes.filter((candidate) => candidate.id !== noteId || (candidate.teamPath || null) !== scope);
+    if (nextHistory.length !== this.historyNotes.length) {
+      replaceArrayContents(this.historyNotes, nextHistory);
+    }
+
+    this.emitEntityChanged({ entityType: 'note', changeType: 'delete', scope, id: noteId });
+  }
+
+  private applyPredictedFolderDelete(scope: ModelScope, folderId: string): void {
+    const folderMap = this.getFolderScopeMap(scope);
+    const folder = folderMap.get(folderId);
+    if (!folder) {
+      return;
+    }
+
+    const promotedParentId = folder.parentId || null;
+
+    // Promote child folders to deleted folder's parent to preserve hierarchy continuity.
+    for (const candidate of folderMap.values()) {
+      if (candidate.id === folderId) {
+        continue;
+      }
+      if ((candidate.parentId || null) === folderId) {
+        candidate.parentId = promotedParentId;
+        this.applyPredictedFolderPlacement(scope, candidate);
+      }
+    }
+
+    // Promote direct notes to deleted folder's parent/root.
+    for (const note of folder.notes) {
+      if ((note.parentFolderId || null) !== promotedParentId) {
+        note.parentFolderId = promotedParentId;
+        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope, id: note.id });
+      }
+      this.applyPredictedNotePlacement(scope, note);
+    }
+
+    folderMap.delete(folderId);
+
+    for (const candidate of folderMap.values()) {
+      const nextChildren = candidate.children.filter((child) => child.id !== folderId);
+      if (nextChildren.length !== candidate.children.length) {
+        replaceArrayContents(candidate.children, nextChildren);
+      }
+    }
+
+    const roots = scope
+      ? this.teamsByPath.get(scope)?.rootFolders
+      : this.personalRootFolders;
+    if (roots) {
+      const nextRoots = roots.filter((candidate) => candidate.id !== folderId);
+      if (nextRoots.length !== roots.length) {
+        replaceArrayContents(roots, nextRoots);
+      }
+    }
+
+    this.emitEntityChanged({ entityType: 'folder', changeType: 'delete', scope, id: folderId });
+  }
+
+  private hydrateUpdatedNotePayload(scope: ModelScope, noteId: string, updated: Partial<Note> | null | undefined): Note {
+    const existing = this.getNoteById(noteId, scope);
+    const merged = mergeDefinedProps((existing as any || {}) as Record<string, any>, (updated as any || {}) as Record<string, any>);
+    const title = Object.prototype.hasOwnProperty.call(merged, 'title')
+      ? merged.title
+      : (existing?.title ?? '');
+    return {
+      ...merged,
+      id: noteId,
+      teamPath: scope,
+      title,
+    } as Note;
+  }
+
+  private hydrateUpdatedFolderPayload(scope: ModelScope, folderId: string, updated: Partial<HackMdFolder> | null | undefined): HackMdFolder {
+    const existing = this.getFolderById(folderId, scope);
+    const merged = mergeDefinedProps((existing as any || {}) as Record<string, any>, (updated as any || {}) as Record<string, any>);
+    const name = Object.prototype.hasOwnProperty.call(merged, 'name')
+      ? merged.name
+      : (existing?.name ?? 'Folder');
+    return {
+      ...merged,
+      id: folderId,
+      teamPath: scope,
+      name,
+    } as HackMdFolder;
+  }
+
+  private syncTeams(teams: Team[]): boolean {
     const incomingById = new Map<string, Team>();
     const existingTeamIds = new Set(this.teams.keys());
+    let changed = false;
 
     for (const team of teams) {
       incomingById.set(team.id, team);
@@ -874,16 +1046,18 @@ export class HackmdModel {
         };
         this.teams.set(team.id, modelTeam);
         this.emitEntityChanged({ entityType: 'team', changeType: 'upsert', scope: modelTeam.path, id: modelTeam.id });
+        changed = true;
       } else {
         const oldPath = modelTeam.path;
-        const changed = modelTeam.path !== team.path || modelTeam.name !== team.name;
+        const teamMetaChanged = modelTeam.path !== team.path || modelTeam.name !== team.name;
         modelTeam.path = team.path;
         modelTeam.name = team.name;
         if (oldPath !== modelTeam.path) {
           this.teamsByPath.delete(oldPath);
         }
-        if (changed) {
+        if (teamMetaChanged) {
           this.emitEntityChanged({ entityType: 'team', changeType: 'upsert', scope: modelTeam.path, id: modelTeam.id });
+          changed = true;
         }
       }
       this.teamsByPath.set(modelTeam.path, modelTeam);
@@ -896,18 +1070,25 @@ export class HackmdModel {
         this.teams.delete(teamId);
         this.teamsByPath.delete(existing.path);
         this.emitEntityChanged({ entityType: 'team', changeType: 'delete', scope: existing.path, id: existing.id });
+        changed = true;
       }
     }
 
     const desiredOrder = teams
       .map((team) => this.teams.get(team.id))
       .filter((team): team is ModelTeam => !!team);
-    reconcileArrayAsSetPreserveOrder(this.orderedTeams, desiredOrder);
+    if (reconcileArrayAsSetPreserveOrder(this.orderedTeams, desiredOrder)) {
+      changed = true;
+    }
+
+    return changed;
   }
 
-  private rebuildScope(teamPath: string | null, notes: Note[], folders: HackMdFolder[]): void {
+  private rebuildScope(teamPath: string | null, notes: Note[], folders: HackMdFolder[]): boolean {
     const folderMap = this.getFolderScopeMap(teamPath);
     const noteMap = this.getNoteScopeMap(teamPath);
+    const scope = scopeKey(teamPath);
+    let changed = false;
 
     const folderMetaById = new Map<string, any>();
     for (const note of notes) {
@@ -917,7 +1098,7 @@ export class HackmdModel {
           ...prev,
           ...fp,
           // Preserve whichever source has clientId metadata.
-          clientId: fp.clientId || prev.clientId || '',
+          clientId: fp.clientId !== undefined ? fp.clientId : (prev.clientId !== undefined ? prev.clientId : ''),
         });
       }
     }
@@ -927,7 +1108,7 @@ export class HackmdModel {
       desiredFolderIds.add(id);
       this.upsertFolder(teamPath, {
         id,
-        name: meta.name || 'Folder',
+        name: meta.name !== undefined ? meta.name : 'Folder',
         path: meta.path,
         clientId: meta.clientId,
         parentFolderId: resolveParentFolderId(meta),
@@ -940,7 +1121,9 @@ export class HackmdModel {
       const parentId = resolveParentFolderId(noteMeta) || resolveParentFolderId(apiFolder);
       this.upsertFolder(teamPath, {
         ...apiFolder,
-        clientId: noteMeta?.clientId || apiFolder.clientId || '',
+        clientId: noteMeta?.clientId !== undefined
+          ? noteMeta.clientId
+          : (apiFolder.clientId !== undefined ? apiFolder.clientId : ''),
         parentFolderId: parentId,
       });
     }
@@ -949,6 +1132,7 @@ export class HackmdModel {
       if (!desiredFolderIds.has(folderId)) {
         folderMap.delete(folderId);
         this.emitEntityChanged({ entityType: 'folder', changeType: 'delete', scope: teamPath, id: folderId });
+        changed = true;
       }
     }
 
@@ -984,6 +1168,7 @@ export class HackmdModel {
       if (note.parentFolderId !== nextParentFolderId) {
         note.parentFolderId = nextParentFolderId;
         this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: note.id });
+        changed = true;
       }
 
       if (parentFolder) {
@@ -1000,26 +1185,44 @@ export class HackmdModel {
         noteMap.delete(noteId);
         this.getContentLoadedSet(teamPath).delete(noteId);
         this.emitEntityChanged({ entityType: 'note', changeType: 'delete', scope: teamPath, id: noteId });
+        changed = true;
       }
     }
 
     for (const folder of folderMap.values()) {
-      reconcileArrayAsSetPreserveOrder(folder.children, nextChildrenByFolder.get(folder.id) || HackmdModel.EMPTY_FOLDERS);
-      reconcileArrayAsSetPreserveOrder(folder.notes, nextNotesByFolder.get(folder.id) || HackmdModel.EMPTY_NOTES);
+      if (reconcileArrayAsSetPreserveOrder(folder.children, nextChildrenByFolder.get(folder.id) || HackmdModel.EMPTY_FOLDERS)) {
+        changed = true;
+      }
+      if (reconcileArrayAsSetPreserveOrder(folder.notes, nextNotesByFolder.get(folder.id) || HackmdModel.EMPTY_NOTES)) {
+        changed = true;
+      }
     }
 
     if (teamPath) {
       const team = this.teamsByPath.get(teamPath);
       if (team) {
-        reconcileArrayAsSetPreserveOrder(team.rootFolders, rootFolders);
-        reconcileArrayAsSetPreserveOrder(team.rootNotes, rootNotes);
+        if (reconcileArrayAsSetPreserveOrder(team.rootFolders, rootFolders)) {
+          changed = true;
+        }
+        if (reconcileArrayAsSetPreserveOrder(team.rootNotes, rootNotes)) {
+          changed = true;
+        }
       }
     } else {
-      reconcileArrayAsSetPreserveOrder(this.personalRootFolders, rootFolders);
-      reconcileArrayAsSetPreserveOrder(this.personalRootNotes, rootNotes);
+      if (reconcileArrayAsSetPreserveOrder(this.personalRootFolders, rootFolders)) {
+        changed = true;
+      }
+      if (reconcileArrayAsSetPreserveOrder(this.personalRootNotes, rootNotes)) {
+        changed = true;
+      }
     }
 
-    this.loadedScopes.add(scopeKey(teamPath));
+    if (!this.loadedScopes.has(scope)) {
+      this.loadedScopes.add(scope);
+      changed = true;
+    }
+
+    return changed;
   }
 
   private upsertFolder(teamPath: string | null, folder: Partial<HackMdFolder> & { id: string; name: string }): ModelFolder {
@@ -1030,10 +1233,10 @@ export class HackmdModel {
       entity = {
         type: 'folder',
         id: folder.id,
-        name: folder.name || 'Folder',
+        name: folder.name !== undefined ? folder.name : 'Folder',
         pendingOperation: this.isPendingByKey(this.pendingKeyForFolder(teamPath, folder.id)),
         path: folder.path,
-        clientId: folder.clientId || '',
+        clientId: folder.clientId !== undefined ? folder.clientId : '',
         parentId: resolveParentFolderId(folder),
         teamPath,
         children: [],
@@ -1044,19 +1247,21 @@ export class HackmdModel {
     } else {
       let changed = false;
 
-      const nextName = folder.name || entity.name;
+      const nextName = folder.name !== undefined ? folder.name : entity.name;
       if (entity.name !== nextName) {
         entity.name = nextName;
         changed = true;
       }
 
-      const nextPath = folder.path || entity.path;
+      const nextPath = folder.path !== undefined ? folder.path : entity.path;
       if (entity.path !== nextPath) {
         entity.path = nextPath;
         changed = true;
       }
 
-      const nextClientId = folder.clientId || entity.clientId || '';
+      const nextClientId = folder.clientId !== undefined
+        ? folder.clientId
+        : (entity.clientId !== undefined ? entity.clientId : '');
       if (entity.clientId !== nextClientId) {
         entity.clientId = nextClientId;
         changed = true;
@@ -1161,69 +1366,71 @@ export class HackmdModel {
     } else {
       let changed = false;
 
-      if (entity.title !== note.title) {
+      if (note.title !== undefined && entity.title !== note.title) {
         entity.title = note.title;
         changed = true;
       }
-      if (entity.shortId !== note.shortId) {
+      if (note.shortId !== undefined && entity.shortId !== note.shortId) {
         entity.shortId = note.shortId;
         changed = true;
       }
-      if (entity.teamPath !== teamPath) {
-        entity.teamPath = teamPath;
+      if (note.teamPath !== undefined && entity.teamPath !== note.teamPath) {
+        entity.teamPath = note.teamPath;
         changed = true;
       }
-      if (markContentLoaded && entity.content !== note.content) {
+      if (markContentLoaded && note.content !== undefined && entity.content !== note.content) {
         entity.content = note.content;
         changed = true;
       }
-      if (entity.publishLink !== note.publishLink) {
+      if (note.publishLink !== undefined && entity.publishLink !== note.publishLink) {
         entity.publishLink = note.publishLink;
         changed = true;
       }
-      if (entity.publishType !== note.publishType) {
+      if (note.publishType !== undefined && entity.publishType !== note.publishType) {
         entity.publishType = note.publishType;
         changed = true;
       }
-      if (entity.permalink !== note.permalink) {
+      if (note.permalink !== undefined && entity.permalink !== note.permalink) {
         entity.permalink = note.permalink;
         changed = true;
       }
-      if (entity.userPath !== note.userPath) {
+      if (note.userPath !== undefined && entity.userPath !== note.userPath) {
         entity.userPath = note.userPath;
         changed = true;
       }
-      if (!folderPathsEqual(entity.folderPaths, note.folderPaths)) {
+      if (note.folderPaths !== undefined && !folderPathsEqual(entity.folderPaths, note.folderPaths)) {
         entity.folderPaths = note.folderPaths;
         changed = true;
       }
       const apiParentFolderId = resolveParentFolderId(note);
-      const nextParentFolderId = apiParentFolderId ?? entity.parentFolderId;
-      if (entity.parentFolderId !== nextParentFolderId) {
-        entity.parentFolderId = nextParentFolderId;
+      if (
+        (note.parentFolderId !== undefined || note.parentForderId !== undefined)
+        && entity.parentFolderId !== apiParentFolderId
+      ) {
+        entity.parentFolderId = apiParentFolderId;
         changed = true;
       }
-      if (entity.parentForderId !== note.parentForderId) {
+      if (note.parentForderId !== undefined && entity.parentForderId !== note.parentForderId) {
         entity.parentForderId = note.parentForderId;
         changed = true;
       }
-      if (entity.readPermission !== note.readPermission) {
+      if (note.readPermission !== undefined && entity.readPermission !== note.readPermission) {
         entity.readPermission = note.readPermission;
         changed = true;
       }
-      if (entity.writePermission !== note.writePermission) {
+      if (note.writePermission !== undefined && entity.writePermission !== note.writePermission) {
         entity.writePermission = note.writePermission;
         changed = true;
       }
-      if (!stringArrayEqual(entity.tags, note.tags)) {
+      if (note.tags !== undefined && !stringArrayEqual(entity.tags, note.tags)) {
         entity.tags = note.tags;
         changed = true;
       }
-      if (entity.createdAt !== note.createdAt) {
+      if (note.createdAt !== undefined && entity.createdAt !== note.createdAt) {
         entity.createdAt = note.createdAt;
         changed = true;
       }
-      if (entity.lastChangedAt !== note.lastChangedAt) {
+      if (note.lastChangedAt !== undefined && entity.lastChangedAt !== note.lastChangedAt) {
         entity.lastChangedAt = note.lastChangedAt;
         changed = true;
         // The server reports a newer modification time but the list API doesn't
@@ -1292,6 +1499,7 @@ export class HackmdModel {
   }
 
   private emitEntityChanged(event: ModelEntityChangedEvent): void {
+    this.entityChangeVersion += 1;
     if (this.entityEventBatchDepth > 0) {
       this.batchedEntityEvents.push(event);
       return;
@@ -1325,6 +1533,21 @@ export class HackmdModel {
         return;
       }
       this.myNotesPendingOperation = pending;
+      this.didChangePending.emit({
+        targetType: 'container',
+        container,
+        pending,
+        scope: null,
+        id: null,
+      });
+      return;
+    }
+
+    if (container === 'recent-notes') {
+      if (this.recentNotesPendingOperation === pending) {
+        return;
+      }
+      this.recentNotesPendingOperation = pending;
       this.didChangePending.emit({
         targetType: 'container',
         container,

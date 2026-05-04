@@ -103,23 +103,21 @@ async function exportFolderRecursive(
   await vscode.workspace.fs.createDirectory(dirUri);
 
   const usedNames = await getUsedNamesForDirectory(dirUri);
-  let count = 0;
-
-  for (const note of folder.notes) {
-    const content = await model.getNoteContent(note.id, folder.teamPath);
+  const noteJobs = folder.notes.map((note) => {
     const fileName = getUniqueMarkdownFileName(note.title || note.shortId || 'Untitled', usedNames);
-    await vscode.workspace.fs.writeFile(
-      vscode.Uri.joinPath(dirUri, fileName),
-      Buffer.from(content ?? '', 'utf8')
-    );
-    count += 1;
-  }
+    return (async () => {
+      const content = await model.getNoteContent(note.id, folder.teamPath);
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(dirUri, fileName),
+        Buffer.from(content ?? '', 'utf8')
+      );
+      return 1;
+    })();
+  });
 
-  for (const child of folder.children) {
-    count += await exportFolderRecursive(model, child, dirUri);
-  }
-
-  return count;
+  const childJobs = folder.children.map((child) => exportFolderRecursive(model, child, dirUri));
+  const counts = await Promise.all([...noteJobs, ...childJobs]);
+  return counts.reduce((sum, value) => sum + value, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -661,19 +659,12 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         title: `Importing ${files.length} note${files.length === 1 ? '' : 's'}…`,
         cancellable: false,
       },
-      async () => {
-        const results: ModelNote[] = [];
-        for (const file of files) {
-          const note = await model.createNote({
-            teamPath: resolvedTeamPath,
-            title: file.title,
-            content: file.content,
-            parentFolderId: resolvedFolderId,
-          });
-          results.push(note);
-        }
-        return results;
-      }
+      async () => Promise.all(files.map((file) => model.createNote({
+        teamPath: resolvedTeamPath,
+        title: file.title,
+        content: file.content,
+        parentFolderId: resolvedFolderId,
+      })))
     );
 
     // 4. Refresh the relevant scope so provider updates are model-event-driven.
@@ -681,6 +672,13 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       await vscode.commands.executeCommand('hackmd.model.refreshScope', { teamPath: resolvedTeamPath ?? null });
     } catch {
       // Tree view may not be registered during testing.
+    }
+
+    if (createdNotes.length > 0) {
+      await vscode.commands.executeCommand('hackmd.ui.reveal', {
+        type: 'note',
+        note: createdNotes[0],
+      });
     }
 
     vscode.window.showInformationMessage(
@@ -788,22 +786,23 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       } else if (exportDirUri) {
         const usedNames = await getUsedNamesForDirectory(exportDirUri);
 
-        // Export individual notes first.
-        for (const nt of noteTargets) {
-          const content = await model.getNoteContent(nt.noteId, nt.teamPath);
+        const noteJobs = noteTargets.map((nt) => {
           const snapshot = model.getScopeSnapshotSync(nt.teamPath);
           const cached = snapshot
             ? collectNotes(snapshot.rootFolders, snapshot.rootNotes).find((n) => n.id === nt.noteId)
             : undefined;
           const baseName = cached?.title || cached?.shortId || nt.noteId;
           const fileName = getUniqueMarkdownFileName(baseName, usedNames);
-          await vscode.workspace.fs.writeFile(
-            vscode.Uri.joinPath(exportDirUri, fileName),
-            Buffer.from(content ?? '', 'utf8')
-          );
-        }
+          return (async () => {
+            const content = await model.getNoteContent(nt.noteId, nt.teamPath);
+            await vscode.workspace.fs.writeFile(
+              vscode.Uri.joinPath(exportDirUri, fileName),
+              Buffer.from(content ?? '', 'utf8')
+            );
+          })();
+        });
 
-        // Export folders recursively.
+        const folderJobs: Promise<number>[] = [];
         for (const ft of folderTargets) {
           const snapshot = model.getScopeSnapshotSync(ft.teamPath);
           if (!snapshot) {
@@ -819,8 +818,10 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
             );
             continue;
           }
-          await exportFolderRecursive(model, folder, exportDirUri);
+          folderJobs.push(exportFolderRecursive(model, folder, exportDirUri));
         }
+
+        await Promise.all([...noteJobs, ...folderJobs]);
       }
 
       vscode.window.showInformationMessage('Export completed successfully.');

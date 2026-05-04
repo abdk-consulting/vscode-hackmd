@@ -543,30 +543,57 @@ test('async URI lookup fetches entities not yet loaded', async () => {
   assert.equal(api.calls.getTeamNote, 1);
 });
 
-test('refresh with unchanged data does not emit upsert events', async () => {
+test('refresh with unchanged personal scope emits no entity/state events', async () => {
   const { model } = createModelAndApi();
-  const events = [];
-  const disposable = model.onDidChangeEntity((event) => events.push(event));
+  const entityEvents = [];
+  const stateEvents = [];
+  const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
+  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshScope({ teamPath: null });
-  events.length = 0;
+  entityEvents.length = 0;
+  stateEvents.length = 0;
 
   await model.refreshScope({ teamPath: null });
 
-  assert.equal(events.length, 0);
-  disposable.dispose();
+  assert.equal(entityEvents.length, 0);
+  assert.equal(stateEvents.length, 0);
+  d1.dispose();
+  d2.dispose();
+});
+
+test('refreshHistory with unchanged data emits no entity/state events', async () => {
+  const { model } = createModelAndApi();
+  const entityEvents = [];
+  const stateEvents = [];
+  const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
+  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
+
+  await model.refreshHistory();
+  entityEvents.length = 0;
+  stateEvents.length = 0;
+
+  await model.refreshHistory();
+
+  assert.equal(entityEvents.length, 0);
+  assert.equal(stateEvents.length, 0);
+  d1.dispose();
+  d2.dispose();
 });
 
 test('refreshTeams keeps existing order on reorder-only backend changes and emits no entity events', async () => {
   const { api, model } = createModelAndApi();
-  const events = [];
-  const disposable = model.onDidChangeEntity((event) => events.push(event));
+  const entityEvents = [];
+  const stateEvents = [];
+  const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
+  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshTeams();
   const initialOrder = model.getTeams().map((t) => t.path);
   assert.deepEqual(initialOrder, ['bar-team', 'foo-team']);
 
-  events.length = 0;
+  entityEvents.length = 0;
+  stateEvents.length = 0;
   api.teams = [
     { id: 't1', path: 'foo-team', name: 'Foo' },
     { id: 't2', path: 'bar-team', name: 'Bar' },
@@ -576,8 +603,10 @@ test('refreshTeams keeps existing order on reorder-only backend changes and emit
 
   const finalOrder = model.getTeams().map((t) => t.path);
   assert.deepEqual(finalOrder, ['bar-team', 'foo-team']);
-  assert.equal(events.length, 0);
-  disposable.dispose();
+  assert.equal(entityEvents.length, 0);
+  assert.equal(stateEvents.length, 0);
+  d1.dispose();
+  d2.dispose();
 });
 
 test('refreshScope keeps existing root note order on reorder-only backend changes and emits no entity events', async () => {
@@ -586,22 +615,27 @@ test('refreshScope keeps existing root note order on reorder-only backend change
   // Make both notes root-level so order can be asserted directly.
   api.personalNotes[0].folderPaths = undefined;
 
-  const events = [];
-  const disposable = model.onDidChangeEntity((event) => events.push(event));
+  const entityEvents = [];
+  const stateEvents = [];
+  const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
+  const d2 = model.onDidChangeState((event) => stateEvents.push(event));
 
   await model.refreshScope({ teamPath: null });
   const initialRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
   assert.deepEqual(initialRootOrder, ['pn1', 'pn2']);
 
-  events.length = 0;
+  entityEvents.length = 0;
+  stateEvents.length = 0;
   api.personalNotes = [api.personalNotes[1], api.personalNotes[0]];
 
   await model.refreshScope({ teamPath: null });
 
   const finalRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
   assert.deepEqual(finalRootOrder, ['pn1', 'pn2']);
-  assert.equal(events.length, 0);
-  disposable.dispose();
+  assert.equal(entityEvents.length, 0);
+  assert.equal(stateEvents.length, 0);
+  d1.dispose();
+  d2.dispose();
 });
 
 test('create, update, move, and delete note workflow', async () => {
@@ -682,6 +716,128 @@ test('createNote skips team scope refresh when scope is already loaded', async (
   assert.equal(api.calls.getTeamNotes || 0, getTeamNotesBefore);
   assert.equal(api.calls.getTeamFolders || 0, getTeamFoldersBefore);
   assert.equal(api.calls.createTeamNote || 0, 1);
+});
+
+test('save/update/move/delete note in loaded personal scope do not refresh scope', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const getNoteListBefore = api.calls.getNoteList || 0;
+  const getFoldersBefore = api.calls.getFolders || 0;
+
+  await model.saveNoteContent('pn1', '# changed content', null);
+  await model.updateNoteProperties('pn1', { title: 'Changed Title' }, null);
+  await model.moveNote({
+    noteId: 'pn1',
+    sourceTeamPath: null,
+    targetTeamPath: null,
+    targetParentFolderId: null,
+  });
+
+  const created = await model.createNote({ title: 'Delete me', teamPath: null });
+  await model.deleteNote(created.id, null);
+
+  assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
+  assert.equal(api.calls.getFolders || 0, getFoldersBefore);
+});
+
+test('saveNoteContent with partial PATCH response updates existing note identity', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+
+  const originalUpdateNote = api.updateNote.bind(api);
+  api.updateNote = async (noteId, payload) => {
+    await originalUpdateNote(noteId, payload);
+    // Simulate backend returning partial PATCH payload (without id/title).
+    return response({ content: payload.content });
+  };
+
+  const beforeIds = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id).sort();
+  const updated = await model.saveNoteContent('pn2', '# partial response content', null);
+  const afterSnapshot = model.getScopeSnapshotSync(null);
+  const afterIds = afterSnapshot.rootNotes.map((n) => n.id).sort();
+
+  assert.equal(updated.id, 'pn2');
+  assert.deepEqual(afterIds, beforeIds);
+  assert.equal(model.getNoteById('pn2', null)?.content, '# partial response content');
+});
+
+test('updateNoteProperties preserves existing fields when partial response has undefined fields', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const before = model.getNoteById('pn1', null);
+  assert.ok(before);
+
+  const originalUpdateNote = api.updateNote.bind(api);
+  api.updateNote = async (noteId, payload) => {
+    await originalUpdateNote(noteId, payload);
+    // Simulate a sparse/partial response where some keys are present but undefined.
+    return response({
+      id: noteId,
+      title: undefined,
+      shortId: undefined,
+      content: undefined,
+      writePermission: 'owner',
+    });
+  };
+
+  const updated = await model.updateNoteProperties('pn1', { writePermission: 'owner' }, null);
+
+  assert.equal(updated.id, 'pn1');
+  assert.equal(updated.title, before.title);
+  assert.equal(updated.shortId, before.shortId);
+  assert.equal(updated.writePermission, 'owner');
+});
+
+test('updateNoteProperties applies explicit null/empty values from partial response', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+
+  const originalUpdateNote = api.updateNote.bind(api);
+  api.updateNote = async (noteId, payload) => {
+    await originalUpdateNote(noteId, payload);
+    return response({
+      id: noteId,
+      title: '',
+      permalink: null,
+      writePermission: undefined,
+    });
+  };
+
+  const before = model.getNoteById('pn1', null);
+  const updated = await model.updateNoteProperties('pn1', { title: 'ignored-by-response' }, null);
+
+  assert.equal(updated.id, 'pn1');
+  assert.equal(updated.title, '');
+  assert.equal(updated.permalink, null);
+  assert.equal(updated.writePermission, before?.writePermission);
+});
+
+test('updateNoteProperties treats parentFolderId undefined as unspecified (no change)', async () => {
+  const { model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const before = model.getNoteById('pn1', null);
+  assert.equal(before?.parentFolderId, 'pf1');
+
+  const updated = await model.updateNoteProperties('pn1', { parentFolderId: undefined }, null);
+
+  assert.equal(updated.parentFolderId, 'pf1');
+});
+
+test('updateNoteProperties treats parentFolderId null as explicit clear', async () => {
+  const { model } = createModelAndApi();
+
+  await model.refreshScope({ teamPath: null });
+  const before = model.getNoteById('pn1', null);
+  assert.equal(before?.parentFolderId, 'pf1');
+
+  const updated = await model.updateNoteProperties('pn1', { parentFolderId: null }, null);
+
+  assert.equal(updated.parentFolderId, null);
 });
 
 test('createFolder refreshes unloaded scope in parallel with create call', async () => {

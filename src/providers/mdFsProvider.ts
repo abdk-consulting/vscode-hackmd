@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 
-import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from '../extension';
 import { getHackmdModel } from '../model';
 
 export class File implements vscode.FileStat {
@@ -134,62 +133,18 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
       throw vscode.FileSystemError.FileNotFound();
     }
 
-    const myNotesProvider = getMyNotesProvider();
-    const teamNotesProvider = getTeamNotesProvider();
-    const historyProvider = getHistoryProvider();
-
     // Extract teamPath from URI query string (encoded when note was opened)
     const teamPath = getTeamPathFromUri(uri);
 
-    // Set pending state BEFORE any API calls
-    if (teamPath) {
-      teamNotesProvider?.setPendingNote(noteId);
-    } else {
-      myNotesProvider?.setPendingNote(noteId);
-    }
-    historyProvider?.setPendingNote(noteId);
-
+    // model.saveNoteContent wraps the call with per-note pending operation, which the tree
+    // providers observe via model.onDidChangePending — no manual setPendingNote needed.
     try {
       const contentString = Buffer.from(content).toString();
       const model = getModel();
 
       await model.saveNoteContent(noteId, contentString, teamPath);
-
-      // Don't block here - set up async listener to clear pending state after dirty flag clears
-      // This must happen AFTER writeFile returns so VS Code can clear the dirty flag
-      setImmediate(() => {
-        const timeout = setTimeout(() => {
-          disposable.dispose();
-          // Clear pending state on timeout
-          if (teamPath) {
-            teamNotesProvider?.clearPendingNote(noteId);
-          } else {
-            myNotesProvider?.clearPendingNote(noteId);
-          }
-          historyProvider?.clearPendingNote(noteId);
-        }, 5000);
-
-        const disposable = vscode.workspace.onDidChangeTextDocument((event) => {
-          if (event.document.uri.toString() === uri.toString() && !event.document.isDirty) {
-            clearTimeout(timeout);
-            disposable.dispose();
-            // Clear pending state when dirty flag clears
-            if (teamPath) {
-              teamNotesProvider?.clearPendingNote(noteId);
-            } else {
-              myNotesProvider?.clearPendingNote(noteId);
-            }
-            historyProvider?.clearPendingNote(noteId);
-          }
-        });
-      });
     } catch (e) {
       console.error('Error saving note:', e);
-
-      // Try to clear pending state on error (best effort)
-      myNotesProvider?.clearPendingNote(noteId);
-      teamNotesProvider?.clearPendingNote(noteId);
-      historyProvider?.clearPendingNote(noteId);
 
       throw vscode.FileSystemError.Unavailable(
         `Failed to save: ${e.message || 'Unknown error'}. Try to save again when the internet connection is back. You can save a local copy on your computer for restoration.`

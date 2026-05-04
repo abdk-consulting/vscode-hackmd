@@ -28,6 +28,8 @@ let myNotesTreeView: vscode.TreeView<any> | undefined;
 let historyTreeView: vscode.TreeView<any> | undefined;
 let propertiesProvider: NotePropertiesProvider | undefined;
 let myNotesProgressResolve: (() => void) | null = null;
+let teamNotesProgressResolve: (() => void) | null = null;
+let historyProgressResolve: (() => void) | null = null;
 
 export function getTeamNotesProvider(): TeamNotesProvider | undefined {
   return teamNotesProvider;
@@ -513,6 +515,24 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: historyProvider,
     dragAndDropController: noDropDragAndDropController,
   });
+  void vscode.commands.executeCommand('setContext', 'hackmd.historyPendingOperation', historyProvider.isPendingOperation());
+  context.subscriptions.push(
+    historyProvider.onDidChangePendingState((pending) => {
+      void vscode.commands.executeCommand('setContext', 'hackmd.historyPendingOperation', pending);
+      if (historyProgressResolve !== null) {
+        historyProgressResolve();
+        historyProgressResolve = null;
+      }
+      if (pending) {
+        vscode.window.withProgress(
+          { location: { viewId: 'hackmd.tree.recent-notes' } },
+          () => new Promise<void>(resolve => {
+            historyProgressResolve = resolve;
+          })
+        );
+      }
+    })
+  );
   context.subscriptions.push(historyTreeView);
   bindTreeSelectionContexts(historyTreeView, 'hackmd.historySelection', context);
 
@@ -522,6 +542,24 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: teamNotesProvider,
     dragAndDropController,
   });
+  void vscode.commands.executeCommand('setContext', 'hackmd.teamNotesPendingOperation', teamNotesProvider.isPendingOperation());
+  context.subscriptions.push(
+    teamNotesProvider.onDidChangePendingState((pending) => {
+      void vscode.commands.executeCommand('setContext', 'hackmd.teamNotesPendingOperation', pending);
+      if (teamNotesProgressResolve !== null) {
+        teamNotesProgressResolve();
+        teamNotesProgressResolve = null;
+      }
+      if (pending) {
+        vscode.window.withProgress(
+          { location: { viewId: 'hackmd.tree.team-notes' } },
+          () => new Promise<void>(resolve => {
+            teamNotesProgressResolve = resolve;
+          })
+        );
+      }
+    })
+  );
   context.subscriptions.push(teamNotesTreeView);
   bindTreeSelectionContexts(teamNotesTreeView, 'hackmd.teamNotesSelection', context);
 

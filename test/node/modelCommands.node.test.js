@@ -841,6 +841,29 @@ test('move — all items already in destination does nothing silently', async ()
   assert.equal(model.calls.moveNote ? model.calls.moveNote.length : 0, 0);
 });
 
+test('move — multi-item move starts model calls in parallel', async () => {
+  const model = setupModel();
+  const started = [];
+  const resolvers = [];
+
+  model.moveNote = async (input) => {
+    started.push(input.noteId);
+    return new Promise((resolve) => {
+      resolvers.push(() => resolve({ id: input.noteId }));
+    });
+  };
+
+  const n1 = { type: 'note', note: { id: 'pn1', teamPath: null, parentFolderId: 'pf1' } };
+  const n2 = { type: 'note', note: { id: 'pn2', teamPath: null, parentFolderId: 'pf1' } };
+
+  const pending = invoke('hackmd.model.move', n1, [n1, n2], { teamPath: null, folderId: 'pf3' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(started.length, 2);
+  resolvers.forEach((resolve) => resolve());
+  await pending;
+});
+
 // ─────────────────────────────────────────────────────────────
 // delete
 // ─────────────────────────────────────────────────────────────
@@ -894,6 +917,39 @@ test('delete — folder confirmation rejected returns undefined', async () => {
   new Interactions().wm(undefined).install();
   const result = await invoke('hackmd.model.delete', { type: 'folder', id: 'pf1', teamPath: null });
   assert.equal(result, undefined);
+});
+
+test('delete — multi-item delete starts note and folder deletions in parallel', async () => {
+  const model = setupModel();
+  const started = [];
+  const resolvers = [];
+
+  model.deleteNote = async (noteId, teamPath) => {
+    started.push(`note:${noteId}:${teamPath ?? 'null'}`);
+    return new Promise((resolve) => {
+      resolvers.push(() => resolve(undefined));
+    });
+  };
+
+  model.deleteFolder = async (folderId, teamPath) => {
+    started.push(`folder:${folderId}:${teamPath ?? 'null'}`);
+    return new Promise((resolve) => {
+      resolvers.push(() => resolve(undefined));
+    });
+  };
+
+  new Interactions().wm('Delete').install();
+
+  const note = { type: 'note', note: { id: 'pn1', teamPath: null } };
+  const folder = { type: 'folder', id: 'pf1', teamPath: null };
+
+  const pending = invoke('hackmd.model.delete', note, [note, folder]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(started.length, 2);
+  resolvers.forEach((resolve) => resolve());
+  const result = await pending;
+  assert.equal(result, true);
 });
 
 // ─────────────────────────────────────────────────────────────

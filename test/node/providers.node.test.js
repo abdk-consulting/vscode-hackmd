@@ -70,6 +70,8 @@ function createMockModel(overrides = {}) {
     getFolderById: (folderId, scope) => state.foldersByScopeAndId.get(key(scope ?? null, folderId)),
     getHistoryNotes: () => state.historyNotes,
     isMyNotesPendingOperation: () => !!state.myNotesPendingOperation,
+    isTeamNotesPendingOperation: () => !!state.teamNotesPendingOperation,
+    isRecentNotesPendingOperation: () => !!state.recentNotesPendingOperation,
     isFolderPendingOperation: () => false,
 
     __emitState: (payload) => stateBus.emit(payload),
@@ -77,6 +79,12 @@ function createMockModel(overrides = {}) {
     __emitPending: (payload) => {
       if (payload?.targetType === 'container' && payload?.container === 'my-notes') {
         state.myNotesPendingOperation = !!payload.pending;
+      }
+      if (payload?.targetType === 'container' && payload?.container === 'team-notes') {
+        state.teamNotesPendingOperation = !!payload.pending;
+      }
+      if (payload?.targetType === 'container' && payload?.container === 'recent-notes') {
+        state.recentNotesPendingOperation = !!payload.pending;
       }
       pendingBus.emit(payload);
     },
@@ -381,6 +389,45 @@ test('TeamNotesProvider note tree items pass the clicked note object to hackmd.u
   assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
 });
 
+test('TeamNotesProvider emits pending-state changes without marking tree dirty for container transitions', async () => {
+  const model = createMockModel();
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  model.__state.teams = [team];
+  model.__state.teamById.set(team.id, team);
+  model.__state.teamByPath.set(team.path, team);
+
+  setMockModel(model);
+  const provider = new TeamNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  const pendingEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+  provider.onDidChangePendingState((pending) => pendingEvents.push(pending));
+
+  model.__emitPending({
+    targetType: 'container',
+    container: 'team-notes',
+    pending: true,
+    scope: null,
+    id: null,
+  });
+
+  assert.deepEqual(pendingEvents, [true]);
+  assert.equal(treeEvents.length, 0);
+
+  model.__emitPending({
+    targetType: 'container',
+    container: 'team-notes',
+    pending: false,
+    scope: null,
+    id: null,
+  });
+
+  assert.deepEqual(pendingEvents, [true, false]);
+  assert.equal(treeEvents.length, 0);
+});
+
 test('HistoryProvider sorts by lastChangedAt desc then id and refreshes only when order changes', async () => {
   const model = createMockModel();
   model.__state.historyNotes = [
@@ -420,4 +467,60 @@ test('HistoryProvider note tree items pass the clicked note object to hackmd.ui.
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
   assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note }]);
+});
+
+test('MyNotesProvider does not invalidate on refreshHistory/refreshTeams state events', async () => {
+  const model = createMockModel();
+  model.__state.snapshots.set(null, {
+    scope: null,
+    rootFolders: [],
+    rootNotes: [{ id: 'n1', title: 'Personal', teamPath: null, pendingOperation: false }],
+  });
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+
+  await provider.getChildren();
+  const initialRefreshCalls = model.__state.calls.refreshScope;
+
+  model.__emitState({ reason: 'refreshHistory', scope: null });
+  await provider.getChildren();
+  assert.equal(model.__state.calls.refreshScope, initialRefreshCalls);
+
+  model.__emitState({ reason: 'refreshTeams', scope: null });
+  await provider.getChildren();
+  assert.equal(model.__state.calls.refreshScope, initialRefreshCalls);
+});
+
+test('HistoryProvider emits pending-state changes around refresh lifecycle', async () => {
+  let resolveRefresh;
+  const model = createMockModel({
+    refreshHistory: async () => {
+      model.__state.calls.refreshHistory += 1;
+      model.__emitPending({ targetType: 'container', container: 'recent-notes', pending: true });
+      await new Promise((resolve) => {
+        resolveRefresh = resolve;
+      });
+      model.__emitPending({ targetType: 'container', container: 'recent-notes', pending: false });
+    },
+  });
+
+  model.__state.historyNotes = [
+    { id: 'n1', title: 'Recent Note', teamPath: null, pendingOperation: false, lastChangedAt: '2024-01-01T00:00:00.000Z' },
+  ];
+
+  setMockModel(model);
+  const provider = new HistoryProvider('/tmp');
+  const pendingEvents = [];
+  provider.onDidChangePendingState((pending) => pendingEvents.push(pending));
+
+  provider.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(pendingEvents, [true]);
+  assert.equal(provider.isPendingOperation(), true);
+
+  resolveRefresh();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(pendingEvents, [true, false]);
+  assert.equal(provider.isPendingOperation(), false);
 });

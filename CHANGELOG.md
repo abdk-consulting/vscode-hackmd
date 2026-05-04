@@ -18,6 +18,16 @@
 
 ### Changed
 
+- Model mutation flows now apply local predicted tree effects instead of refreshing scope after note/folder updates:
+  - `saveNoteContent`, `updateNoteProperties`, `updateFolder`, `moveNote`, `deleteNote`, and `deleteFolder` no longer trigger scope refresh for loaded scopes.
+  - Scope loading remains only for insert operations into unloaded scopes (to materialize revealable tree state).
+- Fixed local prediction identity handling for partial PATCH responses:
+  - Update payload hydration now always preserves canonical entity identity (`id` + scope/teamPath) so update operations cannot create phantom notes/folders.
+- Tightened partial-update merge semantics across model update hydration and `upsertNote` application:
+  - `undefined` is treated as unspecified (leave existing value unchanged).
+  - `null` and empty values are treated as explicit updates and are preserved.
+  - Parent-folder update semantics now distinguish explicit clear (`null`) from omitted/no-op (`undefined`).
+
 - New folder flows now reveal and select the created folder via the unified reveal command:
   - `hackmd.model.createFolder` now delegates to `hackmd.ui.reveal` with the created folder target after creation completes.
   - Scoped folder-create delegates inherit the same reveal behavior through the shared command path.
@@ -42,6 +52,12 @@
   - `hackmd.model.createMyFolder` -> `hackmd.model.createFolder`
   - `hackmd.ui.importMyNotes` -> `hackmd.ui.import`
   - Unified scope extraction now accepts explicit My Notes container arguments (for example `container: 'my-notes'`, `viewId: 'hackmd.tree.my-notes'`).
+- Group operations now run in parallel where safe to improve responsiveness:
+  - Multi-item delete starts note and folder deletions concurrently.
+  - Multi-entity export starts note-content reads and folder-recursive exports concurrently.
+  - Multi-file import creates notes concurrently.
+- Import now reveals/selects the first imported note after refresh when importing multiple files (tree reveal supports single selection).
+- Team Notes and Recent Notes container refresh now expose pending-state events and title-level progress indicators, matching My Notes pending UX.
 - Newly created notes are now upserted as content-loaded in the model.
   - `createNote` stores known created content immediately (API content when present, otherwise provided input content, otherwise empty string).
   - Opening a just-created note can read content from model cache immediately without an extra fetch.

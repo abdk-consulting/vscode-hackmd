@@ -84,8 +84,11 @@ function sortedNotes(notes: readonly ModelNote[]): ModelNote[] {
 export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly _onDidChangePendingState = new vscode.EventEmitter<boolean>();
+  readonly onDidChangePendingState = this._onDidChangePendingState.event;
 
   private readonly model: ReturnType<typeof getHackmdModel> | null;
+  private teamNotesPendingOperation = false;
   private teamsLoaded = false;
   private teamsLoadingPromise: Promise<void> | null = null;
   private readonly scopeLoadingPromises = new Map<string, Promise<void>>();
@@ -100,6 +103,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
+      this.teamNotesPendingOperation = !!this.model.isTeamNotesPendingOperation();
       this.model.onDidChangeState((event) => {
         if (event.reason === 'refreshTeams' || event.reason === 'refreshScope' || event.reason === 'refreshAll') {
           if (event.reason === 'refreshTeams' || event.reason === 'refreshAll') {
@@ -118,13 +122,25 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
       });
       this.model.onDidChangePending((event) => {
-        if (event.targetType === 'container' || event.targetType === 'team' || event.targetType === 'folder' || event.targetType === 'note') {
+        if (event.targetType === 'container' && event.container === 'team-notes') {
+          if (this.teamNotesPendingOperation !== event.pending) {
+            this.teamNotesPendingOperation = event.pending;
+            this._onDidChangePendingState.fire(event.pending);
+          }
+          return;
+        }
+
+        if (event.targetType === 'team' || event.targetType === 'folder' || event.targetType === 'note') {
           this._onDidChangeTreeData.fire(undefined);
         }
       });
     } catch {
       this.model = null;
     }
+  }
+
+  isPendingOperation(): boolean {
+    return this.teamNotesPendingOperation;
   }
 
   private async ensureTeamsLoaded(force = false): Promise<void> {
@@ -370,10 +386,6 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return this.model.getScopeSnapshotSync(team.path) !== null;
   }
 
-  cacheTeamNotes(_teamId: string, _notes: any[]): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
   findNoteInCache(noteId: string, teamPath?: string): ModelNote | undefined {
     if (!this.model) {
       return undefined;
@@ -439,60 +451,6 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     return targets;
-  }
-
-  setPendingNote(_noteId: string, _noteObject?: any): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  clearPendingNote(_noteId: string, _noteObject?: any, emitEvent = true): void {
-    if (emitEvent) {
-      this._onDidChangeTreeData.fire(undefined);
-    }
-  }
-
-  setPendingContainer(_containerId: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  clearPendingContainer(_containerId: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  renameFolderInCache(_folderId: string, _newName: string, _teamPath?: string | null): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  addFolderToCache(_teamPath: string, _folderData: any): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  moveFolderInCache(_teamPath: string, _folderId: string, _parentFolderId: string | null): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  removeFolderFromCache(_teamPath: string, _folderId: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  async addNoteToCache(note: any, _teamPath: string): Promise<NoteNode | undefined> {
-    this._onDidChangeTreeData.fire(undefined);
-    return { type: 'note', source: 'model', note };
-  }
-
-  removeNoteFromCache(_noteId: string, _teamPath?: string): void {
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  updateNoteInCache(_noteId: string, _updatedNote: any, _teamPath?: string, emitEvents = true): any {
-    if (emitEvents) {
-      this._onDidChangeTreeData.fire(undefined);
-    }
-    return undefined;
-  }
-
-  emitMoveChangeEvents(_oldNote: any, _updatedNote: any, _explicitTeamId?: string): void {
-    this._onDidChangeTreeData.fire(undefined);
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {

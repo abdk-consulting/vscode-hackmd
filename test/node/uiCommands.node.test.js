@@ -639,6 +639,9 @@ test('import: programmatic files create notes and refresh personal tree', async 
   assert.equal(callCount(model, 'createNote'), 2);
   assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
   assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
+  const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
+  assert.equal(revealCalls.length, 1);
+  assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
 });
 
 test('import: interactive file picker + single location picker create notes', async () => {
@@ -666,6 +669,62 @@ test('import: interactive file picker + single location picker create notes', as
   });
   assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
   assert.deepEqual(stub.commandsState.executeCalls[0][1], { teamPath: null });
+  const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
+  assert.equal(revealCalls.length, 1);
+  assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
+});
+
+test('import: reveals imported item when exactly one note was imported', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  const f1 = stub.makeUri('file', '/tmp/only.md');
+  stub.workspaceState.fileBytesByUri.set(f1.toString(), Buffer.from('# only', 'utf8'));
+
+  new Interactions().od([f1]).install();
+
+  await invoke('hackmd.ui.import', { type: 'folder', id: null, teamPath: null });
+
+  assert.equal(callCount(model, 'createNote'), 1);
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.refreshScope');
+  const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
+  assert.equal(revealCalls.length, 1);
+  assert.equal(revealCalls[0][1]?.type, 'note');
+  assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
+});
+
+test('import: creates multiple notes in parallel', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  const started = [];
+  const resolvers = [];
+  model.createNote = async (input) => {
+    model._record('createNote', [input]);
+    started.push(input.title);
+    return new Promise((resolve) => {
+      resolvers.push(() => resolve({
+        type: 'note',
+        id: `new-${started.length}`,
+        title: input.title,
+        teamPath: input.teamPath ?? null,
+      }));
+    });
+  };
+
+  const f1 = stub.makeUri('file', '/tmp/parallel-one.md');
+  const f2 = stub.makeUri('file', '/tmp/parallel-two.md');
+  stub.workspaceState.fileBytesByUri.set(f1.toString(), Buffer.from('# one', 'utf8'));
+  stub.workspaceState.fileBytesByUri.set(f2.toString(), Buffer.from('# two', 'utf8'));
+
+  new Interactions().od([f1, f2]).install();
+
+  const pending = invoke('hackmd.ui.import', { type: 'folder', id: null, teamPath: null });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(started.length, 2);
+  resolvers.forEach((resolve) => resolve());
+  await pending;
 });
 
 test('import: open-dialog cancellation exits without creating notes', async () => {
@@ -735,6 +794,38 @@ test('export: multi-target writes note files and recursively exports folder note
   assert.equal(callCount(model, 'getNoteContent'), 3);
   assert.ok(stub.workspaceState.createDirectoryCalls.length >= 2);
   assert.equal(stub.workspaceState.writeFileCalls.length, 3);
+});
+
+test('export: multi-note export starts note content reads in parallel', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  const started = [];
+  const resolvers = new Map();
+  model.getNoteContent = async (noteId, teamPath) => {
+    model._record('getNoteContent', [noteId, teamPath]);
+    started.push(noteId);
+    await new Promise((resolve) => {
+      resolvers.set(noteId, resolve);
+    });
+    return `# ${noteId}`;
+  };
+
+  const dir = stub.makeUri('file', '/tmp/export-dir');
+  new Interactions().od([dir]).install();
+
+  const n1 = { type: 'note', note: { id: 'n1', teamPath: null } };
+  const n2 = { type: 'note', note: { id: 'n2', teamPath: null } };
+
+  const pending = invoke('hackmd.ui.export', n1, [n1, n2]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(started.length, 2);
+  resolvers.get('n1')?.();
+  resolvers.get('n2')?.();
+  await pending;
+
+  assert.equal(stub.workspaceState.writeFileCalls.length, 2);
 });
 
 test('export: interactive mode picks one entity and exports it', async () => {

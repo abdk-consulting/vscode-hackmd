@@ -7,7 +7,6 @@ import {
   ModelFolder,
   ModelMyNotes,
   ModelNote,
-  ModelScopeSnapshot,
   ModelTeam
 } from '../model';
 import {
@@ -26,28 +25,6 @@ function getModel(): ReturnType<typeof getHackmdModel> | undefined {
     vscode.window.showErrorMessage('HackMD is not connected. Please configure your API key first.');
     return undefined;
   }
-}
-
-async function promptJson<T>(prompt: string, initialValue: T): Promise<T | undefined> {
-  const raw = await vscode.window.showInputBox({
-    prompt,
-    value: JSON.stringify(initialValue, null, 2),
-    ignoreFocusOut: true,
-    validateInput: (value) => {
-      try {
-        JSON.parse(value);
-        return null;
-      } catch {
-        return 'Invalid JSON';
-      }
-    },
-  });
-
-  if (!raw) {
-    return undefined;
-  }
-
-  return JSON.parse(raw) as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,211 +57,25 @@ function getSelectedTreeNodesFallback(): any[] {
   return [...selection];
 }
 
-type MoveItem = {
-  kind: 'note' | 'folder';
-  id: string;
-  teamPath: string | null;
-  parentFolderId: string | null;
-};
-
-type MoveTarget = {
-  teamPath: string | null;
-  folderId: string | null;
-};
-
-type ScopeIndex = {
-  snapshot: ModelScopeSnapshot | null;
-  folderById: Map<string, ModelFolder>;
-  noteById: Map<string, ModelNote>;
-  folderParentById: Map<string, string | null>;
-  noteParentById: Map<string, string | null>;
-};
-
-function asScope(scope: string | null | undefined): string | null {
-  return scope ?? null;
-}
-
-function dedupeMoveItems(items: MoveItem[]): MoveItem[] {
-  const seen = new Set<string>();
-  const unique: MoveItem[] = [];
-  for (const item of items) {
-    const key = `${item.kind}:${item.teamPath ?? '__personal__'}:${item.id}`;
-    if (seen.has(key)) { continue; }
-    seen.add(key);
-    unique.push(item);
-  }
-  return unique;
-}
-
-function toMoveItem(node: any): MoveItem | undefined {
-  const note = extractNote(node);
-  if (note?.id) {
-    return {
-      kind: 'note',
-      id: note.id,
-      teamPath: asScope(note.teamPath),
-      parentFolderId: note.parentFolderId ?? note.parentForderId ?? null,
-    };
-  }
-
-  const folder = extractFolder(node);
-  if (folder?.id) {
-    return {
-      kind: 'folder',
-      id: folder.id,
-      teamPath: asScope(folder.teamPath),
-      parentFolderId: folder.parentId ?? null,
-    };
-  }
-
-  return undefined;
-}
-
-function buildScopeIndex(
+/** Check if a folder is a descendant of an ancestor folder by traversing the parent chain. */
+function isFolderDescendantOf(
   model: ReturnType<typeof getHackmdModel>,
+  folderId: string,
+  ancestorFolderId: string,
   scopeEntity: ModelMyNotes | ModelTeam
-): ScopeIndex {
-  const snapshot = model.getScopeSnapshotSync(scopeEntity);
-  const folderById = new Map<string, ModelFolder>();
-  const noteById = new Map<string, ModelNote>();
-  const folderParentById = new Map<string, string | null>();
-  const noteParentById = new Map<string, string | null>();
-
-  if (snapshot) {
-    const folders = collectFolders(snapshot.rootFolders);
-    for (const folder of folders) {
-      folderById.set(folder.id, folder);
-      folderParentById.set(folder.id, folder.parentId ?? null);
-      for (const note of folder.notes) {
-        noteById.set(note.id, note);
-        noteParentById.set(note.id, note.parentFolderId ?? note.parentForderId ?? folder.id ?? null);
-      }
-    }
-    for (const note of snapshot.rootNotes) {
-      noteById.set(note.id, note);
-      noteParentById.set(note.id, note.parentFolderId ?? note.parentForderId ?? null);
-    }
-  }
-
-  return { snapshot, folderById, noteById, folderParentById, noteParentById };
-}
-
-function hasAncestorFolder(
-  parentFolderId: string | null,
-  ancestorFolderIds: Set<string>,
-  index: ScopeIndex,
-  skipFolderId?: string
 ): boolean {
-  let current = parentFolderId;
-  while (current) {
-    if (ancestorFolderIds.has(current) && current !== skipFolderId) {
+  let current = model.getFolderSync(scopeEntity, folderId);
+  while (current && current.parentId) {
+    if (current.parentId === ancestorFolderId) {
       return true;
     }
-    current = index.folderParentById.get(current) ?? null;
+    current = model.getFolderSync(scopeEntity, current.parentId);
   }
   return false;
-}
-
-function isFolderDescendantOf(folderId: string, ancestorFolderId: string, index: ScopeIndex): boolean {
-  let current = index.folderParentById.get(folderId) ?? null;
-  while (current) {
-    if (current === ancestorFolderId) {
-      return true;
-    }
-    current = index.folderParentById.get(current) ?? null;
-  }
-  return false;
-}
-
-function refineMoveItems(items: MoveItem[], scopeIndexes: Map<string | null, ScopeIndex>): MoveItem[] {
-  const folderIdsByScope = new Map<string | null, Set<string>>();
-  for (const item of items) {
-    if (item.kind !== 'folder') { continue; }
-    if (!folderIdsByScope.has(item.teamPath)) {
-      folderIdsByScope.set(item.teamPath, new Set<string>());
-    }
-    folderIdsByScope.get(item.teamPath)!.add(item.id);
-  }
-
-  return items.filter((item) => {
-    const scopeFolderIds = folderIdsByScope.get(item.teamPath);
-    if (!scopeFolderIds || scopeFolderIds.size === 0) {
-      return true;
-    }
-    const index = scopeIndexes.get(item.teamPath);
-    if (!index) {
-      return true;
-    }
-    if (item.kind === 'folder') {
-      return !hasAncestorFolder(item.parentFolderId, scopeFolderIds, index, item.id);
-    }
-    return !hasAncestorFolder(item.parentFolderId, scopeFolderIds, index);
-  });
-}
-
-function hydrateMoveItems(items: MoveItem[], scopeIndexes: Map<string | null, ScopeIndex>): MoveItem[] {
-  return items.map((item) => {
-    const index = scopeIndexes.get(item.teamPath);
-    if (!index) {
-      return item;
-    }
-    if (item.kind === 'note') {
-      const fromSnapshot = index.noteParentById.get(item.id);
-      return {
-        ...item,
-        parentFolderId: item.parentFolderId ?? fromSnapshot ?? null,
-      };
-    }
-    const fromSnapshot = index.folderParentById.get(item.id);
-    return {
-      ...item,
-      parentFolderId: item.parentFolderId ?? fromSnapshot ?? null,
-    };
-  });
-}
-
-function isValidMoveDestination(item: MoveItem, target: MoveTarget, scopeIndexes: Map<string | null, ScopeIndex>): boolean {
-  if (item.teamPath !== target.teamPath) {
-    return false;
-  }
-  if (item.kind === 'note') {
-    return true;
-  }
-  if (target.folderId === item.id) {
-    return false;
-  }
-  if (!target.folderId) {
-    return true;
-  }
-  const index = scopeIndexes.get(item.teamPath);
-  if (!index) {
-    return true;
-  }
-  return !isFolderDescendantOf(target.folderId, item.id, index);
-}
-
-function parseTargetFolder(targetFolder: any, defaultScope: string | null): MoveTarget | undefined {
-  if (targetFolder === undefined) {
-    return undefined;
-  }
-  if (!targetFolder || typeof targetFolder !== 'object') {
-    return {
-      teamPath: defaultScope,
-      folderId: null,
-    };
-  }
-  const teamPath = asScope(targetFolder.teamPath ?? targetFolder.scope ?? defaultScope);
-  const folderId = targetFolder.folderId ?? targetFolder.id ?? null;
-  return { teamPath, folderId };
 }
 
 type RenameQuickPickItem = vscode.QuickPickItem & {
   entity: ModelNote | ModelFolder;
-};
-
-type CreateLocationQuickPickItem = vscode.QuickPickItem & {
-  teamPath: string | null;
-  parentFolderId: string | null;
 };
 
 type CreateContainer = ModelMyNotes | ModelTeam | ModelFolder;
@@ -350,75 +141,6 @@ async function pickCreateContainer(
   return selected?.container;
 }
 
-export async function pickCreateLocation(
-  model: ReturnType<typeof getHackmdModel>,
-  placeHolder: string
-): Promise<{ teamPath: string | null; parentFolderId: string | null } | undefined> {
-  const items: CreateLocationQuickPickItem[] = [];
-
-  // Personal root is always available.
-  items.push({
-    label: '$(home) My Notes',
-    description: 'Root',
-    teamPath: null,
-    parentFolderId: null,
-  });
-
-  const personalSnapshot = model.getScopeSnapshotSync(model.getMyNotesEntity());
-  if (personalSnapshot) {
-    for (const folder of collectFolders(personalSnapshot.rootFolders)) {
-      items.push({
-        label: `$(folder) ${folder.name}`,
-        description: `My Notes${folder.path ? ` • ${folder.path}` : ''}`,
-        detail: folder.id,
-        teamPath: null,
-        parentFolderId: folder.id,
-      });
-    }
-  }
-
-  for (const team of model.getTeams()) {
-    items.push({
-      label: `$(organization) ${team.name || team.path}`,
-      description: 'Root',
-      detail: team.path,
-      teamPath: team.path,
-      parentFolderId: null,
-    });
-
-    const snapshot = model.getScopeSnapshotSync(team);
-    if (!snapshot) {
-      continue;
-    }
-
-    for (const folder of collectFolders(snapshot.rootFolders)) {
-      items.push({
-        label: `$(folder) ${folder.name}`,
-        description: `${team.name || team.path}${folder.path ? ` • ${folder.path}` : ''}`,
-        detail: folder.id,
-        teamPath: team.path,
-        parentFolderId: folder.id,
-      });
-    }
-  }
-
-  const selected = await vscode.window.showQuickPick(items, {
-    placeHolder,
-    ignoreFocusOut: true,
-    matchOnDescription: true,
-    matchOnDetail: true,
-  });
-
-  if (!selected) {
-    return undefined;
-  }
-
-  return {
-    teamPath: selected.teamPath,
-    parentFolderId: selected.parentFolderId,
-  };
-}
-
 async function pickRenameTarget(
   model: ReturnType<typeof getHackmdModel>
 ): Promise<ModelNote | ModelFolder | undefined> {
@@ -475,68 +197,61 @@ async function pickRenameTarget(
   return selected?.entity;
 }
 
-async function resolveMoveCandidates(
-  model: ReturnType<typeof getHackmdModel>,
-  activeItem?: any,
-  selectedItems?: any[]
-): Promise<MoveItem[] | undefined> {
-  if (Array.isArray(selectedItems) && selectedItems.length > 0) {
-    const selected = dedupeMoveItems(selectedItems.map(toMoveItem).filter((v): v is MoveItem => !!v));
-    return selected.length > 0 ? selected : undefined;
-  }
-
-  if (activeItem !== undefined) {
-    const active = toMoveItem(activeItem);
-    return active ? [active] : undefined;
-  }
-
-  const picked = await pickEntity(model, 'Choose an item to move');
-  if (!picked) {
-    return undefined;
-  }
-
-  if (picked.kind === 'folder') {
-    return [{
-      kind: 'folder',
-      id: picked.folder.id,
-      teamPath: asScope(picked.folder.teamPath),
-      parentFolderId: picked.folder.parentId ?? null,
-    }];
-  }
-
-  return [{
-    kind: 'note',
-    id: picked.note.id,
-    teamPath: asScope(picked.note.teamPath),
-    parentFolderId: picked.note.parentFolderId ?? picked.note.parentForderId ?? null,
-  }];
-}
-
+/**
+ * Show a quick pick to select a move target folder.
+ * Returns null for root, undefined for cancelled/error, or the ModelFolder entity.
+ */
 async function pickMoveTargetFolder(
   model: ReturnType<typeof getHackmdModel>,
-  itemsToMove: MoveItem[],
-  scopeIndexes: Map<string | null, ScopeIndex>
-): Promise<MoveTarget | undefined> {
-  const scope = itemsToMove[0]?.teamPath ?? null;
-  const index = scopeIndexes.get(scope);
-  const snapshot = index?.snapshot;
+  itemsToMove: (ModelNote | ModelFolder)[],
+  scopeEntity: ModelMyNotes | ModelTeam
+): Promise<ModelFolder | null | undefined> {
+  const snapshot = model.getScopeSnapshotSync(scopeEntity);
 
   if (!snapshot) {
     vscode.window.showErrorMessage('Scope data is not loaded. Please refresh the scope first.');
     return undefined;
   }
 
-  const folderTargets = [{ id: null as string | null, label: 'Root', description: 'No parent folder' }]
+  // Collect folder targets with their entities
+  type TargetOption = { id: string | null; label: string; description: string; entity: ModelFolder | null };
+  const folderTargets: TargetOption[] = [{ id: null, label: 'Root', description: 'No parent folder', entity: null }]
     .concat(collectFolders(snapshot.rootFolders).map((folder) => ({
       id: folder.id,
       label: folder.name,
       description: folder.path || folder.id,
+      entity: folder,
     })));
 
   const validTargets = folderTargets.filter((target) => {
-    const moveTarget: MoveTarget = { teamPath: scope, folderId: target.id };
-    const validForAll = itemsToMove.every((item) => isValidMoveDestination(item, moveTarget, scopeIndexes));
-    const differsForAtLeastOne = itemsToMove.some((item) => (item.parentFolderId ?? null) !== target.id);
+    // Check if target is valid for all items
+    const validForAll = itemsToMove.every((item) => {
+      const itemAsAny = item as any;
+      // Can move notes anywhere in scope
+      if (itemAsAny.type === 'note') {
+        return true;
+      }
+      // Can't move folder into itself
+      if (target.id === itemAsAny.id) {
+        return false;
+      }
+      // Can't move folder into its own descendant
+      if (target.id) {
+        const isDescendant = isFolderDescendantOf(model, target.id, itemAsAny.id, scopeEntity);
+        if (isDescendant) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Target must differ from current parent for at least one item
+    const differsForAtLeastOne = itemsToMove.some((item) => {
+      const itemAsAny = item as any;
+      const currentParent = itemAsAny.parentFolderId ?? itemAsAny.parentId ?? null;
+      return currentParent !== target.id;
+    });
+
     return validForAll && differsForAtLeastOne;
   });
 
@@ -546,7 +261,7 @@ async function pickMoveTargetFolder(
   }
 
   const picked = await vscode.window.showQuickPick(
-    validTargets.map((target) => ({ label: target.label, description: target.description, folderId: target.id })),
+    validTargets.map((target) => ({ label: target.label, description: target.description, id: target.id })),
     {
       placeHolder: 'Choose destination folder',
       ignoreFocusOut: true,
@@ -557,10 +272,8 @@ async function pickMoveTargetFolder(
     return undefined;
   }
 
-  return {
-    teamPath: scope,
-    folderId: picked.folderId ?? null,
-  };
+  const selectedTarget = validTargets.find((t) => t.id === picked.id);
+  return selectedTarget?.entity ?? undefined;
 }
 
 export function registerModelCommands(context: vscode.ExtensionContext): void {
@@ -664,11 +377,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     const created = await model.createFolder(container, { name });
-    await vscode.commands.executeCommand('hackmd.ui.reveal', {
-      type: 'folder',
-      id: created.id,
-      teamPath: created.teamPath,
-    });
+    await vscode.commands.executeCommand('hackmd.ui.reveal', created);
     return created;
   });
 
@@ -689,166 +398,155 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return vscode.commands.executeCommand('hackmd.model.createFolder', model.getMyNotesEntity());
   });
 
-  register('hackmd.model.rename', async (node?: any) => {
+  register('hackmd.model.rename', async (entity?: ModelNote | ModelFolder) => {
     const model = getModel();
     if (!model) {
       return;
     }
 
-    const targetNode = node ?? getSelectedTreeNodeFallback();
-    const noteFromNode = extractNote(targetNode);
-    if (noteFromNode?.id) {
-      const noteId: string = noteFromNode.id;
-      const teamPath: string | null = noteFromNode.teamPath ?? null;
-      const initialTitle: string = noteFromNode.title || '';
-
-      const newTitle = await promptRequiredInput('New note title', initialTitle);
-      if (!newTitle) {
-        return;
-      }
-
-      return model.renameNote(noteId, newTitle, teamPath);
-    }
-
-    const folderFromNode = extractFolder(targetNode);
-    if (folderFromNode?.id) {
-      const folderId: string = folderFromNode.id;
-      const teamPath: string | null = folderFromNode.teamPath ?? null;
-      const initialName: string = folderFromNode.name || '';
-
-      const newName = await promptRequiredInput('New folder name', initialName);
-      if (!newName) {
-        return;
-      }
-
-      return model.updateFolder(folderFromNode, { name: newName });
-    }
-
-    if (targetNode !== undefined) {
+    const target = entity ?? await pickRenameTarget(model);
+    if (!target) {
       return;
     }
 
-    const selected = await pickRenameTarget(model);
-    if (!selected) {
-      return;
-    }
-
-    if (selected.type === 'note') {
-      const newTitle = await promptRequiredInput('New note title', selected.title || '');
+    if (target.type === 'note') {
+      const newTitle = await promptRequiredInput('New note title', target.title || '');
       if (!newTitle) {
         return;
       }
-
-      return model.renameNote(selected.id, newTitle, selected.teamPath ?? null);
+      return model.updateNote(target, { title: newTitle });
     }
 
-    if (selected.type === 'folder') {
-      const newName = await promptRequiredInput('New folder name', selected.name || '');
-      if (!newName) {
-        return;
-      }
-
-      return model.updateFolder(selected, { name: newName });
+    const newName = await promptRequiredInput('New folder name', target.name || '');
+    if (!newName) {
+      return;
     }
-
-    return undefined;
+    return model.updateFolder(target, { name: newName });
   });
 
-  const runMove = async (activeItem?: any, selectedItems?: any[], targetFolder?: any) => {
+  const runMove = async (
+    activeEntity?: ModelNote | ModelFolder,
+    selectedEntities?: (ModelNote | ModelFolder)[],
+    targetEntity?: ModelFolder | ModelMyNotes | ModelTeam
+  ) => {
     const model = getModel();
     if (!model) {
       return;
     }
 
-    const fallbackSelection = (!activeItem && (!selectedItems || selectedItems.length === 0))
-      ? getSelectedTreeNodesFallback()
-      : [];
-    const resolvedActiveItem = activeItem ?? fallbackSelection[0];
-    const resolvedSelectedItems = (selectedItems && selectedItems.length > 0)
-      ? selectedItems
-      : fallbackSelection;
-    const hasTreeSelectionContext = resolvedActiveItem !== undefined || resolvedSelectedItems.length > 0;
-
-    const candidates = await resolveMoveCandidates(model, resolvedActiveItem, resolvedSelectedItems);
-    if (!candidates || candidates.length === 0) {
-      if (hasTreeSelectionContext) {
+    // Step 1-4: Determine move candidates with priority: selected > active > picker
+    let candidates: (ModelNote | ModelFolder)[];
+    if (selectedEntities && selectedEntities.length > 0) {
+      candidates = selectedEntities;
+    } else if (activeEntity !== undefined) {
+      candidates = [activeEntity];
+    } else {
+      const picked = await pickEntity(model, 'Choose an item to move');
+      if (!picked) {
         return;
       }
-      return;
+      candidates = [picked.kind === 'folder' ? picked.folder : picked.note] as (ModelNote | ModelFolder)[];
     }
 
-    const scopeIndexes = new Map<string | null, ScopeIndex>();
-    const teamsByPath = new Map(model.getTeams().map((team) => [team.path, team] as const));
-    for (const scope of new Set(candidates.map((item) => item.teamPath))) {
-      if (scope) {
-        const scopeEntity = teamsByPath.get(scope);
-        scopeIndexes.set(
-          scope,
-          scopeEntity
-            ? buildScopeIndex(model, scopeEntity)
-            : {
-              snapshot: null,
-              folderById: new Map<string, ModelFolder>(),
-              noteById: new Map<string, ModelNote>(),
-              folderParentById: new Map<string, string | null>(),
-              noteParentById: new Map<string, string | null>(),
-            }
-        );
-        continue;
-      }
-
-      scopeIndexes.set(scope, buildScopeIndex(model, model.getMyNotesEntity()));
-    }
-
-    const hydratedCandidates = hydrateMoveItems(candidates, scopeIndexes);
-    const itemsToMove = refineMoveItems(hydratedCandidates, scopeIndexes);
-    if (itemsToMove.length === 0) {
-      return;
-    }
-
-    const candidateScopes = new Set(itemsToMove.map((item) => item.teamPath));
-    const defaultScope = itemsToMove[0]?.teamPath ?? null;
-
-    let resolvedTarget = parseTargetFolder(targetFolder, defaultScope);
-    if (!resolvedTarget) {
-      if (candidateScopes.size > 1) {
-        vscode.window.showErrorMessage('Selected items are from different scopes and cannot be moved together.');
-        return;
-      }
-      resolvedTarget = await pickMoveTargetFolder(model, itemsToMove, scopeIndexes);
-      if (!resolvedTarget) {
-        return;
+    // Step 6: Validate that all candidates are notes or folders
+    for (const candidate of candidates) {
+      const c = candidate as any;
+      if (c.type !== 'note' && c.type !== 'folder') {
+        throw new Error(`Invalid move candidate type: ${c.type}. Only notes and folders can be moved.`);
       }
     }
 
-    const validItems = itemsToMove.filter((item) => isValidMoveDestination(item, resolvedTarget!, scopeIndexes));
-    if (validItems.length === 0) {
-      vscode.window.showErrorMessage('Target folder is not a valid move destination for selected items.');
-      return;
+    // Step 7: Validate all candidates are from the same scope
+    const scopeEntity = model.getScopeEntityForItem(candidates[0]);
+    const hasMixedScopes = candidates.some((item) => model.getScopeEntityForItem(item) !== scopeEntity);
+    if (hasMixedScopes) {
+      throw new Error('Selected items are from different scopes and cannot be moved together.');
     }
 
-    const actionableItems = validItems.filter((item) => (item.parentFolderId ?? null) !== resolvedTarget!.folderId);
+    // Step 10: Remove duplicates from candidates
+    const seen = new Set<string>();
+    const dedupedCandidates: (ModelNote | ModelFolder)[] = [];
+    for (const candidate of candidates) {
+      const c = candidate as any;
+      const key = `${c.type}:${c.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        dedupedCandidates.push(candidate);
+      }
+    }
+
+    // Step 11: Remove candidates that are descendants of other candidates
+    const candidateIds = new Set(dedupedCandidates.map((c) => (c as any).id));
+    const itemsToMove = dedupedCandidates.filter((candidate) => {
+      const c = candidate as any;
+      if (c.type === 'note') {
+        return true; // notes have no descendants
+      }
+      // For folders, check if its parent is another move candidate
+      if (!c.parentId) {
+        return true;
+      }
+      return !candidateIds.has(c.parentId);
+    });
+
+    // Step 8: If target is undefined, show picker to select destination
+    let dest: ModelFolder | ModelMyNotes | ModelTeam;
+    if (targetEntity === undefined) {
+      const pickedDest = await pickMoveTargetFolder(model, itemsToMove, scopeEntity);
+      if (pickedDest === undefined) {
+        return; // user cancelled
+      }
+      dest = pickedDest ?? scopeEntity; // null means root (scopeEntity)
+    } else {
+      dest = targetEntity;
+    }
+
+    // Step 9: Validate target entity against conditions a, b, c
+    const targetAsAny = dest as any;
+    // a) Target is not equal to any move candidate
+    if (candidateIds.has(targetAsAny.id)) {
+      throw new Error('Target entity cannot be one of the items being moved.');
+    }
+    // b) Target is not a descendant of any move candidate
+    if (targetAsAny.type === 'folder') {
+      for (const candidate of itemsToMove) {
+        const candAsAny = candidate as any;
+        if (candAsAny.type === 'folder' && isFolderDescendantOf(model, targetAsAny.id, candAsAny.id, scopeEntity)) {
+          throw new Error('Target cannot be a descendant of items being moved.');
+        }
+      }
+    }
+    // c) Target is in the same scope as move candidates
+    const targetScopeEntity = model.getScopeEntityForItem(dest);
+    if (targetScopeEntity !== scopeEntity) {
+      throw new Error('Target entity is not in the same scope as items being moved.');
+    }
+
+    // Step 12: Remove immediate children of the target
+    const targetId = (dest as any).id ?? null;
+    const actionableItems = itemsToMove.filter((item) => {
+      const i = item as any;
+      const currentParent = i.parentFolderId ?? i.parentId ?? null;
+      return currentParent !== targetId;
+    });
+
+    // Step 13: If set of move candidates is now empty, silently do nothing
     if (actionableItems.length === 0) {
       return;
     }
 
+    // Step 14: Execute moves in parallel
     await Promise.all(actionableItems.map(async (item) => {
-      const itemScopeIndex = scopeIndexes.get(item.teamPath)!;
-      const targetScopeIndex = scopeIndexes.get(resolvedTarget!.teamPath)!;
-      const destFolder = resolvedTarget!.folderId ? targetScopeIndex.folderById.get(resolvedTarget!.folderId) : undefined;
-      if (!destFolder) {
-        return;
-      }
-
-      if (item.kind === 'note') {
-        const noteEntity = itemScopeIndex.noteById.get(item.id);
+      const i = item as any;
+      if (i.type === 'note') {
+        const noteEntity = model.getNoteSync(scopeEntity, i.id);
         if (!noteEntity) { return; }
-        return model.moveNote(noteEntity, destFolder);
+        return model.moveNote(noteEntity, dest);
+      } else if (i.type === 'folder') {
+        const folderEntity = model.getFolderSync(scopeEntity, i.id);
+        if (!folderEntity) { return; }
+        return model.moveFolder(folderEntity, dest);
       }
-
-      const folderEntity = itemScopeIndex.folderById.get(item.id);
-      if (!folderEntity) { return; }
-      return model.moveFolder(folderEntity, destFolder);
     }));
 
     return true;

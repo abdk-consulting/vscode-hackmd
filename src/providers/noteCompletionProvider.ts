@@ -7,9 +7,16 @@ import { getHackmdModel, ModelNote } from '../model';
  * Returns the URL path segment for a note, e.g. `/@user/permalink-or-id`.
  */
 function noteLinkPath(note: ModelNote): string {
-  const scope = note.teamPath ?? note.userPath;
-  const slug = note.permalink ?? note.id;
-  return scope ? `/@${scope}/${slug}` : `/${slug}`;
+  if (!note.publishLink) {
+    return `/${note.userPath ?? ''}/${note.permalink ?? note.id}`;
+  }
+
+  try {
+    return new URL(note.publishLink).pathname;
+  } catch {
+    // Handle non-absolute URLs by parsing with a stable base.
+    return new URL(note.publishLink, 'https://hackmd.io').pathname;
+  }
 }
 
 /**

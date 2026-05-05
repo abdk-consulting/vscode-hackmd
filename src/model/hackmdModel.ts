@@ -850,15 +850,6 @@ export class HackmdModel {
     });
   }
 
-  async renameNote(noteId: string, newTitle: string, teamPath?: string | null): Promise<ModelNote> {
-    const scope = teamPath || null;
-    const note = this.getNoteSync(this.scopeEntityForCleanup(scope), noteId);
-    if (!note) {
-      throw new Error(`Note not found: ${noteId}`);
-    }
-    return this.updateNote(note, { title: newTitle });
-  }
-
   async updateFolder(folder: ModelFolder, input: UpdateFolderInput): Promise<ModelFolder> {
     const folderId = folder.id;
     const scope = folder.teamPath || null;

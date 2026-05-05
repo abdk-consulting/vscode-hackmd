@@ -10,7 +10,7 @@ import * as S from 'string';
 import { API, initializeAPIClient } from './api';
 import { registerCommands } from './commands';
 import { ACCESS_TOKEN_KEY } from './constants';
-import { initializeHackmdModel } from './model';
+import { getHackmdModel, initializeHackmdModel, ModelFolder, ModelNote, ModelTeam } from './model';
 import { HistoryProvider } from './providers/historyProvider';
 import { activate as activateFSProvider } from './providers/mdFsProvider';
 import { MyNotesProvider } from './providers/myNotesProvider';
@@ -83,42 +83,45 @@ export function getActiveTreeSelection(): readonly any[] {
   return myNotesTreeView?.selection || [];
 }
 
-function isSelectedNoteNode(node: any): boolean {
-  return node?.type === 'note' && !!node.note?.id;
+function isSelectedNoteNode(node: any): node is ModelNote {
+  return node?.type === 'note' && !!node?.id;
 }
 
-function isSelectedFolderNode(node: any): boolean {
-  return node?.type === 'folder' && !!(node.id || node.folderId || node.value?.context?.folderId);
+function isSelectedFolderNode(node: any): node is ModelFolder {
+  return node?.type === 'folder' && !!node?.id;
 }
 
-function getSelectedNodeTeamPath(node: any): string | null {
-  if (isSelectedNoteNode(node)) {
-    return (node.note?.teamPath || null);
-  }
-  if (isSelectedFolderNode(node)) {
-    return (node.teamPath || node.value?.context?.teamPath || null);
-  }
-  return null;
+function isSelectedTeamNode(node: any): node is ModelTeam {
+  return node?.type === 'team' && !!node?.id;
 }
+
 
 function isActionableSelectionNode(node: any): boolean {
-  return isSelectedNoteNode(node) || isSelectedFolderNode(node);
+  return isSelectedNoteNode(node) || isSelectedFolderNode(node) || isSelectedTeamNode(node);
 }
 
 function updateTreeSelectionContexts(prefix: string, selection: readonly any[]): void {
   const hasSelection = selection.length > 0;
   const hasMixedSelection = selection.length > 1 && selection.some((node) => !isSelectedNoteNode(node));
   const hasMultiNoteSelection = selection.length > 1 && selection.every(isSelectedNoteNode);
-  const hasSameScopeMultiNoteSelection = hasMultiNoteSelection && selection.every(
-    (node) => (node.note?.teamPath || null) === (selection[0].note?.teamPath || null)
-  );
+  const hasSameScopeMultiNoteSelection = hasMultiNoteSelection && (() => {
+    try {
+      const model = getHackmdModel();
+      const firstScope = model.getScopeEntityForItem(selection[0]);
+      return selection.every((node) => model.getScopeEntityForItem(node) === firstScope);
+    } catch {
+      return false;
+    }
+  })();
   const hasActionableSelection = hasSelection && selection.every(isActionableSelectionNode);
   const hasSingleScopeActionableSelection = hasActionableSelection && (() => {
-    const scopes = new Set<string>();
-    for (const node of selection) {
-      scopes.add(getSelectedNodeTeamPath(node) || '__personal__');
+    try {
+      const model = getHackmdModel();
+      const firstScope = model.getScopeEntityForItem(selection[0]);
+      return selection.every((node) => model.getScopeEntityForItem(node) === firstScope);
+    } catch {
+      return false;
     }
-    return scopes.size <= 1;
   })();
 
   void vscode.commands.executeCommand('setContext', `${prefix}.hasSelection`, hasSelection);
@@ -160,43 +163,6 @@ function getTreeViewById(viewId: TreeViewId): vscode.TreeView<any> | undefined {
     default:
       return undefined;
   }
-}
-
-function getTeamPathFromNode(node: any): string | null | undefined {
-  if (!node) {
-    return undefined;
-  }
-  if (typeof node.teamPath === 'string') {
-    return node.teamPath;
-  }
-  if (node.teamPath === null) {
-    return null;
-  }
-  if (typeof node?.team?.path === 'string') {
-    return node.team.path;
-  }
-  if (node?.type === 'team' && typeof node.path === 'string') {
-    return node.path;
-  }
-  if (node?.type === 'note' && typeof node.teamPath === 'string') {
-    return node.teamPath;
-  }
-  if (node?.type === 'note' && node.teamPath === null) {
-    return null;
-  }
-  if (typeof node?.note?.teamPath === 'string') {
-    return node.note.teamPath;
-  }
-  if (node?.note?.teamPath === null) {
-    return null;
-  }
-  if (typeof node?.value?.context?.teamPath === 'string') {
-    return node.value.context.teamPath;
-  }
-  if (node?.value?.context?.teamPath === null) {
-    return null;
-  }
-  return undefined;
 }
 
 if (process.env.RUNTIME !== 'browser') {

@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 
 
-import { Note } from '../api/hackmdApiClient';
 import type { ModelFolder, ModelMyNotes, ModelNote, ModelTeam } from '../model';
 import { getHackmdModel } from '../model';
 
@@ -13,61 +12,10 @@ function getModel(): ReturnType<typeof getHackmdModel> | undefined {
   }
 }
 
-function isSameNoteScope(left: Note, right: Note): boolean {
-  return (left.teamPath || null) === (right.teamPath || null);
-}
-
-async function closeTabsForNote(note: Note): Promise<boolean> {
-  const model = getModel();
-  const noteScope = model && (note.teamPath ? model.getTeams().find((t) => t.path === note.teamPath) ?? null : model.getMyNotesEntity());
-  const cached = noteScope ? model!.getNoteSync(noteScope, note.id) : null;
-  const target = cached || (note as any);
-  const tabsToClose: vscode.Tab[] = [];
-
-  for (const tabGroup of vscode.window.tabGroups.all) {
-    for (const tab of tabGroup.tabs) {
-      const input = tab.input as any;
-      const tabUri: vscode.Uri | undefined = input?.uri;
-
-      let matchesTarget = false;
-      if (model && tabUri && tabUri.scheme === 'hackmd') {
-        const entity = model.getEntityByUriSync(tabUri);
-        matchesTarget = !!entity && entity.type === 'note'
-          && entity.id === target.id
-          && ((entity.teamPath ?? null) === (target.teamPath ?? null));
-      }
-
-      if (input.viewType === "mainThreadWebview-markdown.preview"
-        || matchesTarget) {
-        tabsToClose.push(tab);
-      }
-    }
-  }
-
-  return await vscode.window.tabGroups.close(tabsToClose);
-}
-
 const NOTE_DRAG_MIME_TYPE = 'text/uri-list';
 
 type DropContainerEntity = ModelMyNotes | ModelTeam | ModelFolder;
 type DroppedEntity = ModelNote | ModelFolder;
-
-type DraggedFolder = {
-  id: string;
-  teamPath: string | null;
-  name?: string;
-};
-
-function toEntityKey(entity: ModelMyNotes | ModelTeam | ModelFolder | ModelNote): string {
-  if (entity.type === 'my-notes') {
-    return 'my-notes';
-  }
-  if (entity.type === 'team') {
-    return `team:${entity.path}`;
-  }
-  const scope = entity.teamPath ?? 'personal';
-  return `${entity.type}:${scope}:${entity.id}`;
-}
 
 function getScopeEntityForComparison(model: ReturnType<typeof getHackmdModel>, entity: DropContainerEntity | DroppedEntity) {
   return model.getScopeEntityForItem(entity);
@@ -75,6 +23,14 @@ function getScopeEntityForComparison(model: ReturnType<typeof getHackmdModel>, e
 
 function getImmediateParent(model: ReturnType<typeof getHackmdModel>, entity: ModelNote | ModelFolder | ModelTeam) {
   return model.getImmediateParentContainer(entity);
+}
+
+function areEntitiesInSameScope(model: ReturnType<typeof getHackmdModel>, entities: Array<ModelFolder | ModelNote>): boolean {
+  if (entities.length === 0) {
+    return true;
+  }
+  const scope = model.getScopeEntityForItem(entities[0]);
+  return entities.every((entity) => model.getScopeEntityForItem(entity) === scope);
 }
 
 function getDroppedEntitiesFromDataTransfer(dataTransfer: vscode.DataTransfer): Array<ModelNote | ModelFolder | ModelTeam> {
@@ -129,12 +85,12 @@ function validateAndFilterDroppedEntities(
   dropped: Array<ModelNote | ModelFolder | ModelTeam>,
   target: DropContainerEntity,
 ): DroppedEntity[] {
-  const deduped = new Map<string, DroppedEntity>();
+  const deduped = new Map<DroppedEntity, DroppedEntity>();
   for (const entity of dropped) {
     if (entity.type !== 'note' && entity.type !== 'folder') {
       throw new Error('Only note and folder entities can be dropped.');
     }
-    deduped.set(toEntityKey(entity), entity);
+    deduped.set(entity, entity);
   }
 
   const droppedEntities = [...deduped.values()];
@@ -146,9 +102,8 @@ function validateAndFilterDroppedEntities(
     }
   }
 
-  const droppedKeys = new Set(droppedEntities.map((entity) => toEntityKey(entity)));
-  const targetKey = toEntityKey(target);
-  if (droppedKeys.has(targetKey)) {
+  const droppedEntitiesSet = new Set(droppedEntities);
+  if (droppedEntitiesSet.has(target as DroppedEntity)) {
     throw new Error('Target cannot be among dropped entities.');
   }
 
@@ -156,7 +111,7 @@ function validateAndFilterDroppedEntities(
   let targetCursor: ModelFolder | ModelTeam | ModelMyNotes | { type: 'teams' } = target;
   while (targetCursor.type === 'folder' || targetCursor.type === 'team') {
     const parent = getImmediateParent(model, targetCursor);
-    if (parent.type === 'folder' && droppedKeys.has(toEntityKey(parent))) {
+    if (parent.type === 'folder' && droppedEntitiesSet.has(parent)) {
       throw new Error('Cannot move into a descendant of a dropped folder.');
     }
     targetCursor = parent;
@@ -165,15 +120,15 @@ function validateAndFilterDroppedEntities(
   // Remove entities already directly inside target.
   let filtered = droppedEntities.filter((entity) => {
     const parent = getImmediateParent(model, entity);
-    return toEntityKey(parent as ModelMyNotes | ModelTeam | ModelFolder) !== targetKey;
+    return parent !== target;
   });
 
   // Remove entities with another dropped folder in their ancestor chain.
-  const filteredKeys = new Set(filtered.map((entity) => toEntityKey(entity)));
+  const filteredSet = new Set(filtered);
   filtered = filtered.filter((entity) => {
     let cursor = getImmediateParent(model, entity);
     while (cursor.type === 'folder') {
-      if (filteredKeys.has(toEntityKey(cursor))) {
+      if (filteredSet.has(cursor)) {
         return false;
       }
       cursor = getImmediateParent(model, cursor);
@@ -215,53 +170,27 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
     }
 
     if (allFolders) {
-      const folders = source.map((node) => ({
-        id: node.id,
-        teamPath: node.teamPath ?? null,
-        name: node.name,
-      })) as DraggedFolder[];
+      const folders = source as ModelFolder[];
 
-      if (!folders.every((folder) => (folder.teamPath || null) === (folders[0].teamPath || null))) {
+      if (!areEntitiesInSameScope(model, folders)) {
         return;
       }
 
       const uriList = folders
-        .map((folder) => {
-          const folderScope = folder.teamPath ? (model.getTeams().find((t) => t.path === folder.teamPath) ?? null) : model.getMyNotesEntity();
-          const cachedFolder = (folderScope ? model.getFolderSync(folderScope, folder.id) : null) || {
-            type: 'folder',
-            id: folder.id,
-            name: folder.name || 'Folder',
-            teamPath: folder.teamPath ?? null,
-            children: [],
-            notes: [],
-          };
-          return model.toUri(cachedFolder as any).toString();
-        })
+        .map((folder) => model.toUri(folder).toString())
         .join('\r\n');
 
       dataTransfer.set(NOTE_DRAG_MIME_TYPE, new vscode.DataTransferItem(uriList));
       return;
     }
 
-    const notes = source.map((node) => node.note);
-    if (!notes.every((note) => isSameNoteScope(note, notes[0]))) {
+    const notes = source.map((node) => node.note as ModelNote);
+    if (!areEntitiesInSameScope(model, notes)) {
       return;
     }
 
     const uriList = notes
-      .map((note) => {
-        const noteScope = note.teamPath ? (model.getTeams().find((t) => t.path === note.teamPath) ?? null) : model.getMyNotesEntity();
-        const cachedNote = (noteScope ? model.getNoteSync(noteScope, note.id) : null) || {
-          type: 'note',
-          id: note.id,
-          title: note.title || note.shortId || 'Untitled',
-          shortId: note.shortId,
-          teamPath: note.teamPath ?? null,
-          folderPaths: (note as any).folderPaths || [],
-        };
-        return model.toUri(cachedNote as any).toString();
-      })
+      .map((note) => model.toUri(note as ModelNote).toString())
       .join('\r\n');
 
     dataTransfer.set(NOTE_DRAG_MIME_TYPE, new vscode.DataTransferItem(uriList));
@@ -299,22 +228,12 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
       return;
     }
 
-    if (targetContainer.type !== 'folder') {
-      throw new Error('Moving to non-folder targets is not supported.');
-    }
-
-    await Promise.all(entitiesToMove.map(async (entity) => {
-      if (entity.type === 'note') {
-        const canProceed = await closeTabsForNote(entity as unknown as Note);
-        if (!canProceed) {
-          return;
-        }
-        await model.moveNote(entity, targetContainer);
-        return;
-      }
-
-      await model.moveFolder(entity, targetContainer);
-    }));
+    await vscode.commands.executeCommand(
+      'hackmd.model.move',
+      entitiesToMove[0],
+      entitiesToMove,
+      targetContainer,
+    );
   }
 }
 

@@ -6,6 +6,20 @@
 
 ### Changed
 
+- Continued entity-first command and drag-and-drop cleanup:
+  - `hackmd.model.rename` now follows a minimal entity-first flow: accepts an optional `ModelNote | ModelFolder`, falls back to a picker listing known notes/folders when omitted, prompts for the new name/title, and updates via `updateNote` / `updateFolder` only.
+  - Removed `renameNote` from the model API; rename paths now use `updateNote` directly.
+  - `runMove` now validates source/target scope equality via `model.getScopeEntityForItem(...)` instead of checking `teamPath`/`path` fields.
+  - Tree drag-and-drop now delegates move execution through `hackmd.model.move` and passes the drop target as the command's third argument.
+  - Drag URI-list generation was simplified to use `model.toUri(...)` directly for both folder and note drags (removed surrogate/cached URI construction).
+  - Drag scope checks now use model scope entities (`getScopeEntityForItem`) instead of direct `teamPath` comparisons.
+  - Removed `toEntityKey` from drag-and-drop filtering; dedupe/membership checks now use entity object identity via `Map`/`Set` keyed by entities.
+
+- Note-link completion path generation now derives links from note publish URLs:
+  - `noteLinkPath` now parses `note.publishLink` and uses its `pathname` as the completion link path.
+  - Added relative-URL-safe parsing fallback with HackMD base URL.
+  - Updated non-publish-link fallback path to `/${userPath}/${permalink ?? id}`.
+
 - `getScopeSnapshotSync` now accepts a scope entity (`ModelMyNotes | ModelTeam`) instead of a `teamPath` string or `null`:
   - All call sites across `myNotesProvider.ts`, `teamNotesProvider.ts`, `noteCompletionProvider.ts`, `pickers.ts`, `model.ts`, and `ui.ts` were updated to resolve the appropriate entity before calling the method.
   - Callers that previously held a `teamPath` string now look up the team entity via `model.getTeamByPath(teamPath)` and pass it directly; personal-scope callers pass `model.getMyNotesEntity()`.

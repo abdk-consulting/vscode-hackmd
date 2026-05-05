@@ -3,13 +3,11 @@ import * as vscode from 'vscode';
 import { HackMdApiClient, HackMdFolder, Note, Team } from '../api/hackmdApiClient';
 import { recordUsage } from '../store';
 
-export type ModelScope = string | null;
-
-export interface ModelDisposable {
+interface ModelDisposable {
   dispose(): void;
 }
 
-export interface ModelEvent<T> {
+interface ModelEvent<T> {
   (listener: (payload: T) => void): ModelDisposable;
 }
 
@@ -125,14 +123,14 @@ export interface CreateFolderProps {
   name: string;
 }
 
-interface CreateNoteInput {
+export interface CreateNoteInput {
   teamPath?: string | null;
   title?: string;
   content?: string;
   parentFolderId?: string | null;
 }
 
-interface CreateFolderInput {
+export interface CreateFolderInput {
   teamPath?: string | null;
   name: string;
   parentFolderId?: string | null;
@@ -292,17 +290,18 @@ export class HackmdModel {
 
   private readonly teams = new Map<string, ModelTeam>();
   private readonly teamsByPath = new Map<string, ModelTeam>();
+  private readonly orphanScopesByPath = new Map<string, ModelTeam>();
   private readonly orderedTeams: ModelTeam[] = [];
 
-  private readonly foldersByScope = new Map<ModelMyNotes | ModelTeam | string, Map<string, ModelFolder>>();
-  private readonly notesByScope = new Map<ModelMyNotes | ModelTeam | string, Map<string, ModelNote>>();
+  private readonly foldersByScope = new Map<ModelMyNotes | ModelTeam, Map<string, ModelFolder>>();
+  private readonly notesByScope = new Map<ModelMyNotes | ModelTeam, Map<string, ModelNote>>();
 
   private readonly personalRootFolders: ModelFolder[] = [];
   private readonly personalRootNotes: ModelNote[] = [];
 
   private readonly historyNotes: ModelNote[] = [];
   private readonly loadedScopes = new Set<ModelMyNotes | ModelTeam>();
-  private readonly contentLoadedByScope = new Map<ModelMyNotes | ModelTeam | string, Set<string>>();
+  private readonly contentLoadedByScope = new Map<ModelMyNotes | ModelTeam, Set<string>>();
 
   private refreshTeamsPromise: Promise<void> | null = null;
   private refreshHistoryPromise: Promise<void> | null = null;
@@ -364,20 +363,40 @@ export class HackmdModel {
     return this.orderedTeams;
   }
 
-  getTeamById(teamId: string): ModelTeam | undefined {
-    return this.teams.get(teamId);
+  getScopeEntityForItem(item: ModelMyNotes | ModelTeam | ModelFolder | ModelNote): ModelMyNotes | ModelTeam {
+    if (item.type === 'my-notes') return this.myNotesEntity;
+    if (item.type === 'team') return this.scopeEntityForCleanup(item.path);
+    return this.scopeEntityForCleanup(item.teamPath || null);
   }
 
-  getTeamByPath(teamPath: string): ModelTeam | undefined {
-    return this.teamsByPath.get(teamPath);
-  }
+  getImmediateParentContainer(item: ModelNote | ModelFolder | ModelTeam): ModelMyNotes | ModelTeam | ModelFolder | ModelTeams {
+    if (item.type === 'team') {
+      return this.teamsEntity;
+    }
 
-  getPersonalRootFolders(): readonly ModelFolder[] {
-    return this.personalRootFolders;
-  }
+    const scope = this.scopeEntityForCleanup(item.teamPath || null);
 
-  getPersonalRootNotes(): readonly ModelNote[] {
-    return this.personalRootNotes;
+    if (item.type === 'folder') {
+      const folder = item.parentId !== undefined
+        ? item
+        : (this.getFolderSync(scope, item.id) || item);
+      const parentFolderId = folder.parentId || null;
+      if (!parentFolderId) {
+        return scope;
+      }
+      return this.getFolderSync(scope, parentFolderId) || scope;
+    }
+
+    let parentFolderId = resolveParentFolderId(item);
+    if (!parentFolderId) {
+      const cachedNote = this.getNoteSync(scope, item.id);
+      parentFolderId = resolveParentFolderId(cachedNote || undefined);
+    }
+
+    if (!parentFolderId) {
+      return scope;
+    }
+    return this.getFolderSync(scope, parentFolderId) || scope;
   }
 
   getHistoryNotes(): readonly ModelNote[] {
@@ -531,7 +550,7 @@ export class HackmdModel {
       return this.getFolderSync(this.scopeEntityForCleanup(parsed.teamPath ?? null), parsed.folderId) || null;
     }
     if (parsed.teamPath) {
-      return this.getTeamByPath(parsed.teamPath) || null;
+      return this.teamsByPath.get(parsed.teamPath) || null;
     }
     return null;
   }
@@ -563,7 +582,7 @@ export class HackmdModel {
 
         if (parsed.teamPath) {
           await this.refresh(this.teamsEntity);
-          return this.getTeamByPath(parsed.teamPath) || null;
+          return this.teamsByPath.get(parsed.teamPath) || null;
         }
       } catch {
         return null;
@@ -1103,23 +1122,18 @@ export class HackmdModel {
           rootNotes: [],
         };
         this.teams.set(team.id, modelTeam);
+        this.adoptOrphanScopeData(modelTeam);
         this.emitEntityChanged(modelTeam);
         changed = true;
-        // Migrate any scope data stored under the string key before the entity existed
-        const strKey = scopeKey(team.path);
-        const strFolders = this.foldersByScope.get(strKey);
-        if (strFolders) { this.foldersByScope.set(modelTeam, strFolders); this.foldersByScope.delete(strKey); }
-        const strNotes = this.notesByScope.get(strKey);
-        if (strNotes) { this.notesByScope.set(modelTeam, strNotes); this.notesByScope.delete(strKey); }
-        const strContent = this.contentLoadedByScope.get(strKey);
-        if (strContent) { this.contentLoadedByScope.set(modelTeam, strContent); this.contentLoadedByScope.delete(strKey); }
       } else {
         const oldPath = modelTeam.path;
         const teamMetaChanged = modelTeam.path !== team.path || modelTeam.name !== team.name;
         modelTeam.path = team.path;
         modelTeam.name = team.name;
+        this.adoptOrphanScopeData(modelTeam);
         if (oldPath !== modelTeam.path) {
           this.teamsByPath.delete(oldPath);
+          this.orphanScopesByPath.delete(oldPath);
         }
         if (teamMetaChanged) {
           this.emitEntityChanged(modelTeam);
@@ -1139,10 +1153,7 @@ export class HackmdModel {
         this.notesByScope.delete(existing);
         this.loadedScopes.delete(existing);
         this.contentLoadedByScope.delete(existing);
-        const strKey = scopeKey(existing.path);
-        this.foldersByScope.delete(strKey);
-        this.notesByScope.delete(strKey);
-        this.contentLoadedByScope.delete(strKey);
+        this.orphanScopesByPath.delete(existing.path);
         this.emitEntityChanged(existing);
         changed = true;
       }
@@ -1794,20 +1805,59 @@ export class HackmdModel {
     }
   }
 
-  private getScopeEntity(teamPath?: string | null): ModelMyNotes | ModelTeam | undefined {
-    if (!teamPath) return this.myNotesEntity;
-    return this.teamsByPath.get(teamPath);
+  private getOrCreateOrphanScope(teamPath: string): ModelTeam {
+    let orphan = this.orphanScopesByPath.get(teamPath);
+    if (orphan) {
+      return orphan;
+    }
+    orphan = {
+      type: 'team',
+      id: '',
+      path: teamPath,
+      name: teamPath,
+      rootFolders: [],
+      rootNotes: [],
+    };
+    this.orphanScopesByPath.set(teamPath, orphan);
+    return orphan;
+  }
+
+  private adoptOrphanScopeData(team: ModelTeam): void {
+    const orphan = this.orphanScopesByPath.get(team.path);
+    if (!orphan || orphan === team) {
+      return;
+    }
+
+    const folders = this.foldersByScope.get(orphan);
+    if (folders) {
+      this.foldersByScope.set(team, folders);
+      this.foldersByScope.delete(orphan);
+    }
+
+    const notes = this.notesByScope.get(orphan);
+    if (notes) {
+      this.notesByScope.set(team, notes);
+      this.notesByScope.delete(orphan);
+    }
+
+    const contentLoaded = this.contentLoadedByScope.get(orphan);
+    if (contentLoaded) {
+      this.contentLoadedByScope.set(team, contentLoaded);
+      this.contentLoadedByScope.delete(orphan);
+    }
+
+    this.loadedScopes.delete(orphan);
+    this.refreshScopePromises.delete(orphan);
+    this.orphanScopesByPath.delete(team.path);
   }
 
   private scopeEntityForCleanup(teamPath: string | null): ModelMyNotes | ModelTeam {
-    if (!teamPath) return this.myNotesEntity;
-    return this.teamsByPath.get(teamPath)
-      ?? { type: 'team' as const, id: '', path: teamPath, name: teamPath, rootFolders: [], rootNotes: [] };
+    return this.getScopeMapKey(teamPath);
   }
 
-  private getScopeMapKey(teamPath?: string | null): ModelMyNotes | ModelTeam | string {
+  private getScopeMapKey(teamPath?: string | null): ModelMyNotes | ModelTeam {
     if (!teamPath) return this.myNotesEntity;
-    return this.teamsByPath.get(teamPath) ?? scopeKey(teamPath);
+    return this.teamsByPath.get(teamPath) ?? this.getOrCreateOrphanScope(teamPath);
   }
 
   private getContentLoadedSet(teamPath?: string | null): Set<string> {

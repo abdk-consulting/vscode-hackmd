@@ -39,7 +39,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private historyPendingOperation = false;
   private lastError: string | null = null;
   private readonly model: ReturnType<typeof getHackmdModel> | null;
-  private lastOrderSignature = '';
+  private lastOrderSignature: ModelNote[] = [];
 
   constructor(private extensionPath: string) {
     try {
@@ -52,22 +52,20 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
 
         const entity = event.entity;
         if (entity.type === 'note') {
-          this.handleNoteUpsert(entity.id);
+          this.handleNoteUpsert(entity);
         }
       });
       this.model.onDidChangePending((event) => {
         const entity = event.entity;
 
-        if (entity.type === 'recent-notes') {
-          if (this.historyPendingOperation !== event.pending) {
-            this.historyPendingOperation = event.pending;
-            this._onDidChangePendingState.fire(event.pending);
-          }
+        if (entity.type === 'model-root' || entity.type === 'recent-notes') {
+          this.historyPendingOperation = event.pending;
+          this._onDidChangePendingState.fire(event.pending);
           return;
         }
 
-        if (entity.type === 'note' && this.loaded) {
-          this.fireNoteRefresh(entity.id);
+        if (entity.type === 'note') {
+          this._onDidChangeTreeData.fire(entity);
         }
       });
     } catch {
@@ -106,37 +104,34 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     return this.loadingPromise;
   }
 
-  refresh(): void {
-    this.loaded = false;
-    this.lastOrderSignature = '';
-    void this.ensureHistoryLoaded(true);
-  }
-
-  private computeOrderSignature(): string {
+  private computeOrderSignature(): ModelNote[] {
     if (!this.model) {
-      return '';
+      return [];
     }
-    const ids = [...this.model.getHistoryNotes()]
-      .sort(compareHistoryNotes)
-      .map((note) => note.id);
-    return ids.join('|');
+    return [...this.model.getHistoryNotes()].sort(compareHistoryNotes);
   }
 
-  private fireIfOrderChanged(): boolean {
-    const next = this.computeOrderSignature();
-    if (next !== this.lastOrderSignature) {
-      this.lastOrderSignature = next;
+  private getEntityPositionFromSignature(signature: ModelNote[] | undefined, note: ModelNote): number {
+    if (!signature || signature.length === 0) {
+      return -1;
+    }
+    return signature.indexOf(note);
+  }
+
+  private handleNoteUpsert(note: ModelNote): void {
+    const previousSignature = this.lastOrderSignature;
+    const previousPosition = this.getEntityPositionFromSignature(previousSignature, note);
+
+    const nextSignature = this.computeOrderSignature();
+    this.lastOrderSignature = nextSignature;
+    const nextPosition = this.getEntityPositionFromSignature(nextSignature, note);
+
+    if (previousPosition !== nextPosition) {
       this._onDidChangeTreeData.fire(undefined);
-      return true;
-    }
-    return false;
-  }
-
-  private handleNoteUpsert(noteId: string): void {
-    if (this.fireIfOrderChanged()) {
       return;
     }
-    this.fireNoteRefresh(noteId);
+
+    this.fireNoteRefresh(note.id);
   }
 
   private fireNoteRefresh(noteId: string): void {
@@ -182,7 +177,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
         }
 
         const notes = [...this.model.getHistoryNotes()].sort(compareHistoryNotes);
-        this.lastOrderSignature = notes.map((note) => note.id).join('|');
+        this.lastOrderSignature = notes;
 
         if (notes.length === 0) {
           return [{ type: 'placeholder', message: 'No history' }];

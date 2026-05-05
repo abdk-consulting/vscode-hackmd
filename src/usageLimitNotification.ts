@@ -77,7 +77,7 @@ export function updateStatusbarItem(workspaceName: string, reached: boolean, upg
 
   statusBarItem.text = text;
   statusBarItem.tooltip = new vscode.MarkdownString(tooltip);
-  statusBarItem.command = 'HackMD.upgrade';
+  statusBarItem.command = 'hackmd.user.upgrade';
 
   statusBarItem.show();
 }

@@ -593,10 +593,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
         const treeView = getTreeViewById('hackmd.tree.team-notes');
         const primary = treeView?.selection?.[0];
-        const teamPath = getTeamPathFromNode(primary);
+        const team = primary?.type === 'team'
+          ? primary
+          : primary?.team?.type === 'team'
+            ? primary.team
+            : undefined;
 
-        if (typeof teamPath === 'string' && teamPath.length > 0) {
-          await vscode.commands.executeCommand('hackmd.model.refreshTeam', { teamPath });
+        if (team) {
+          await vscode.commands.executeCommand('hackmd.model.refreshTeam', team);
           return;
         }
 
@@ -615,7 +619,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   // Use TreeDataProvider for all views for consistency
-  const dragAndDropController = new NoteDragAndDropController(true);
+  const dragAndDropController = new NoteDragAndDropController(true, { type: 'my-notes' });
   const noDropDragAndDropController = new NoteDragAndDropController(false);
 
   myNotesProvider = new MyNotesProvider(context.extensionPath);

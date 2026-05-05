@@ -16,7 +16,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _currentNote?: ModelNote;
   private _currentNoteId?: string;
-  private _currentTeamPath?: string | null;
   private _pendingChanges: Partial<NoteProperties> = {};
   private _isSaving = false;
 
@@ -65,7 +64,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
   public async openNote(note: ModelNote): Promise<boolean> {
     const noteId = note.id;
-    const teamPath = note.teamPath;
     if (this._currentNoteId && this._currentNoteId !== noteId && this.hasPendingChanges()) {
       const selection = await vscode.window.showWarningMessage(
         'You have unsaved property changes. What would you like to do?',
@@ -88,7 +86,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
     this._currentNote = note;
     this._currentNoteId = noteId;
-    this._currentTeamPath = teamPath;
     this._pendingChanges = {};
     this._isSaving = false;
     this._fullRenderWebview();
@@ -134,7 +131,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   private reset() {
     this._currentNote = undefined;
     this._currentNoteId = undefined;
-    this._currentTeamPath = undefined;
     this._pendingChanges = {};
     this._isSaving = false;
     this._fullRenderWebview();
@@ -212,9 +208,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
     this._isSaving = true;
     this._fullRenderWebview();
-
-    const noteId = this._currentNoteId;
-    const teamPath = this._currentTeamPath;
 
     let model: ReturnType<typeof getHackmdModel> | undefined;
     try {

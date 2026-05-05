@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { getHackmdModel, ModelFolder, ModelNote, ModelScope } from '../model';
+import { getHackmdModel, ModelFolder, ModelMyNotes, ModelNote, ModelTeam } from '../model';
 
 export const REFRESH_HINT = 'Run "HackMD Model: Refresh Scope" to load data.';
 
@@ -8,33 +8,26 @@ export type ScopeQuickPickItem = {
   label: string;
   description?: string;
   detail?: string;
-  scope?: ModelScope;
-  isCustom?: boolean;
+  scope?: ModelMyNotes | ModelTeam;
 };
 
 export type FolderQuickPickItem = {
   label: string;
   description?: string;
   detail?: string;
-  folderId?: string | null;
-  isCustom?: boolean;
+  folder?: ModelFolder | null;
 };
 
 export type NoteQuickPickItem = {
   label: string;
   description?: string;
   detail?: string;
-  note?: ModelNote;
-  isCustom?: boolean;
-};
-
-export type EntityPickerOptions = {
-  allowCustom?: boolean;
+  note: ModelNote;
 };
 
 export type PickedEntity =
-  | { kind: 'note'; noteId: string; teamPath: ModelScope; note?: ModelNote }
-  | { kind: 'folder'; folderId: string; teamPath: ModelScope; name: string };
+  | { kind: 'note'; note: ModelNote }
+  | { kind: 'folder'; folder: ModelFolder };
 
 export function collectFolders(rootFolders: readonly ModelFolder[]): ModelFolder[] {
   const result: ModelFolder[] = [];
@@ -88,8 +81,11 @@ export async function promptOptionalInput(prompt: string, value = ''): Promise<s
 
 export async function pickScope(
   model: ReturnType<typeof getHackmdModel>,
-  placeHolder: string
-): Promise<ModelScope | undefined> {
+  placeHolder: string,
+  options?: { includeMyNotes?: boolean }
+): Promise<ModelMyNotes | ModelTeam | undefined> {
+  const includeMyNotes = options?.includeMyNotes ?? true;
+  const myNotes = model.getMyNotesEntity();
   const personalLoaded = model.getScopeSnapshotSync(model.getMyNotesEntity()) !== null;
   const teamItems: ScopeQuickPickItem[] = model.getTeams().map((team) => {
     const loaded = model.getScopeSnapshotSync(team) !== null;
@@ -97,24 +93,21 @@ export async function pickScope(
       label: team.name,
       description: team.path,
       detail: loaded ? undefined : `Not loaded — ${REFRESH_HINT}`,
-      scope: team.path as ModelScope,
+      scope: team,
     };
   });
 
   const selected = await vscode.window.showQuickPick<ScopeQuickPickItem>(
     [
-      {
-        label: 'My Notes',
-        description: 'Personal workspace',
-        detail: personalLoaded ? undefined : `Not loaded — ${REFRESH_HINT}`,
-        scope: null,
-      },
+      ...(includeMyNotes
+        ? [{
+          label: 'My Notes',
+          description: 'Personal workspace',
+          detail: personalLoaded ? undefined : `Not loaded — ${REFRESH_HINT}`,
+          scope: myNotes,
+        }]
+        : []),
       ...teamItems,
-      {
-        label: 'Custom Team Path...',
-        description: 'Enter a team path manually',
-        isCustom: true,
-      },
     ],
     {
       placeHolder,
@@ -126,66 +119,34 @@ export async function pickScope(
     return undefined;
   }
 
-  if (selected.isCustom) {
-    const custom = await promptOptionalInput('Team path (leave empty for My Notes)');
-    return custom && custom.trim().length > 0 ? custom.trim() : null;
-  }
-
   return selected.scope;
 }
 
 export async function pickFolder(
   model: ReturnType<typeof getHackmdModel>,
-  teamPath: ModelScope,
+  scope: ModelMyNotes | ModelTeam,
   placeHolder: string,
-  includeRoot = false,
-  options: EntityPickerOptions = {}
-): Promise<{ folderId: string | null; teamPath: ModelScope } | undefined> {
-  const allowCustom = options.allowCustom ?? true;
-  const scopeEntity = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
-  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
+  includeRoot = false
+): Promise<ModelFolder | null | undefined> {
+  const snapshot = model.getScopeSnapshotSync(scope);
   const folders = snapshot ? collectFolders(snapshot.rootFolders) : [];
-
-  const scopeNotLoaded = snapshot === null;
-  const customDetail = scopeNotLoaded
-    ? `No local data — ${REFRESH_HINT}`
-    : folders.length === 0 && !includeRoot
-      ? 'No folders in this scope'
-      : undefined;
 
   const items: FolderQuickPickItem[] = folders.map((folder) => ({
     label: folder.name,
     description: folder.path || folder.id,
-    folderId: folder.id,
+    folder,
   }));
 
   if (includeRoot) {
     items.unshift({
       label: 'Root',
       description: 'No parent folder',
-      folderId: null,
+      folder: null,
     });
   }
 
-  if (allowCustom) {
-    items.push({
-      label: 'Custom Folder ID...',
-      description: 'Enter a folder ID manually',
-      detail: customDetail,
-      isCustom: true,
-    });
-  }
-
-  if (allowCustom && items.length === 1 && !includeRoot) {
-    const customFolderId = await promptRequiredInput('Folder ID');
-    if (!customFolderId) {
-      return undefined;
-    }
-    return { folderId: customFolderId, teamPath };
-  }
-
-  if (!allowCustom && items.length === 0) {
-    const message = scopeNotLoaded
+  if (items.length === 0) {
+    const message = snapshot === null
       ? `No local folder data. ${REFRESH_HINT}`
       : 'No folders found in this scope.';
     vscode.window.showInformationMessage(message);
@@ -200,30 +161,13 @@ export async function pickFolder(
     return undefined;
   }
 
-  if (selected.isCustom) {
-    if (includeRoot) {
-      const customFolderId = await promptOptionalInput('Folder ID (leave empty for Root)');
-      return {
-        folderId: customFolderId && customFolderId.trim().length > 0 ? customFolderId.trim() : null,
-        teamPath,
-      };
-    }
-    const customFolderId = await promptRequiredInput('Folder ID');
-    if (!customFolderId) {
-      return undefined;
-    }
-    return { folderId: customFolderId, teamPath };
-  }
-
-  return { folderId: selected.folderId ?? null, teamPath };
+  return selected.folder ?? null;
 }
 
 export async function pickNote(
   model: ReturnType<typeof getHackmdModel>,
-  requestedScope?: ModelScope,
-  options: EntityPickerOptions = {}
-): Promise<{ noteId: string; teamPath: ModelScope; note?: ModelNote } | undefined> {
-  const allowCustom = options.allowCustom ?? true;
+  requestedScope?: ModelMyNotes | ModelTeam
+): Promise<ModelNote | undefined> {
   let scope = requestedScope;
   if (scope === undefined) {
     scope = await pickScope(model, 'Choose scope for note operation');
@@ -232,33 +176,17 @@ export async function pickNote(
     }
   }
 
-  const scopeEntity = scope ? model.getTeamByPath(scope) : model.getMyNotesEntity();
-  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
+  const snapshot = model.getScopeSnapshotSync(scope);
   const notes = snapshot ? collectNotes(snapshot.rootFolders, snapshot.rootNotes) : [];
-
-  const scopeNotLoaded = snapshot === null;
-  const customNoteDetail = scopeNotLoaded
-    ? `No local data — ${REFRESH_HINT}`
-    : notes.length === 0
-      ? 'No notes in this scope'
-      : undefined;
 
   const items: NoteQuickPickItem[] = notes.map((note) => ({
     label: note.title || note.shortId || note.id,
     description: note.id,
     note,
   }));
-  if (allowCustom) {
-    items.push({
-      label: 'Custom Note ID...',
-      description: 'Enter a note ID manually',
-      detail: customNoteDetail,
-      isCustom: true,
-    });
-  }
 
-  if (!allowCustom && items.length === 0) {
-    const message = scopeNotLoaded
+  if (items.length === 0) {
+    const message = snapshot === null
       ? `No local note data. ${REFRESH_HINT}`
       : 'No notes found in this scope.';
     vscode.window.showInformationMessage(message);
@@ -274,23 +202,7 @@ export async function pickNote(
     return undefined;
   }
 
-  if (selected.isCustom) {
-    const customNoteId = await promptRequiredInput('Note ID');
-    if (!customNoteId) {
-      return undefined;
-    }
-    return { noteId: customNoteId, teamPath: scope };
-  }
-
-  if (!selected.note) {
-    return undefined;
-  }
-
-  return {
-    noteId: selected.note.id,
-    teamPath: scope,
-    note: selected.note,
-  };
+  return selected.note;
 }
 
 /**
@@ -306,8 +218,7 @@ export async function pickEntity(
     return undefined;
   }
 
-  const scopeEntity = scope ? model.getTeamByPath(scope) : model.getMyNotesEntity();
-  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
+  const snapshot = model.getScopeSnapshotSync(scope);
   if (!snapshot) {
     vscode.window.showWarningMessage(`Scope data is not loaded. ${REFRESH_HINT}`);
     return undefined;
@@ -315,10 +226,8 @@ export async function pickEntity(
 
   type EntityItem = vscode.QuickPickItem & {
     entityKind: 'note' | 'folder';
-    noteId?: string;
-    folderId?: string;
     note?: ModelNote;
-    folderName?: string;
+    folder?: ModelFolder;
   };
 
   const folders = collectFolders(snapshot.rootFolders);
@@ -329,14 +238,12 @@ export async function pickEntity(
       label: `$(folder) ${f.name}`,
       description: f.id,
       entityKind: 'folder',
-      folderId: f.id,
-      folderName: f.name,
+      folder: f,
     })),
     ...notes.map((n): EntityItem => ({
       label: `$(note) ${n.title || n.shortId || n.id}`,
       description: n.id,
       entityKind: 'note',
-      noteId: n.id,
       note: n,
     })),
   ];
@@ -358,16 +265,12 @@ export async function pickEntity(
   if (selected.entityKind === 'folder') {
     return {
       kind: 'folder',
-      folderId: selected.folderId!,
-      teamPath: scope,
-      name: selected.folderName!,
+      folder: selected.folder!,
     };
   }
 
   return {
     kind: 'note',
-    noteId: selected.noteId!,
-    teamPath: scope,
-    note: selected.note,
+    note: selected.note!,
   };
 }

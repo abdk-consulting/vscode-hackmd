@@ -421,16 +421,16 @@ test('refreshScope(team) toggles Team Notes container and team pending flags', a
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.refresh(model.getTeamByPath('foo-team'));
+  const inflight = model.refresh(model.getTeams().find(t => t.path === 'foo-team'));
   await new Promise((resolve) => setTimeout(resolve, 1));
 
   assert.equal(model.isPending(model.getTeamsEntity()), true);
-  assert.equal(model.isPending(model.getTeamByPath('foo-team')), true);
+  assert.equal(model.isPending(model.getTeams().find(t => t.path === 'foo-team')), true);
 
   await inflight;
 
   assert.equal(model.isPending(model.getTeamsEntity()), false);
-  assert.equal(model.isPending(model.getTeamByPath('foo-team')), false);
+  assert.equal(model.isPending(model.getTeams().find(t => t.path === 'foo-team')), false);
 
   const teamContainerEvents = pendingEvents.filter((e) => e.entity.type === 'teams');
   const teamEvents = pendingEvents.filter((e) => e.entity.type === 'team' && e.entity.path === 'foo-team');
@@ -509,9 +509,9 @@ test('note/folder/team URI conversion and sync lookup', async () => {
   const { model } = createModelAndApi();
 
   await model.refresh(model.getTeamsEntity());
-  await model.refresh(model.getTeamByPath('foo-team'));
+  await model.refresh(model.getTeams().find(t => t.path === 'foo-team'));
 
-  const team = model.getTeamByPath('foo-team');
+  const team = model.getTeams().find(t => t.path === 'foo-team');
   const teamUri = model.toUri(team);
   assert.strictEqual(model.getEntityByUriSync(teamUri), team);
 
@@ -762,11 +762,11 @@ test('createNote skips team scope refresh when scope is already loaded', async (
   const { api, model } = createModelAndApi();
 
   await model.refresh(model.getTeamsEntity());
-  await model.refresh(model.getTeamByPath('foo-team'));
+  await model.refresh(model.getTeams().find(t => t.path === 'foo-team'));
   const getTeamNotesBefore = api.calls.getTeamNotes || 0;
   const getTeamFoldersBefore = api.calls.getTeamFolders || 0;
 
-  await model.createNote(model.getTeamByPath('foo-team'), { title: 'No extra team refresh' });
+  await model.createNote(model.getTeams().find(t => t.path === 'foo-team'), { title: 'No extra team refresh' });
 
   assert.equal(api.calls.getTeamNotes || 0, getTeamNotesBefore);
   assert.equal(api.calls.getTeamFolders || 0, getTeamFoldersBefore);
@@ -924,7 +924,7 @@ test('createFolder refreshes unloaded team scope in parallel with create call', 
   api.setDelay('getTeamFolders', delayMs);
 
   const start = Date.now();
-  await model.createFolder(model.getTeamByPath('foo-team'), { name: 'Parallel team folder' });
+  await model.createFolder(model.getTeams().find(t => t.path === 'foo-team'), { name: 'Parallel team folder' });
   const elapsedMs = Date.now() - start;
 
   assert.equal(api.calls.createTeamFolder || 0, 1);

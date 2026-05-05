@@ -45,15 +45,6 @@ export class Directory implements vscode.FileStat {
 
 export type Entry = File | Directory;
 
-function getTeamPathFromUri(uri: vscode.Uri): string | null {
-  return uri.query ? new URLSearchParams(uri.query).get('teamPath') : null;
-}
-
-function getNoteIdFromUri(uri: vscode.Uri): string {
-  const params = new URLSearchParams(uri.query || '');
-  return params.get('noteId') || '';
-}
-
 function getModel() {
   try {
     return getHackmdModel();
@@ -67,41 +58,19 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     throw new Error('createDirectory Method not implemented.');
   }
 
-  async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { readonly overwrite: boolean }): Promise<void> {
-    const oldNoteId = getNoteIdFromUri(oldUri);
-    const newNoteId = getNoteIdFromUri(newUri);
-    const oldTeamPath = getTeamPathFromUri(oldUri);
-    const newTeamPath = getTeamPathFromUri(newUri);
-
-    if (!oldNoteId || !newNoteId) {
-      throw vscode.FileSystemError.FileNotFound();
-    }
-
-    if (oldUri.toString() === newUri.toString()) {
-      return;
-    }
-
-    // A HackMD note's identity is the note id (+ team path for team notes).
-    // Renaming changes only the URI path/title, not the underlying note.
-    if (oldNoteId !== newNoteId || oldTeamPath !== newTeamPath) {
-      throw vscode.FileSystemError.NoPermissions('HackMD notes can only be renamed to another URI for the same note.');
-    }
-
-    const model = getModel();
-    const scope = oldTeamPath ? model.getTeamByPath(oldTeamPath) : model.getMyNotesEntity();
-    const existing = scope ? await model.getNote(scope, oldNoteId) : null;
-    if (!existing) {
-      throw vscode.FileSystemError.FileNotFound();
-    }
-
-    this._emitter.fire([
-      { type: vscode.FileChangeType.Deleted, uri: oldUri },
-      { type: vscode.FileChangeType.Created, uri: newUri }
-    ]);
+  rename(_oldUri: vscode.Uri, _newUri: vscode.Uri, _options: { readonly overwrite: boolean }): never {
+    throw vscode.FileSystemError.NoPermissions('Renaming is not supported.');
   }
 
-  stat(uri: vscode.Uri): vscode.FileStat | Thenable<vscode.FileStat> {
-    return this._lookup(uri, false);
+  async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
+    const model = getModel();
+    const entity = await model.getEntityByUri(uri);
+    if (!entity || entity.type !== 'note') {
+      throw vscode.FileSystemError.FileNotFound();
+    }
+    const file = new File(entity.title || entity.shortId || 'Untitled', true);
+    file.data = Buffer.from(entity.content || '');
+    return file;
   }
 
   readDirectory(uri: vscode.Uri): [string, vscode.FileType][] | Thenable<[string, vscode.FileType][]> {
@@ -109,17 +78,13 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const noteId = getNoteIdFromUri(uri);
-    const teamPath = getTeamPathFromUri(uri);
-
     try {
       const model = getModel();
-      const scope = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
-      const note = scope ? await model.getNote(scope, noteId) : null;
-      if (!note) {
+      const entity = await model.getEntityByUri(uri);
+      if (!entity || entity.type !== 'note') {
         throw vscode.FileSystemError.FileNotFound();
       }
-      const content = await model.getNoteContent(note);
+      const content = await model.getNoteContent(entity);
 
       return Buffer.from(content || '');
     } catch (e) {
@@ -133,29 +98,17 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     content: Uint8Array,
     options: { readonly create: boolean; readonly overwrite: boolean }
   ): Promise<void> {
-    const noteId = getNoteIdFromUri(uri);
-
-    if (!noteId) {
+    const model = getModel();
+    const entity = await model.getEntityByUri(uri);
+    if (!entity || entity.type !== 'note') {
       throw vscode.FileSystemError.FileNotFound();
     }
-
-    // Extract teamPath from URI query string (encoded when note was opened)
-    const teamPath = getTeamPathFromUri(uri);
 
     // model.saveNoteContent wraps the call with per-note pending operation, which the tree
     // providers observe via model.onDidChangePending — no manual setPendingNote needed.
     try {
       const contentString = Buffer.from(content).toString();
-      const model = getModel();
-      const scopeEntity = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
-      if (!scopeEntity) {
-        throw vscode.FileSystemError.FileNotFound();
-      }
-      const note = model.getNoteSync(scopeEntity, noteId);
-      if (!note) {
-        throw vscode.FileSystemError.FileNotFound();
-      }
-      await model.updateNote(note, { content: contentString });
+      await model.updateNote(entity, { content: contentString });
     } catch (e) {
       console.error('Error saving note:', e);
 
@@ -165,34 +118,8 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     }
   }
 
-  delete(uri: vscode.Uri, options: { readonly recursive: boolean }): void | Thenable<void> {
-    throw new Error('Delete not implemented.');
-  }
-
-  private async _lookup(uri: vscode.Uri, silent: false): Promise<Entry>;
-  private async _lookup(uri: vscode.Uri, silent: boolean): Promise<Entry | undefined>;
-  private async _lookup(uri: vscode.Uri, silent: boolean): Promise<Entry | undefined> {
-    const noteId = getNoteIdFromUri(uri);
-    const teamPath = getTeamPathFromUri(uri);
-
-    try {
-      const model = getModel();
-      const scope = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
-      const note = scope ? await model.getNote(scope, noteId) : null;
-      if (!note) {
-        throw vscode.FileSystemError.FileNotFound();
-      }
-
-      const file = new File(note.title || note.shortId || 'Untitled', true);
-      file.data = Buffer.from(note.content || '');
-
-      // TODO: ctime and size
-
-      return file;
-    } catch (e) {
-      console.error(e);
-      throw vscode.FileSystemError.FileNotFound();
-    }
+  delete(_uri: vscode.Uri, _options: { readonly recursive: boolean }): never {
+    throw vscode.FileSystemError.NoPermissions('Deleting is not supported.');
   }
 
   private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();

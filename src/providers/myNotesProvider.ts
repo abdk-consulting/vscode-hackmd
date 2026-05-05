@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { getHackmdModel, ModelFolder, ModelNote, ModelScopeSnapshot } from '../model';
+import { getHackmdModel, ModelFolder, ModelMyNotes, ModelNote, ModelScopeSnapshot } from '../model';
 
 const ICON_FOLDER = new vscode.ThemeIcon('symbol-folder');
 const ICON_FILE = new vscode.ThemeIcon('file');
@@ -68,7 +68,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly folderParentById = new Map<string, string | null>();
   private readonly noteById = new Map<string, ModelNote>();
   private readonly noteParentFolderById = new Map<string, string | null>();
-  private readonly childOrderSignatureByParent = new Map<string, string>();
+  private readonly childOrderSignatureByParent = new Map<ModelMyNotes | ModelFolder, Array<ModelFolder | ModelNote>>();
 
   constructor(private extensionPath: string) {
     try {
@@ -81,29 +81,27 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
         const entity = event.entity;
         if (entity.type === 'note' && entity.teamPath === null) {
-          this.handleEntityUpsert('note', entity.id);
+          this.handleEntityUpsert(entity);
         } else if (entity.type === 'folder' && entity.teamPath === null) {
-          this.handleEntityUpsert('folder', entity.id);
+          this.handleEntityUpsert(entity);
         }
       });
       this.model.onDidChangePending((event) => {
         const entity = event.entity;
 
-        if (entity.type === 'my-notes') {
-          if (this.myNotesPendingOperation !== event.pending) {
-            this.myNotesPendingOperation = event.pending;
-            this._onDidChangePendingState.fire(event.pending);
-          }
+        if (entity.type === 'model-root' || entity.type === 'my-notes') {
+          this.myNotesPendingOperation = event.pending;
+          this._onDidChangePendingState.fire(event.pending);
           return;
         }
 
         if (entity.type === 'folder' && entity.teamPath === null) {
-          this.fireFolderPendingRefresh(entity.id);
+          this._onDidChangeTreeData.fire(entity);
           return;
         }
 
         if (entity.type === 'note' && entity.teamPath === null) {
-          this.fireNotePendingRefresh(entity.id);
+          this._onDidChangeTreeData.fire(entity);
         }
       });
     } catch {
@@ -179,134 +177,72 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     this.rebuildAllChildOrderSignatures();
   }
 
-  private getParentSignatureKey(parentFolderId: string | null): string {
-    return parentFolderId ? `folder:${parentFolderId}` : 'root';
-  }
-
-  private computeChildOrderSignature(parentFolderId: string | null): string {
-    const root = !parentFolderId;
-    const folder = parentFolderId ? this.folderById.get(parentFolderId) : undefined;
-    const folders = root
-      ? sortedFolders(this.currentSnapshot?.rootFolders || [])
-      : sortedFolders(folder?.children || []);
-    const notes = root
-      ? sortedNotes(this.currentSnapshot?.rootNotes || [])
-      : sortedNotes(folder?.notes || []);
-
-    const parts = [
-      ...folders.map((f) => `folder:${f.id}`),
-      ...notes.map((n) => `note:${n.id}`),
-    ];
-    return parts.join('|');
-  }
-
   private rebuildAllChildOrderSignatures(): void {
     this.childOrderSignatureByParent.clear();
-    this.childOrderSignatureByParent.set('root', this.computeChildOrderSignature(null));
-    for (const folderId of this.folderById.keys()) {
-      this.childOrderSignatureByParent.set(this.getParentSignatureKey(folderId), this.computeChildOrderSignature(folderId));
+    this.childOrderSignatureByParent.set(this.model!.getMyNotesEntity(), this.computeChildOrderSignatureForParent(this.model!.getMyNotesEntity()));
+    for (const folder of this.folderById.values()) {
+      this.childOrderSignatureByParent.set(folder, this.computeChildOrderSignatureForParent(folder));
     }
   }
 
-  private refreshSnapshotAndIndexes(): void {
-    if (!this.model) {
-      return;
-    }
-    this.currentSnapshot = this.model.getScopeSnapshotSync(this.model.getMyNotesEntity());
-    this.rebuildIndexes(this.currentSnapshot);
-  }
-
-  private fireParentRefresh(parentFolderId: string | null): void {
-    if (!parentFolderId) {
+  private fireParentRefresh(parent: ModelMyNotes | ModelFolder): void {
+    if (parent.type === 'my-notes') {
       this._onDidChangeTreeData.fire(undefined);
       return;
     }
 
-    const parentFolder = this.folderById.get(parentFolderId);
-    this._onDidChangeTreeData.fire(parentFolder || undefined);
+    this._onDidChangeTreeData.fire(parent);
   }
 
-  private fireFolderPendingRefresh(folderId: string): void {
-    if (!this.loaded) {
-      return;
-    }
-
-    const folder = this.folderById.get(folderId) || this.model?.getFolderSync(this.model.getMyNotesEntity(), folderId);
-    this._onDidChangeTreeData.fire(folder || undefined);
-  }
-
-  private handleEntityUpsert(entityType: 'folder' | 'note', entityId: string): void {
-    const previousNoteParent = this.noteParentFolderById.get(entityId) || null;
-    const previousFolderParent = this.folderParentById.get(entityId) || null;
-    const parentCandidates = new Set<string | null>();
-
-    if (entityType === 'note') {
-      parentCandidates.add(previousNoteParent);
-    }
-    if (entityType === 'folder') {
-      parentCandidates.add(previousFolderParent);
-    }
-
-    const previousByParent = new Map<string, string>();
-    for (const parentId of parentCandidates) {
-      const key = this.getParentSignatureKey(parentId);
-      previousByParent.set(key, this.childOrderSignatureByParent.get(key) || '');
-    }
-
-    this.refreshSnapshotAndIndexes();
-    let parentOrderChanged = false;
-
+  private handleEntityUpsert(entity: ModelFolder | ModelNote): void {
     if (!this.model) {
       return;
     }
 
-    if (entityType === 'note') {
-      const currentParent = this.model.getNoteSync(this.model.getMyNotesEntity(), entityId)?.parentFolderId || null;
-      parentCandidates.add(currentParent);
-    }
-    if (entityType === 'folder') {
-      const currentParent = this.model.getFolderSync(this.model.getMyNotesEntity(), entityId)?.parentId || null;
-      parentCandidates.add(currentParent);
-    }
-
-    for (const parentId of parentCandidates) {
-      const key = this.getParentSignatureKey(parentId);
-      const previous = previousByParent.get(key) || '';
-      const next = this.computeChildOrderSignature(parentId);
-      this.childOrderSignatureByParent.set(key, next);
-      if (previous !== next) {
-        this.fireParentRefresh(parentId);
-        parentOrderChanged = true;
-      }
-    }
-
-    if (entityType === 'folder' && !parentOrderChanged) {
-      const folder = this.folderById.get(entityId);
-      this._onDidChangeTreeData.fire(folder || undefined);
-    }
-
-    if (entityType === 'note' && !parentOrderChanged) {
-      const note = this.noteById.get(entityId) || this.model?.getNoteSync(this.model.getMyNotesEntity(), entityId);
-      this._onDidChangeTreeData.fire(note || undefined);
-    }
-  }
-
-  private fireNotePendingRefresh(noteId: string): void {
-    if (!this.loaded) {
+    const parent = this.model.getImmediateParentContainer(entity);
+    if (parent.type !== 'my-notes' && parent.type !== 'folder') {
       return;
     }
 
-    const note = this.noteById.get(noteId) || this.model?.getNoteSync(this.model.getMyNotesEntity(), noteId);
-    this._onDidChangeTreeData.fire(note || undefined);
+    const previousSignature = this.childOrderSignatureByParent.get(parent);
+    const previousPosition = this.getEntityPositionFromSignature(previousSignature, entity);
+
+    const nextSignature = this.computeChildOrderSignatureForParent(parent);
+    this.childOrderSignatureByParent.set(parent, nextSignature);
+    const nextPosition = this.getEntityPositionFromSignature(nextSignature, entity);
+
+    if (previousPosition !== nextPosition) {
+      this.fireParentRefresh(parent);
+      return;
+    }
+
+    if (entity.type === 'folder') {
+      this._onDidChangeTreeData.fire(entity);
+      return;
+    }
+
+    this._onDidChangeTreeData.fire(entity);
   }
 
-  refresh(): void {
-    this.loaded = false;
-    void this.ensureLoaded(true);
+  private computeChildOrderSignatureForParent(parent: ModelMyNotes | ModelFolder): Array<ModelFolder | ModelNote> {
+    const folders = parent.type === 'my-notes'
+      ? sortedFolders(this.currentSnapshot?.rootFolders || [])
+      : sortedFolders(parent.children);
+    const notes = parent.type === 'my-notes'
+      ? sortedNotes(this.currentSnapshot?.rootNotes || [])
+      : sortedNotes(parent.notes);
+
+    return [...folders, ...notes];
   }
 
-  refreshElement(_element?: TreeNode): void {
-    this.refresh();
+  private getEntityPositionFromSignature(
+    signature: Array<ModelFolder | ModelNote> | undefined,
+    entity: ModelFolder | ModelNote
+  ): number {
+    if (!signature || signature.length === 0) {
+      return -1;
+    }
+    return signature.indexOf(entity);
   }
 
   findNoteInCache(noteId: string): ModelNote | undefined {
@@ -405,23 +341,16 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   async getParent(element: TreeNode): Promise<TreeNode | undefined> {
-    if (isPlaceholderNode(element)) {
+    if (!this.model || isPlaceholderNode(element)) {
       return undefined;
     }
 
-    if (element.type === 'note') {
-      const parentId = this.noteParentFolderById.get(element.id) || null;
-      if (!parentId) {
-        return undefined;
-      }
-      return this.folderById.get(parentId);
+    const parent = this.model.getImmediateParentContainer(element);
+    if (parent.type === 'folder') {
+      return parent;
     }
 
-    const parentId = this.folderParentById.get(element.id) || null;
-    if (!parentId) {
-      return undefined;
-    }
-    return this.folderById.get(parentId);
+    return undefined;
   }
 
   private getFolderTreeItem(folder: ModelFolder): vscode.TreeItem {

@@ -33,7 +33,7 @@ class MockModel {
   }
 
   setNote(note, teamPath = null) {
-    this.noteByKey.set(this._k(note.id, teamPath), { ...note, teamPath });
+    this.noteByKey.set(this._k(note.id, teamPath), { type: 'note', ...note, teamPath });
   }
 
   setContent(noteId, teamPath, content) {
@@ -44,14 +44,20 @@ class MockModel {
     return { type: 'my-notes' };
   }
 
-  getTeamByPath(teamPath) {
-    return teamPath ? { type: 'team', path: teamPath } : null;
-  }
-
   async getNote(scope, noteId) {
     const teamPath = scope?.type === 'team' ? scope.path : null;
     this._record('getNote', [scope, noteId]);
     return this.noteByKey.get(this._k(noteId, teamPath || null)) || null;
+  }
+
+  async getEntityByUri(uri) {
+    const params = new URLSearchParams(uri.query || '');
+    const noteId = params.get('noteId');
+    const teamPath = params.get('teamPath') || null;
+    if (noteId) {
+      return this.noteByKey.get(this._k(noteId, teamPath)) || null;
+    }
+    return null;
   }
 
   async getNoteContent(note) {
@@ -147,58 +153,6 @@ test('activate registers hackmd filesystem provider and getProvider returns it',
   assert.ok(getProvider());
 });
 
-test('rename returns early when old and new URIs are identical', async () => {
-  const model = new MockModel();
-  stub.setModel(model);
-  const provider = new HackMDFsProvider();
-  const uri = uriFor('n1');
-
-  await provider.rename(uri, uri, { overwrite: false });
-
-  assert.equal(callCount(model, 'getNote'), 0);
-});
-
-test('rename rejects when note ids differ', async () => {
-  const model = new MockModel();
-  stub.setModel(model);
-  const provider = new HackMDFsProvider();
-
-  await assert.rejects(
-    provider.rename(uriFor('n1'), uriFor('n2'), { overwrite: false }),
-    (err) => err.code === 'NoPermissions'
-  );
-});
-
-test('rename rejects when model cannot find source note', async () => {
-  const model = new MockModel();
-  stub.setModel(model);
-  const provider = new HackMDFsProvider();
-
-  await assert.rejects(
-    provider.rename(uriFor('n1'), stub.makeUri('hackmd', '/My Notes/NewName', 'noteId=n1'), { overwrite: false }),
-    (err) => err.code === 'FileNotFound'
-  );
-});
-
-test('rename emits Deleted and Created events for same note identity', async () => {
-  const model = new MockModel();
-  model.setNote({ id: 'n1', title: 'Old', content: 'x' }, null);
-  stub.setModel(model);
-
-  const provider = new HackMDFsProvider();
-  const oldUri = uriFor('n1');
-  const newUri = stub.makeUri('hackmd', '/My Notes/NewName', 'noteId=n1');
-  const events = [];
-  const sub = provider.onDidChangeFile((payload) => events.push(payload));
-
-  await provider.rename(oldUri, newUri, { overwrite: false });
-
-  assert.equal(events.length, 1);
-  assert.equal(events[0][0].type, stub.vscodeStub.FileChangeType.Deleted);
-  assert.equal(events[0][1].type, stub.vscodeStub.FileChangeType.Created);
-  sub.dispose();
-});
-
 test('readFile uses model.getNoteContent with teamPath and returns bytes', async () => {
   const model = new MockModel();
   model.setNote({ id: 'n1', type: 'note', title: 'Note1' }, 'acme');
@@ -243,6 +197,8 @@ test('stat throws FileNotFound when model cannot resolve note', async () => {
 });
 
 test('writeFile throws FileNotFound when URI misses noteId', async () => {
+  const model = new MockModel();
+  stub.setModel(model);
   const provider = new HackMDFsProvider();
   const uri = stub.makeUri('hackmd', '/My Notes/NoId', 'teamPath=acme');
 
@@ -304,12 +260,12 @@ test('watch returns disposable', () => {
   assert.equal(typeof disposable.dispose, 'function');
 });
 
-test('createDirectory/delete/readDirectory throw not implemented errors', async () => {
+test('createDirectory/readDirectory throw not implemented errors; delete throws NoPermissions', async () => {
   const provider = new HackMDFsProvider();
 
   assert.throws(() => provider.createDirectory(uriFor('n1')), /not implemented/i);
   assert.throws(() => provider.readDirectory(uriFor('n1')), /not implemented/i);
-  assert.throws(() => provider.delete(uriFor('n1'), { recursive: false }), /not implemented/i);
+  assert.throws(() => provider.delete(uriFor('n1'), { recursive: false }), (err) => err.code === 'NoPermissions');
 });
 
 test('readFile throws FileNotFound when model is not initialized', async () => {
@@ -332,24 +288,14 @@ test('writeFile throws Unavailable when model is not initialized', async () => {
   );
 });
 
-test('stat throws FileNotFound when model is not initialized', async () => {
+test('stat throws Unavailable when model is not initialized', async () => {
   stub.clearModel();
   const provider = new HackMDFsProvider();
 
   await assert.rejects(
     provider.stat(uriFor('n1')),
-    (err) => err.code === 'FileNotFound'
-  );
-});
-
-test('rename throws Unavailable when model is not initialized', async () => {
-  stub.clearModel();
-  const provider = new HackMDFsProvider();
-  const uri = uriFor('n1');
-  const newUri = stub.makeUri('hackmd', '/My Notes/NewName', 'noteId=n1');
-
-  await assert.rejects(
-    provider.rename(uri, newUri, { overwrite: false }),
     (err) => err.code === 'Unavailable'
   );
 });
+
+

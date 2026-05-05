@@ -17,8 +17,8 @@
     "onView:hackmd.tree.my-notes",
     "onView:hackmd.tree.recent-notes",
     "onView:hackmd.tree.team-notes",
-    "onCommand:HackMD.apiKey",
-    "onCommand:HackMD.clearApiKey",
+    "onCommand:hackmd.user.apiKey",
+    "onCommand:hackmd.user.clearApiKey",
     "onCommand:HacKMD.openNoteOnHackMD",
     "onFileSystem:hackmd"
   ],
@@ -86,17 +86,17 @@
     },
     "commands": [
       {
-        "command": "HackMD.apiKey",
+        "command": "hackmd.user.apiKey",
         "title": "API Key",
         "category": "HackMD"
       },
       {
-        "command": "HackMD.clearApiKey",
+        "command": "hackmd.user.clearApiKey",
         "title": "Clear API Key",
         "category": "HackMD"
       },
       {
-        "command": "HackMD.upgrade",
+        "command": "hackmd.user.upgrade",
         "title": "Upgrade",
         "category": "HackMD"
       },

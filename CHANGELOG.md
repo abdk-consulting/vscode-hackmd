@@ -11,6 +11,13 @@
   - Callers that previously held a `teamPath` string now look up the team entity via `model.getTeamByPath(teamPath)` and pass it directly; personal-scope callers pass `model.getMyNotesEntity()`.
   - Test mocks in `hackmdModel.node.test.js`, `modelCommands.node.test.js`, `uiCommands.node.test.js`, `noteCompletionProvider.node.test.js`, and `providers.node.test.js` were updated to match the new signature (entity type-switch instead of null/string check).
 
+- Continued entity-first model API cleanup around scope resolution and drag-and-drop:
+  - `getScopeEntityForItem` now accepts typed model entities (`ModelMyNotes | ModelTeam | ModelFolder | ModelNote`) instead of duck-typed `{ teamPath }` surrogate objects.
+  - Removed `getTeamByPath` from the model public API; internal code now resolves teams directly from model state and call sites were updated.
+  - Tree drag-and-drop scope comparison no longer builds surrogate `{ teamPath: entity.path }` values for team targets.
+  - Drag-and-drop data-transfer parsing now resolves dropped entities synchronously from `DataTransferItem.value`, and the controller supports a default My Notes drop target for blank-area drops.
+  - Updated command/provider test doubles to dispatch scope resolution by entity `type` (`my-notes` / `team` / scoped item) rather than surrogate shape.
+
 - Continued model API migration to entity-first method signatures and placement/pending internals:
   - `deleteNote` now accepts a `ModelNote` entity and `deleteFolder` now accepts a `ModelFolder` entity; command handlers resolve entities before dispatching delete operations.
   - `reconcileNotePlacement` and `reconcileFolderPlacement` now accept scope entities (`ModelMyNotes | ModelTeam`) instead of `teamPath` strings.

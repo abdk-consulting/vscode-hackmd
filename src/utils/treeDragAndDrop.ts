@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 
 
 import { Note } from '../api/hackmdApiClient';
-import { getHistoryProvider, getMyNotesProvider, getTeamNotesProvider } from '../extension';
+import type { ModelFolder, ModelMyNotes, ModelNote, ModelTeam } from '../model';
 import { getHackmdModel } from '../model';
 
 function getModel(): ReturnType<typeof getHackmdModel> | undefined {
@@ -19,7 +19,7 @@ function isSameNoteScope(left: Note, right: Note): boolean {
 
 async function closeTabsForNote(note: Note): Promise<boolean> {
   const model = getModel();
-  const noteScope = note.teamPath ? model?.getTeamByPath(note.teamPath) : model?.getMyNotesEntity();
+  const noteScope = model && (note.teamPath ? model.getTeams().find((t) => t.path === note.teamPath) ?? null : model.getMyNotesEntity());
   const cached = noteScope ? model!.getNoteSync(noteScope, note.id) : null;
   const target = cached || (note as any);
   const tabsToClose: vscode.Tab[] = [];
@@ -49,114 +49,8 @@ async function closeTabsForNote(note: Note): Promise<boolean> {
 
 const NOTE_DRAG_MIME_TYPE = 'text/uri-list';
 
-interface ResolvedDropContainer {
-  teamPath: string | null;
-  folderId: string | null;
-  folderPaths: any[];
-}
-
-function getNoteFolderId(note: Note): string | null {
-  if (note.folderPaths && note.folderPaths.length > 0) {
-    return note.folderPaths[note.folderPaths.length - 1].id;
-  }
-
-  return ((note as any).parentFolderId as string | null | undefined) ?? null;
-}
-
-function getFolderPathsForContainer(teamPath: string | null, folderId: string | null): any[] {
-  if (!folderId) {
-    return [];
-  }
-
-  if (teamPath) {
-    const teamProv = getTeamNotesProvider();
-    const targets = teamProv?.getMoveFolderTargetsFromCache(teamPath) || [];
-    return targets.find((t) => t.folderId === folderId)?.folderPaths ?? [];
-  }
-
-  const myProv = getMyNotesProvider();
-  const targets = myProv?.getMoveFolderTargetsFromCache() || [];
-  return targets.find((t) => t.folderId === folderId)?.folderPaths ?? [];
-}
-
-function hydrateDraggedNote(note: Note): Note {
-  const noteId = note.id;
-  const noteTeamPath: string | null = ((note as any).teamPath as string | null | undefined) ?? null;
-  const myProv = getMyNotesProvider();
-  const teamProv = getTeamNotesProvider();
-  const historyProv = getHistoryProvider();
-
-  const cached = noteTeamPath
-    ? (teamProv?.findNoteInCache(noteId, noteTeamPath) || historyProv?.findNoteInCache(noteId))
-    : (myProv?.findNoteInCache(noteId) || teamProv?.findNoteInCache(noteId) || historyProv?.findNoteInCache(noteId));
-
-  if (!cached) {
-    return note;
-  }
-
-  return {
-    ...cached,
-    ...note,
-    teamPath: ((note as any).teamPath ?? (cached as any).teamPath),
-    folderPaths: (note.folderPaths && note.folderPaths.length > 0)
-      ? note.folderPaths
-      : ((cached as any).folderPaths || []),
-  } as Note;
-}
-
-async function getDraggedNotesFromDataTransfer(dataTransfer: vscode.DataTransfer): Promise<Note[]> {
-  const preferred = dataTransfer.get(NOTE_DRAG_MIME_TYPE);
-  if (!preferred) {
-    return [];
-  }
-
-  const raw = await preferred.asString();
-
-  if (preferred) {
-    const model = getModel();
-    if (!model) {
-      return [];
-    }
-
-    try {
-      const uriList = raw
-        .split(/\r\n|\n/)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#'));
-
-      const notes: Note[] = [];
-      for (const uriText of uriList) {
-        try {
-          const uri = vscode.Uri.parse(uriText);
-          if (uri.scheme !== 'hackmd') {
-            continue;
-          }
-
-          const entity = await model.getEntityByUri(uri);
-          if (!entity || entity.type !== 'note') {
-            continue;
-          }
-
-          notes.push({
-            id: entity.id,
-            teamPath: entity.teamPath ?? null,
-            folderPaths: (entity.folderPaths || []) as any,
-          } as Note);
-        } catch {
-          // Skip malformed URI entries.
-        }
-      }
-
-      if (notes.length > 0) {
-        return notes;
-      }
-    } catch {
-      // No valid payload.
-    }
-  }
-
-  return [];
-}
+type DropContainerEntity = ModelMyNotes | ModelTeam | ModelFolder;
+type DroppedEntity = ModelNote | ModelFolder;
 
 type DraggedFolder = {
   id: string;
@@ -164,13 +58,36 @@ type DraggedFolder = {
   name?: string;
 };
 
-async function getDraggedFoldersFromDataTransfer(dataTransfer: vscode.DataTransfer): Promise<DraggedFolder[]> {
+function toEntityKey(entity: ModelMyNotes | ModelTeam | ModelFolder | ModelNote): string {
+  if (entity.type === 'my-notes') {
+    return 'my-notes';
+  }
+  if (entity.type === 'team') {
+    return `team:${entity.path}`;
+  }
+  const scope = entity.teamPath ?? 'personal';
+  return `${entity.type}:${scope}:${entity.id}`;
+}
+
+function getScopeEntityForComparison(model: ReturnType<typeof getHackmdModel>, entity: DropContainerEntity | DroppedEntity) {
+  return model.getScopeEntityForItem(entity);
+}
+
+function getImmediateParent(model: ReturnType<typeof getHackmdModel>, entity: ModelNote | ModelFolder | ModelTeam) {
+  return model.getImmediateParentContainer(entity);
+}
+
+function getDroppedEntitiesFromDataTransfer(dataTransfer: vscode.DataTransfer): Array<ModelNote | ModelFolder | ModelTeam> {
   const preferred = dataTransfer.get(NOTE_DRAG_MIME_TYPE);
   if (!preferred) {
     return [];
   }
 
-  const raw = await preferred.asString();
+  const raw = preferred.value as string;
+  if (typeof raw !== 'string') {
+    return [];
+  }
+
   const model = getModel();
   if (!model) {
     return [];
@@ -182,7 +99,7 @@ async function getDraggedFoldersFromDataTransfer(dataTransfer: vscode.DataTransf
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith('#'));
 
-    const folders: DraggedFolder[] = [];
+    const entities: Array<ModelNote | ModelFolder | ModelTeam> = [];
     for (const uriText of uriList) {
       try {
         const uri = vscode.Uri.parse(uriText);
@@ -190,68 +107,81 @@ async function getDraggedFoldersFromDataTransfer(dataTransfer: vscode.DataTransf
           continue;
         }
 
-        const entity = await model.getEntityByUri(uri);
-        if (!entity || entity.type !== 'folder') {
+        const entity = model.getEntityByUriSync(uri);
+        if (!entity) {
           continue;
         }
 
-        folders.push({
-          id: entity.id,
-          teamPath: entity.teamPath ?? null,
-          name: entity.name,
-        });
+        entities.push(entity);
       } catch {
         // Skip malformed URI entries.
       }
     }
 
-    return folders;
+    return entities;
   } catch {
     return [];
   }
 }
 
-function resolveDropContainer(target: any | undefined): ResolvedDropContainer | null {
-  if (!target) {
-    return null;
+function validateAndFilterDroppedEntities(
+  model: ReturnType<typeof getHackmdModel>,
+  dropped: Array<ModelNote | ModelFolder | ModelTeam>,
+  target: DropContainerEntity,
+): DroppedEntity[] {
+  const deduped = new Map<string, DroppedEntity>();
+  for (const entity of dropped) {
+    if (entity.type !== 'note' && entity.type !== 'folder') {
+      throw new Error('Only note and folder entities can be dropped.');
+    }
+    deduped.set(toEntityKey(entity), entity);
   }
 
-  if (target.type === 'folder') {
-    const teamPath = target.teamPath ?? null;
-    const folderPaths = getFolderPathsForContainer(teamPath, target.id);
-
-    return {
-      teamPath,
-      folderId: target.id,
-      folderPaths,
-    };
+  const droppedEntities = [...deduped.values()];
+  const targetScope = getScopeEntityForComparison(model, target);
+  for (const entity of droppedEntities) {
+    const scope = getScopeEntityForComparison(model, entity);
+    if (scope !== targetScope) {
+      throw new Error('Dropped entities and target must be in the same scope.');
+    }
   }
 
-  if (target.type === 'note') {
-    const note = hydrateDraggedNote(target.note as Note);
-    const folderId = getNoteFolderId(note);
-    return {
-      teamPath: ((note as any).teamPath as string | null | undefined) ?? null,
-      folderId,
-      folderPaths: (note.folderPaths && note.folderPaths.length > 0)
-        ? note.folderPaths
-        : getFolderPathsForContainer((((note as any).teamPath as string | null | undefined) ?? null), folderId),
-    };
+  const droppedKeys = new Set(droppedEntities.map((entity) => toEntityKey(entity)));
+  const targetKey = toEntityKey(target);
+  if (droppedKeys.has(targetKey)) {
+    throw new Error('Target cannot be among dropped entities.');
   }
 
-  if (target.type === 'team') {
-    return {
-      teamPath: target.team?.path ?? null,
-      folderId: null,
-      folderPaths: [],
-    };
+  // Walk target ancestors and reject drops from an ancestor folder.
+  let targetCursor: ModelFolder | ModelTeam | ModelMyNotes | { type: 'teams' } = target;
+  while (targetCursor.type === 'folder' || targetCursor.type === 'team') {
+    const parent = getImmediateParent(model, targetCursor);
+    if (parent.type === 'folder' && droppedKeys.has(toEntityKey(parent))) {
+      throw new Error('Cannot move into a descendant of a dropped folder.');
+    }
+    targetCursor = parent;
   }
 
-  return null;
-}
+  // Remove entities already directly inside target.
+  let filtered = droppedEntities.filter((entity) => {
+    const parent = getImmediateParent(model, entity);
+    return toEntityKey(parent as ModelMyNotes | ModelTeam | ModelFolder) !== targetKey;
+  });
 
-function isFolderInTargetPath(draggedFolderId: string, targetFolderPaths: any[]): boolean {
-  return targetFolderPaths.some((entry) => entry?.id === draggedFolderId);
+  // Remove entities with another dropped folder in their ancestor chain.
+  const filteredKeys = new Set(filtered.map((entity) => toEntityKey(entity)));
+  filtered = filtered.filter((entity) => {
+    let cursor = getImmediateParent(model, entity);
+    while (cursor.type === 'folder') {
+      if (filteredKeys.has(toEntityKey(cursor))) {
+        return false;
+      }
+      cursor = getImmediateParent(model, cursor);
+    }
+    return true;
+  });
+
+  return filtered;
 }
 
 /**
@@ -261,9 +191,11 @@ function isFolderInTargetPath(draggedFolderId: string, targetFolderPaths: any[])
 export class NoteDragAndDropController implements vscode.TreeDragAndDropController<any> {
   readonly dragMimeTypes = [NOTE_DRAG_MIME_TYPE];
   readonly dropMimeTypes: string[];
+  readonly defaultTarget: ModelMyNotes | undefined;
 
-  constructor(allowDrops = true) {
+  constructor(allowDrops = true, defaultTarget?: ModelMyNotes) {
     this.dropMimeTypes = allowDrops ? [NOTE_DRAG_MIME_TYPE] : [];
+    this.defaultTarget = defaultTarget;
   }
 
   handleDrag(source: any[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
@@ -295,7 +227,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
       const uriList = folders
         .map((folder) => {
-          const folderScope = folder.teamPath ? model.getTeamByPath(folder.teamPath) : model.getMyNotesEntity();
+          const folderScope = folder.teamPath ? (model.getTeams().find((t) => t.path === folder.teamPath) ?? null) : model.getMyNotesEntity();
           const cachedFolder = (folderScope ? model.getFolderSync(folderScope, folder.id) : null) || {
             type: 'folder',
             id: folder.id,
@@ -319,7 +251,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
     const uriList = notes
       .map((note) => {
-        const noteScope = note.teamPath ? model.getTeamByPath(note.teamPath) : model.getMyNotesEntity();
+        const noteScope = note.teamPath ? (model.getTeams().find((t) => t.path === note.teamPath) ?? null) : model.getMyNotesEntity();
         const cachedNote = (noteScope ? model.getNoteSync(noteScope, note.id) : null) || {
           type: 'note',
           id: note.id,
@@ -336,122 +268,53 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
   }
 
   async handleDrop(target: any | undefined, dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
-    const warnCannotMove = () => {
-      vscode.window.showWarningMessage('This note cannot be moved here.');
-    };
+    const model = getModel();
+    if (!model) {
+      return;
+    }
 
-    const draggedFolders = await getDraggedFoldersFromDataTransfer(dataTransfer);
-    if (draggedFolders.length > 0) {
-      const resolvedTarget = resolveDropContainer(target);
-      if (!resolvedTarget) {
-        vscode.window.showWarningMessage('This folder cannot be moved here.');
+    const effectiveTarget = target ?? this.defaultTarget;
+    if (!effectiveTarget) {
+      return;
+    }
+
+    let targetContainer: DropContainerEntity;
+    if (effectiveTarget.type === 'note') {
+      const parent = model.getImmediateParentContainer(effectiveTarget);
+      if (parent.type !== 'folder' && parent.type !== 'team' && parent.type !== 'my-notes') {
+        return;
+      }
+      targetContainer = parent;
+    } else if (effectiveTarget.type === 'folder' || effectiveTarget.type === 'team' || effectiveTarget.type === 'my-notes') {
+      targetContainer = effectiveTarget as DropContainerEntity;
+    } else {
+      return;
+    }
+
+    const droppedEntities = getDroppedEntitiesFromDataTransfer(dataTransfer);
+    const entitiesToMove = validateAndFilterDroppedEntities(model, droppedEntities, targetContainer);
+
+    // If nothing remains after filtering, this is a no-op.
+    if (entitiesToMove.length === 0) {
+      return;
+    }
+
+    if (targetContainer.type !== 'folder') {
+      throw new Error('Moving to non-folder targets is not supported.');
+    }
+
+    await Promise.all(entitiesToMove.map(async (entity) => {
+      if (entity.type === 'note') {
+        const canProceed = await closeTabsForNote(entity as unknown as Note);
+        if (!canProceed) {
+          return;
+        }
+        await model.moveNote(entity, targetContainer);
         return;
       }
 
-      const foldersToMove: DraggedFolder[] = [];
-      for (const folder of draggedFolders) {
-        if ((folder.teamPath || null) !== (resolvedTarget.teamPath || null)) {
-          continue;
-        }
-
-        // Prevent folder -> itself and folder -> descendant moves.
-        if (resolvedTarget.folderId === folder.id || isFolderInTargetPath(folder.id, resolvedTarget.folderPaths)) {
-          continue;
-        }
-
-        foldersToMove.push(folder);
-      }
-
-      if (foldersToMove.length === 0) {
-        vscode.window.showWarningMessage('This folder cannot be moved here.');
-        return;
-      }
-
-      const selectedNodes = foldersToMove.map((folder) => ({
-        type: 'folder',
-        id: folder.id,
-        name: folder.name,
-        teamPath: folder.teamPath || null,
-        source: 'model',
-      }));
-
-      await vscode.commands.executeCommand(
-        'hackmd.model.move',
-        selectedNodes[0],
-        selectedNodes,
-        {
-          folderId: resolvedTarget.folderId,
-          folderPaths: resolvedTarget.folderPaths,
-          teamPath: resolvedTarget.teamPath,
-        }
-      );
-      return;
-    }
-
-    const draggedNotes = await getDraggedNotesFromDataTransfer(dataTransfer);
-    if (draggedNotes.length === 0) {
-      warnCannotMove();
-      return;
-    }
-
-    const resolvedTarget = resolveDropContainer(target);
-    if (!resolvedTarget) {
-      warnCannotMove();
-      return;
-    }
-
-    const notesToMove: Note[] = [];
-
-    for (const dragged of draggedNotes) {
-      const hydrated = hydrateDraggedNote(dragged);
-      // Recent Notes payloads may omit teamPath. In that case, infer scope from the
-      // drop target so valid moves are attempted and backend authorization decides.
-      const note = (((hydrated as any).teamPath as string | null | undefined) === undefined || ((hydrated as any).teamPath as string | null | undefined) === null)
-        ? ({ ...hydrated, teamPath: resolvedTarget.teamPath } as Note)
-        : hydrated;
-      const noteTeamPath: string | null = ((note as any).teamPath as string | null | undefined) ?? null;
-      const currentFolderId = getNoteFolderId(note);
-
-      // Reject cross-scope drops (personal ↔ team, or different teams).
-      if (noteTeamPath !== resolvedTarget.teamPath) {
-        warnCannotMove();
-        continue;
-      }
-
-      // If this note is already in the resolved container, do nothing.
-      if (currentFolderId === resolvedTarget.folderId) {
-        continue;
-      }
-
-      // Moving to root containers is not currently supported by HackMD API behavior.
-      if (!resolvedTarget.folderId) {
-        warnCannotMove();
-        continue;
-      }
-
-      const canProceed = await closeTabsForNote(note);
-      if (!canProceed) {
-        continue;
-      }
-
-      notesToMove.push(note);
-    }
-
-    if (notesToMove.length === 0 || !resolvedTarget.folderId) {
-      return;
-    }
-
-    const selectedNodes = notesToMove.map((note) => ({ type: 'note', note }));
-    await vscode.commands.executeCommand(
-      'hackmd.model.move',
-      selectedNodes[0],
-      selectedNodes,
-      {
-        folderId: resolvedTarget.folderId,
-        folderPaths: resolvedTarget.folderPaths,
-        teamPath: resolvedTarget.teamPath,
-      }
-    );
+      await model.moveFolder(entity, targetContainer);
+    }));
   }
 }
 

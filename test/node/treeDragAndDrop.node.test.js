@@ -12,12 +12,16 @@ class MockModel {
     this.folderByKey = new Map();
     this.noteByKey = new Map();
     this.entityByUri = new Map();
+    this.myNotesEntity = { type: 'my-notes' };
+    this.teamByPath = new Map();
     this.calls = {
       toUri: [],
       getEntityByUri: [],
       getEntityByUriSync: [],
       getNoteSync: [],
       getFolderSync: [],
+      moveNote: [],
+      moveFolder: [],
     };
   }
 
@@ -38,11 +42,22 @@ class MockModel {
   }
 
   getMyNotesEntity() {
-    return { type: 'my-notes' };
+    return this.myNotesEntity;
   }
 
-  getTeamByPath(teamPath) {
-    return { type: 'team', path: teamPath };
+  getScopeEntityForItem(item) {
+    if (item?.type === 'my-notes') return this.getMyNotesEntity();
+    if (item?.type === 'team') {
+      if (!this.teamByPath.has(item.path)) {
+        this.teamByPath.set(item.path, { type: 'team', id: item.path, path: item.path, name: item.path, rootFolders: [], rootNotes: [] });
+      }
+      return this.teamByPath.get(item.path);
+    }
+    if (!item?.teamPath) return this.getMyNotesEntity();
+    if (!this.teamByPath.has(item.teamPath)) {
+      this.teamByPath.set(item.teamPath, { type: 'team', id: item.teamPath, path: item.teamPath, name: item.teamPath, rootFolders: [], rootNotes: [] });
+    }
+    return this.teamByPath.get(item.teamPath);
   }
 
   getNoteSync(scope, id) {
@@ -55,6 +70,37 @@ class MockModel {
     const teamPath = scope.type === 'team' ? scope.path : null;
     this.calls.getFolderSync.push([id, teamPath]);
     return this.folderByKey.get(this.key(id, teamPath)) || null;
+  }
+
+  getImmediateParentContainer(item) {
+    if (item.type === 'team') {
+      return { type: 'teams' };
+    }
+
+    const scope = this.getScopeEntityForItem(item);
+    if (item.type === 'folder') {
+      if (!item.parentId) {
+        return scope;
+      }
+      return this.getFolderSync(scope, item.parentId) || scope;
+    }
+
+    const note = this.getNoteSync(scope, item.id) || item;
+    const parentFolderId = note.parentFolderId ?? null;
+    if (!parentFolderId) {
+      return scope;
+    }
+    return this.getFolderSync(scope, parentFolderId) || scope;
+  }
+
+  async moveNote(note, destination) {
+    this.calls.moveNote.push([note, destination]);
+    return note;
+  }
+
+  async moveFolder(folder, destination) {
+    this.calls.moveFolder.push([folder, destination]);
+    return folder;
   }
 
   toUri(entity) {
@@ -124,7 +170,7 @@ test('handleDrag ignores folders from mixed scopes', async () => {
   assert.equal(model.calls.toUri.length, 0);
 });
 
-test('handleDrop moves notes into a folder target via unified move command', async () => {
+test('handleDrop moves notes into a folder target via model moveNote', async () => {
   const model = new MockModel();
   const note = makeNote('n1', null, { parentFolderId: 'from-folder' });
   const uri = 'hackmd:/notes/n1?noteId=n1';
@@ -140,15 +186,13 @@ test('handleDrop moves notes into a folder target via unified move command', asy
 
   await controller.handleDrop({ type: 'folder', id: 'dest-folder', teamPath: null }, dataTransfer);
 
-  assert.equal(stub.commandsState.executeCalls.length, 1);
-  const [commandId, activeItem, selectedItems, target] = stub.commandsState.executeCalls[0];
-  assert.equal(commandId, 'hackmd.model.move');
-  assert.equal(activeItem.type, 'note');
-  assert.equal(selectedItems.length, 1);
-  assert.equal(target.folderId, 'dest-folder');
+  assert.equal(stub.commandsState.executeCalls.length, 0);
+  assert.equal(model.calls.moveNote.length, 1);
+  assert.equal(model.calls.moveNote[0][0].id, 'n1');
+  assert.equal(model.calls.moveNote[0][1].id, 'dest-folder');
 });
 
-test('handleDrop rejects cross-scope note drops with warning', async () => {
+test('handleDrop rejects cross-scope note drops', async () => {
   const model = new MockModel();
   const uri = 'hackmd:/notes/n1?noteId=n1&teamPath=acme';
 
@@ -159,44 +203,32 @@ test('handleDrop rejects cross-scope note drops with warning', async () => {
   const dataTransfer = new stub.vscodeStub.DataTransfer();
   dataTransfer.set('text/uri-list', new stub.vscodeStub.DataTransferItem(uri));
 
-  await controller.handleDrop({ type: 'folder', id: 'dest-folder', teamPath: null }, dataTransfer);
-
-  assert.equal(stub.commandsState.executeCalls.length, 0);
-  assert.deepEqual(stub.windowState.warningMessages, ['This note cannot be moved here.']);
+  await assert.rejects(
+    controller.handleDrop({ type: 'folder', id: 'dest-folder', teamPath: null }, dataTransfer),
+    /same scope/
+  );
 });
 
-test('handleDrop filters descendant folder moves before executing unified move', async () => {
+test('handleDrop rejects moving folders into descendant targets', async () => {
   const model = new MockModel();
   const folderUriA = 'hackmd:/folders/f1?folderId=f1';
   const folderUriB = 'hackmd:/folders/f2?folderId=f2';
 
-  model.mapUri(folderUriA, { type: 'folder', id: 'f1', teamPath: null, name: 'Folder One' });
+  model.mapUri(folderUriA, { type: 'folder', id: 'f1', parentId: null, teamPath: null, name: 'Folder One' });
   model.mapUri(folderUriB, { type: 'folder', id: 'f2', teamPath: null, name: 'Folder Two' });
+  model.setFolder({ type: 'folder', id: 'f1', parentId: null, teamPath: null, name: 'Folder One', children: [], notes: [] });
+  model.setFolder({ type: 'folder', id: 'dest', parentId: 'f1', teamPath: null, name: 'Dest', children: [], notes: [] });
   stub.setModel(model);
-  stub.setProviders({
-    my: {
-      getMoveFolderTargetsFromCache() {
-        return [
-          { folderId: 'dest', folderPaths: [{ id: 'ancestor', name: 'Ancestor' }, { id: 'dest', name: 'Dest' }] },
-        ];
-      },
-      findNoteInCache() {
-        return undefined;
-      },
-    },
-  });
 
   const controller = new NoteDragAndDropController();
   const dataTransfer = new stub.vscodeStub.DataTransfer();
   dataTransfer.set('text/uri-list', new stub.vscodeStub.DataTransferItem(`${folderUriA}\r\n${folderUriB}`));
 
-  await controller.handleDrop(
-    { type: 'folder', id: 'dest', teamPath: null },
-    dataTransfer,
+  await assert.rejects(
+    controller.handleDrop(
+      { type: 'folder', id: 'dest', parentId: 'f1', teamPath: null },
+      dataTransfer,
+    ),
+    /descendant/
   );
-
-  assert.equal(stub.commandsState.executeCalls.length, 1);
-  const [, activeItem, selectedItems] = stub.commandsState.executeCalls[0];
-  assert.equal(activeItem.id, 'f1');
-  assert.deepEqual(selectedItems.map((item) => item.id), ['f1', 'f2']);
 });

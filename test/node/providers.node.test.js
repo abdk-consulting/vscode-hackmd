@@ -42,6 +42,10 @@ function createMockModel(overrides = {}) {
     pendingByTarget: new Map(),
   };
 
+  const myNotesEntity = { type: 'my-notes' };
+  const teamsEntity = { type: 'teams' };
+  const recentNotesEntity = { type: 'recent-notes' };
+
   const key = (scope, id) => `${scope ?? '__personal__'}:${id}`;
 
   const normalizeFolder = (folder, scope, parentId = null) => {
@@ -85,7 +89,8 @@ function createMockModel(overrides = {}) {
     if (payload?.entityType === 'team' && payload?.id) {
       const team = state.teamById.get(payload.id) || state.teamByPath.get(payload.scope || '');
       if (team) {
-        return { entity: { type: 'team', ...team } };
+        team.type = 'team';
+        return { entity: team };
       }
     }
 
@@ -93,7 +98,8 @@ function createMockModel(overrides = {}) {
       const scope = payload.scope ?? null;
       const folder = state.foldersByScopeAndId.get(key(scope, payload.id));
       if (folder) {
-        return { entity: { type: 'folder', ...folder } };
+        folder.type = 'folder';
+        return { entity: folder };
       }
     }
 
@@ -102,7 +108,8 @@ function createMockModel(overrides = {}) {
       const note = state.notesByScopeAndId.get(key(scope, payload.id))
         || state.historyNotes.find((candidate) => candidate.id === payload.id);
       if (note) {
-        return { entity: { type: 'note', ...note } };
+        note.type = 'note';
+        return { entity: note };
       }
     }
 
@@ -190,19 +197,47 @@ function createMockModel(overrides = {}) {
       const scopeKey = !scope || scope.type === 'my-notes' ? null : (scope.type === 'team' ? scope.path : null);
       return normalizeSnapshot(scopeKey ?? null, state.snapshots.get(scopeKey ?? null) || null);
     },
-    getMyNotesEntity: () => ({ type: 'my-notes' }),
-    getTeamsEntity: () => ({ type: 'teams' }),
-    getRecentNotesEntity: () => ({ type: 'recent-notes' }),
-    getTeams: () => state.teams.map((team) => ({ type: 'team', ...team })),
-    getTeamByPath: (teamPath) => {
+    getMyNotesEntity: () => myNotesEntity,
+    getTeamsEntity: () => teamsEntity,
+    getRecentNotesEntity: () => recentNotesEntity,
+    getTeams: () => {
+      for (const team of state.teams) {
+        team.type = 'team';
+      }
+      return state.teams;
+    },
+    getScopeEntityForItem: (item) => {
+      if (item?.type === 'my-notes') {
+        return myNotesEntity;
+      }
+      if (item?.type === 'team') {
+        const team = state.teamByPath.get(item.path);
+        if (team) {
+          team.type = 'team';
+          const snapshot = state.snapshots.get(item.path);
+          team.rootFolders = snapshot?.rootFolders || [];
+          team.rootNotes = snapshot?.rootNotes || [];
+        }
+        return team || myNotesEntity;
+      }
+      const teamPath = item?.teamPath ?? null;
+      if (!teamPath) {
+        return myNotesEntity;
+      }
       const team = state.teamByPath.get(teamPath);
-      return team ? { type: 'team', ...team } : team;
+      if (team) {
+        team.type = 'team';
+        const snapshot = state.snapshots.get(teamPath);
+        team.rootFolders = snapshot?.rootFolders || [];
+        team.rootNotes = snapshot?.rootNotes || [];
+      }
+      return team || myNotesEntity;
     },
-    getTeamById: (teamId) => {
-      const team = state.teamById.get(teamId);
-      return team ? { type: 'team', ...team } : team;
-    },
-    getNoteSync: (noteId, scope) => {
+    getNoteSync: (arg1, arg2) => {
+      const scope = typeof arg1 === 'string'
+        ? (arg2 ?? null)
+        : (arg1?.type === 'team' ? arg1.path : null);
+      const noteId = typeof arg1 === 'string' ? arg1 : arg2;
       const note = state.notesByScopeAndId.get(key(scope ?? null, noteId));
       return note ? { type: 'note', ...note } : note;
     },
@@ -215,7 +250,50 @@ function createMockModel(overrides = {}) {
       const folder = state.foldersByScopeAndId.get(key(teamPath, folderId));
       return folder ? { type: 'folder', ...folder } : folder;
     },
-    getHistoryNotes: () => state.historyNotes.map((note) => ({ type: 'note', ...note })),
+    getHistoryNotes: () => {
+      for (const note of state.historyNotes) {
+        note.type = 'note';
+      }
+      return state.historyNotes;
+    },
+    getImmediateParentContainer: (item) => {
+      if (item?.type === 'team') {
+        return { type: 'teams' };
+      }
+
+      const scope = item?.teamPath ?? null;
+      const scopeSnapshot = state.snapshots.get(scope);
+      const scopeEntity = scope
+        ? (state.teamByPath.get(scope)
+          ? {
+            type: 'team',
+            ...state.teamByPath.get(scope),
+            rootFolders: scopeSnapshot?.rootFolders || [],
+            rootNotes: scopeSnapshot?.rootNotes || [],
+          }
+          : null)
+        : myNotesEntity;
+
+      if (!scopeEntity) {
+        return myNotesEntity;
+      }
+
+      if (item?.type === 'folder') {
+        if (!item.parentId) {
+          return scopeEntity;
+        }
+        const parent = state.foldersByScopeAndId.get(key(scope, item.parentId));
+        return parent ? { type: 'folder', ...parent } : scopeEntity;
+      }
+
+      const cached = state.notesByScopeAndId.get(key(scope, item.id)) || item;
+      const parentFolderId = cached?.parentFolderId || null;
+      if (!parentFolderId) {
+        return scopeEntity;
+      }
+      const parent = state.foldersByScopeAndId.get(key(scope, parentFolderId));
+      return parent ? { type: 'folder', ...parent } : scopeEntity;
+    },
     isPending: (entity) => {
       if (entity.type === 'my-notes') return !!state.myNotesPendingOperation;
       if (entity.type === 'teams') return !!state.teamNotesPendingOperation;
@@ -259,17 +337,15 @@ function createMockModel(overrides = {}) {
 
 function indexSnapshot(snapshot, scope, modelState) {
   const walk = (folder, parentId = null) => {
-    modelState.foldersByScopeAndId.set(`${scope ?? '__personal__'}:${folder.id}`, {
-      ...folder,
-      parentId,
-      teamPath: scope,
-    });
+    folder.type = 'folder';
+    folder.parentId = parentId;
+    folder.teamPath = scope;
+    modelState.foldersByScopeAndId.set(`${scope ?? '__personal__'}:${folder.id}`, folder);
     for (const note of folder.notes || []) {
-      modelState.notesByScopeAndId.set(`${scope ?? '__personal__'}:${note.id}`, {
-        ...note,
-        parentFolderId: folder.id,
-        teamPath: scope,
-      });
+      note.type = 'note';
+      note.parentFolderId = folder.id;
+      note.teamPath = scope;
+      modelState.notesByScopeAndId.set(`${scope ?? '__personal__'}:${note.id}`, note);
     }
     for (const child of folder.children || []) {
       walk(child, folder.id);
@@ -280,11 +356,10 @@ function indexSnapshot(snapshot, scope, modelState) {
     walk(folder, null);
   }
   for (const note of snapshot.rootNotes || []) {
-    modelState.notesByScopeAndId.set(`${scope ?? '__personal__'}:${note.id}`, {
-      ...note,
-      parentFolderId: null,
-      teamPath: scope,
-    });
+    note.type = 'note';
+    note.parentFolderId = null;
+    note.teamPath = scope;
+    modelState.notesByScopeAndId.set(`${scope ?? '__personal__'}:${note.id}`, note);
   }
 }
 
@@ -863,13 +938,13 @@ test('HistoryProvider emits pending-state changes around refresh lifecycle', asy
   const pendingEvents = [];
   provider.onDidChangePendingState((pending) => pendingEvents.push(pending));
 
-  provider.refresh();
+  const loadPromise = provider.getChildren();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(pendingEvents, [true]);
   assert.equal(provider.isPendingOperation(), true);
 
   resolveRefresh();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await loadPromise;
   assert.deepEqual(pendingEvents, [true, false]);
   assert.equal(provider.isPendingOperation(), false);
 });

@@ -2,25 +2,14 @@ import * as vscode from 'vscode';
 
 import { getHackmdModel, ModelNote } from '../model';
 
-// Cache ThemeIcon instances to prevent layout shifts during updates
 const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
 const ICON_FILE = new vscode.ThemeIcon('file');
 
-type TreeNode = NoteNode | PlaceholderNode;
-
-interface NoteNode {
-  type: 'note';
-  note: ModelNote;
-}
+type TreeNode = ModelNote | PlaceholderNode;
 
 interface PlaceholderNode {
   type: 'placeholder';
   message: string;
-}
-
-function compareStrings(a: string, b: string): number {
-  const ci = (a || '').localeCompare(b || '', undefined, { sensitivity: 'base' });
-  return ci !== 0 ? ci : (a || '').localeCompare(b || '');
 }
 
 function getLastUpdateTimestamp(note: ModelNote): number {
@@ -36,6 +25,10 @@ function compareHistoryNotes(a: ModelNote, b: ModelNote): number {
   return (a.id || '').localeCompare(b.id || '');
 }
 
+function isPlaceholderNode(node: TreeNode): node is PlaceholderNode {
+  return node.type === 'placeholder';
+}
+
 export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -47,19 +40,25 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   private lastError: string | null = null;
   private readonly model: ReturnType<typeof getHackmdModel> | null;
   private lastOrderSignature = '';
-  private readonly noteTreeItemCache = new Map<string, vscode.TreeItem>();
 
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
       this.historyPendingOperation = !!this.model.isRecentNotesPendingOperation();
       this.model.onDidChangeEntity((event) => {
-        if (event.entityType === 'note' && event.changeType === 'upsert' && this.loaded) {
-          this.handleNoteUpsert(event.id);
+        if (!this.loaded) {
+          return;
+        }
+
+        const entity = event.entity;
+        if (entity.type === 'note') {
+          this.handleNoteUpsert(entity.id);
         }
       });
       this.model.onDidChangePending((event) => {
-        if (event.targetType === 'container' && event.container === 'recent-notes') {
+        const entity = event.entity;
+
+        if (entity.type === 'recent-notes') {
           if (this.historyPendingOperation !== event.pending) {
             this.historyPendingOperation = event.pending;
             this._onDidChangePendingState.fire(event.pending);
@@ -67,8 +66,8 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
           return;
         }
 
-        if (event.targetType === 'note' && event.id && this.loaded) {
-          this.fireNoteRefresh(event.id);
+        if (entity.type === 'note' && this.loaded) {
+          this.fireNoteRefresh(entity.id);
         }
       });
     } catch {
@@ -145,7 +144,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       return;
     }
     const note = this.model.getHistoryNotes().find((entry) => entry.id === noteId);
-    this._onDidChangeTreeData.fire(note ? ({ type: 'note', note } as NoteNode) : undefined);
+    this._onDidChangeTreeData.fire(note || undefined);
   }
 
   removeNoteFromCache(noteId: string): void {
@@ -156,26 +155,22 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     // No-op: cache invalidation is driven by model events
   }
 
-  // Find a note in cache and return it
   findNoteInCache(noteId: string): ModelNote | undefined {
     if (!this.model) {
       return undefined;
     }
-    return this.model.getHistoryNotes().find(n => n.id === noteId);
+    return this.model.getHistoryNotes().find((n) => n.id === noteId);
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
-    switch (element.type) {
-      case 'note':
-        return this.getNoteTreeItem(element);
-      case 'placeholder':
-        return this.getPlaceholderTreeItem(element);
+    if (isPlaceholderNode(element)) {
+      return new vscode.TreeItem(element.message, vscode.TreeItemCollapsibleState.None);
     }
+    return this.getNoteTreeItem(element);
   }
 
   async getChildren(element?: TreeNode): Promise<TreeNode[]> {
     if (!element) {
-      // Root level - show history notes
       if (!this.model) {
         return [{ type: 'placeholder', message: 'HackMD is not connected.' }];
       }
@@ -188,41 +183,30 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
 
         const notes = [...this.model.getHistoryNotes()].sort(compareHistoryNotes);
         this.lastOrderSignature = notes.map((note) => note.id).join('|');
-        const validIds = new Set(notes.map((note) => note.id));
-        for (const noteId of [...this.noteTreeItemCache.keys()]) {
-          if (!validIds.has(noteId)) {
-            this.noteTreeItemCache.delete(noteId);
-          }
-        }
 
         if (notes.length === 0) {
           return [{ type: 'placeholder', message: 'No history' }];
         }
-        return notes.map(note => ({ type: 'note' as const, note }));
-      } catch (error) {
+        return notes;
+      } catch (error: any) {
         return [{ type: 'placeholder', message: `Error: ${error.message}` }];
       }
     }
 
     return [];
   }
+
   getParent(element: TreeNode): TreeNode | undefined {
-    // History view is flat - all notes are at root level
     return undefined;
   }
-  private getNoteTreeItem(noteNode: NoteNode): vscode.TreeItem {
-    const note = noteNode.note;
+
+  private getNoteTreeItem(note: ModelNote): vscode.TreeItem {
     const label = note.title || note.shortId || 'Unnamed';
-    let item = this.noteTreeItemCache.get(note.id);
-    if (!item) {
-      item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-      this.noteTreeItemCache.set(note.id, item);
-    }
-
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.label = label;
-    item.id = `note-${note.id}`; // Stable ID for VS Code to track this item
+    item.id = `note-${note.id}`;
 
-    const isPending = !!note.pendingOperation;
+    const isPending = !!this.model?.isNotePendingOperation(note.id, note.teamPath);
 
     if (!isPending) {
       item.command = {
@@ -234,27 +218,10 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = undefined;
     }
 
-    // Store note ID for commands
     (item as any).noteId = note.id;
+    item.contextValue = isPending ? 'file-pending' : 'file';
+    item.iconPath = isPending ? ICON_SPINNER : ICON_FILE;
 
-    if (isPending) {
-      item.contextValue = 'file-pending';
-    } else {
-      item.contextValue = 'file';
-    }
-
-    // Set icon - spinner when pending, otherwise file icon
-    if (isPending) {
-      item.iconPath = ICON_SPINNER;
-    } else {
-      item.iconPath = ICON_FILE;
-    }
-
-    return item;
-  }
-
-  private getPlaceholderTreeItem(placeholderNode: PlaceholderNode): vscode.TreeItem {
-    const item = new vscode.TreeItem(placeholderNode.message, vscode.TreeItemCollapsibleState.None);
     return item;
   }
 }

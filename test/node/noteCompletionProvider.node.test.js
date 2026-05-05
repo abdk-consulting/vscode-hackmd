@@ -70,17 +70,24 @@ class MockModel {
   }
 
   addTeam(path, snapshot) {
-    this._teams.push({ path });
+    this._teams.push({ type: 'team', path });
     if (snapshot !== undefined) {
       this._teamSnapshots.set(path, snapshot);
     }
   }
 
-  getScopeSnapshotSync(teamPath) {
-    if (teamPath === null) {
+  getMyNotesEntity() {
+    return { type: 'my-notes' };
+  }
+
+  getScopeSnapshotSync(scope) {
+    if (!scope || scope.type === 'my-notes') {
       return this._personal;
     }
-    return this._teamSnapshots.get(teamPath) ?? null;
+    if (scope.type === 'team') {
+      return this._teamSnapshots.get(scope.path) ?? null;
+    }
+    return null;
   }
 
   getTeams() {

@@ -175,6 +175,15 @@ function getTeamPathFromNode(node: any): string | null | undefined {
   if (typeof node?.team?.path === 'string') {
     return node.team.path;
   }
+  if (node?.type === 'team' && typeof node.path === 'string') {
+    return node.path;
+  }
+  if (node?.type === 'note' && typeof node.teamPath === 'string') {
+    return node.teamPath;
+  }
+  if (node?.type === 'note' && node.teamPath === null) {
+    return null;
+  }
   if (typeof node?.note?.teamPath === 'string') {
     return node.note.teamPath;
   }

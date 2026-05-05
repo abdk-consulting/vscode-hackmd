@@ -116,22 +116,26 @@ class MockHackmdModel {
   constructor() {
     this.calls = {};
     this._teams = [
-      { id: 't1', path: 'acme', name: 'Acme Corp' },
+      { id: 't1', type: 'team', path: 'acme', name: 'Acme Corp' },
     ];
     this._personalSnapshot = {
       teamPath: null,
       rootFolders: [
         {
           id: 'pf1',
+          type: 'folder',
           name: 'Work',
           path: '/Work',
+          teamPath: null,
           notes: [{ id: 'pn1', title: 'My Note', shortId: 'abc', teamPath: null, children: [], notes: [] }],
           children: [
             {
               id: 'pf2',
+              type: 'folder',
               name: 'Sub',
               path: '/Work/Sub',
               parentId: 'pf1',
+              teamPath: null,
               notes: [],
               children: [],
             },
@@ -139,8 +143,10 @@ class MockHackmdModel {
         },
         {
           id: 'pf3',
+          type: 'folder',
           name: 'Archive',
           path: '/Archive',
+          teamPath: null,
           notes: [],
           children: [],
         },
@@ -154,8 +160,10 @@ class MockHackmdModel {
       rootFolders: [
         {
           id: 'tf1',
+          type: 'folder',
           name: 'Projects',
           path: '/Projects',
+          teamPath: 'acme',
           notes: [{ id: 'tn1', title: 'Spec', shortId: 's1', teamPath: 'acme', children: [], notes: [] }],
           children: [],
         },
@@ -173,9 +181,9 @@ class MockHackmdModel {
     return this._teams;
   }
 
-  getScopeSnapshotSync(teamPath) {
-    if (teamPath === null || teamPath === undefined) return this._personalSnapshot;
-    if (teamPath === 'acme') return this._acmeSnapshot;
+  getScopeSnapshotSync(scope) {
+    if (!scope || scope.type === 'my-notes') return this._personalSnapshot;
+    if (scope.type === 'team' && scope.path === 'acme') return this._acmeSnapshot;
     return null;
   }
 
@@ -187,6 +195,26 @@ class MockHackmdModel {
       ...snap.rootFolders.flatMap((f) => f.notes),
     ];
     return all.find((n) => n.id === noteId);
+  }
+
+  getMyNotesEntity() {
+    return { type: 'my-notes' };
+  }
+
+  getTeamByPath(teamPath) {
+    return this._teams.find((t) => t.path === teamPath) ?? null;
+  }
+
+  getFolderById(folderId, teamPath) {
+    const scope = teamPath ? this.getTeamByPath(teamPath) : this.getMyNotesEntity();
+    if (!scope) return undefined;
+    const snap = this.getScopeSnapshotSync(scope);
+    if (!snap) return undefined;
+    const allFolders = [
+      ...snap.rootFolders,
+      ...snap.rootFolders.flatMap((f) => f.children || []),
+    ];
+    return allFolders.find((f) => f.id === folderId);
   }
 
   // --- async operations (all return resolved promises with mock data) ---
@@ -209,7 +237,8 @@ class MockHackmdModel {
   }
   async getScopeSnapshot(teamPath) {
     this._record('getScopeSnapshot', [teamPath]);
-    return this.getScopeSnapshotSync(teamPath);
+    const scope = teamPath ? this.getTeamByPath(teamPath) : this.getMyNotesEntity();
+    return scope ? this.getScopeSnapshotSync(scope) : null;
   }
   async getNote(noteId, teamPath) {
     this._record('getNote', [noteId, teamPath]);
@@ -223,18 +252,26 @@ class MockHackmdModel {
     this._record('getEntityByUri', [uri]);
     return { type: 'note', id: 'x1' };
   }
-  async createNote(input) {
-    this._record('createNote', [input]);
+  async createNote(container, props) {
+    this._record('createNote', [container, props]);
+    const teamPath = container.type === 'my-notes' ? null
+      : container.type === 'team' ? container.path
+        : container.teamPath ?? null;
+    const parentFolderId = container.type === 'folder' ? container.id : null;
     return {
       id: 'new1',
-      title: input.title,
-      teamPath: input.teamPath ?? null,
-      parentFolderId: input.parentFolderId ?? null,
+      title: props?.title ?? null,
+      teamPath,
+      parentFolderId,
     };
   }
-  async createFolder(input) {
-    this._record('createFolder', [input]);
-    return { id: 'newf1', name: input.name };
+  async createFolder(container, props) {
+    this._record('createFolder', [container, props]);
+    const teamPath = container.type === 'my-notes' ? null
+      : container.type === 'team' ? container.path
+        : container.teamPath ?? null;
+    const parentFolderId = container.type === 'folder' ? container.id : null;
+    return { id: 'newf1', name: props.name, teamPath, parentFolderId };
   }
   async loadNoteContent(noteId, teamPath) {
     this._record('loadNoteContent', [noteId, teamPath]);
@@ -378,7 +415,7 @@ test('createNote — with all args provided', async () => {
   };
   const result = await invoke('hackmd.model.createNote', { type: 'folder', id: null, teamPath: null });
   assert.ok(result);
-  assert.equal('title' in model.calls.createNote[0][0], false);
+  assert.equal('title' in model.calls.createNote[0][1], false);
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
   stub.vscodeStub.commands.executeCommand = async () => undefined;
@@ -396,11 +433,11 @@ test('createNote — fully interactive (single location picker → creates untit
     .install();
   const result = await invoke('hackmd.model.createNote');
   assert.ok(result);
-  const args = model.calls.createNote[0][0];
-  assert.equal('title' in args, false);
-  assert.equal('content' in args, false);
-  assert.equal(args.teamPath, null);
-  assert.equal(args.parentFolderId, null);
+  const container = model.calls.createNote[0][0];
+  const props = model.calls.createNote[0][1];
+  assert.equal('title' in props, false);
+  assert.equal('content' in props, false);
+  assert.equal(container.type, 'my-notes');
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
   stub.vscodeStub.commands.executeCommand = async () => undefined;
@@ -433,8 +470,8 @@ test('createNote — can target a team root from unified location picker', async
     .install();
   const result = await invoke('hackmd.model.createNote');
   assert.ok(result);
-  assert.equal(model.calls.createNote[0][0].teamPath, 'acme');
-  assert.equal(model.calls.createNote[0][0].parentFolderId, null);
+  assert.equal(model.calls.createNote[0][0].type, 'team');
+  assert.equal(model.calls.createNote[0][0].path, 'acme');
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
   stub.vscodeStub.commands.executeCommand = async () => undefined;
@@ -510,8 +547,26 @@ test('createNote — folder context works with wrapped folder node shape', async
 
   const result = await invoke('hackmd.model.createNote', wrappedFolderNode);
   assert.ok(result);
-  assert.equal(model.calls.createNote[0][0].teamPath, null);
-  assert.equal(model.calls.createNote[0][0].parentFolderId, 'pf1');
+  assert.equal(model.calls.createNote[0][0].type, 'folder');
+  assert.equal(model.calls.createNote[0][0].id, 'pf1');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
+  assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createNote — infers teamPath for folder context when node omits teamPath', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  const result = await invoke('hackmd.model.createNote', { type: 'folder', id: 'folder-tf1' });
+  assert.ok(result);
+  assert.equal(model.calls.createNote[0][0].type, 'folder');
+  assert.equal(model.calls.createNote[0][0].id, 'tf1');
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[1][0], 'hackmd.ui.edit');
 
@@ -570,7 +625,8 @@ test('createFolder — with all args provided', async () => {
     .ib('Archive')  // name
     .install();
   await invoke('hackmd.model.createFolder', { type: 'folder', id: null, teamPath: null });
-  assert.equal(model.calls.createFolder[0][0].name, 'Archive');
+  assert.equal(model.calls.createFolder[0][1].name, 'Archive');
+  assert.equal(model.calls.createFolder[0][0].type, 'my-notes');
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[0][1]?.type, 'folder');
 
@@ -590,9 +646,8 @@ test('createFolder — fully interactive (single location picker → name)', asy
     .install();
   const result = await invoke('hackmd.model.createFolder');
   assert.ok(result);
-  assert.equal(model.calls.createFolder[0][0].name, 'My Folder');
-  assert.equal(model.calls.createFolder[0][0].teamPath, null);
-  assert.equal(model.calls.createFolder[0][0].parentFolderId, null);
+  assert.equal(model.calls.createFolder[0][1].name, 'My Folder');
+  assert.equal(model.calls.createFolder[0][0].type, 'my-notes');
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[0][1]?.type, 'folder');
 
@@ -624,10 +679,11 @@ test('createFolder — can target a team root from unified location picker', asy
   const result = await invoke('hackmd.model.createFolder');
   assert.ok(result);
 
-  const args = model.calls.createFolder[0][0];
-  assert.equal(args.teamPath, 'acme');
-  assert.equal(args.parentFolderId, null);
-  assert.equal(args.name, 'Team Folder');
+  const container = model.calls.createFolder[0][0];
+  const props = model.calls.createFolder[0][1];
+  assert.equal(container.type, 'team');
+  assert.equal(container.path, 'acme');
+  assert.equal(props.name, 'Team Folder');
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[0][1]?.type, 'folder');
 
@@ -653,6 +709,28 @@ test('createFolder — delegates reveal command after create', async () => {
   assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
   assert.equal(executeCalls[0][1]?.type, 'folder');
   assert.equal(executeCalls[0][1]?.id, result.id);
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('createFolder — infers teamPath for folder context when node omits teamPath', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  new Interactions()
+    .ib('Nested Team Folder')
+    .install();
+
+  const result = await invoke('hackmd.model.createFolder', { type: 'folder', id: 'folder-tf1' });
+  assert.ok(result);
+  assert.equal(model.calls.createFolder[0][0].type, 'folder');
+  assert.equal(model.calls.createFolder[0][0].id, 'tf1');
+  assert.equal(model.calls.createFolder[0][1].name, 'Nested Team Folder');
+  assert.equal(executeCalls[0][0], 'hackmd.ui.reveal');
 
   stub.vscodeStub.commands.executeCommand = async () => undefined;
 });
@@ -1001,10 +1079,8 @@ test('pickFolder with includeRoot — custom folder ID empty = root (null)', asy
   const model = setupModel();
   new Interactions()
     .qp((it) => String(it.label || '').includes('My Notes'))
-    .ib('Note Title')         // title
-    .ib('')                   // content
     .install();
   const result = await invoke('hackmd.model.createNote');
   assert.ok(result);
-  assert.equal(model.calls.createNote[0][0].parentFolderId, null);
+  assert.equal(model.calls.createNote[0][0].type, 'my-notes');
 });

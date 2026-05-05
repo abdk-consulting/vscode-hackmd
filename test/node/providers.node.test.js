@@ -41,9 +41,145 @@ function createMockModel(overrides = {}) {
       refreshTeams: 0,
       refreshHistory: 0,
     },
+    pendingByTarget: new Map(),
   };
 
   const key = (scope, id) => `${scope ?? '__personal__'}:${id}`;
+
+  const normalizeFolder = (folder, scope, parentId = null) => {
+    folder.type = 'folder';
+    folder.teamPath = scope;
+    folder.parentId = parentId;
+    folder.children = folder.children || [];
+    folder.notes = folder.notes || [];
+    for (const note of folder.notes) {
+      note.type = 'note';
+      note.teamPath = scope;
+      note.parentFolderId = folder.id;
+    }
+    for (const child of folder.children) {
+      normalizeFolder(child, scope, folder.id);
+    }
+  };
+
+  const normalizeSnapshot = (scope, snapshot) => {
+    if (!snapshot) {
+      return snapshot;
+    }
+    snapshot.scope = scope ?? null;
+    snapshot.rootFolders = snapshot.rootFolders || [];
+    snapshot.rootNotes = snapshot.rootNotes || [];
+    for (const folder of snapshot.rootFolders) {
+      normalizeFolder(folder, scope ?? null, null);
+    }
+    for (const note of snapshot.rootNotes) {
+      note.type = 'note';
+      note.teamPath = scope ?? null;
+      note.parentFolderId = null;
+    }
+    return snapshot;
+  };
+
+  const normalizeEntityEventPayload = (payload) => {
+    if (payload?.entity) {
+      return payload;
+    }
+
+    if (payload?.entityType === 'team' && payload?.id) {
+      const team = state.teamById.get(payload.id) || state.teamByPath.get(payload.scope || '');
+      if (team) {
+        return { entity: { type: 'team', ...team } };
+      }
+    }
+
+    if (payload?.entityType === 'folder' && payload?.id) {
+      const scope = payload.scope ?? null;
+      const folder = state.foldersByScopeAndId.get(key(scope, payload.id));
+      if (folder) {
+        return { entity: { type: 'folder', ...folder } };
+      }
+    }
+
+    if (payload?.entityType === 'note' && payload?.id) {
+      const scope = payload.scope ?? null;
+      const note = state.notesByScopeAndId.get(key(scope, payload.id))
+        || state.historyNotes.find((candidate) => candidate.id === payload.id);
+      if (note) {
+        return { entity: { type: 'note', ...note } };
+      }
+    }
+
+    return payload;
+  };
+
+  const normalizePendingEventPayload = (payload) => {
+    if (payload?.entity) {
+      return payload;
+    }
+
+    if (payload?.targetType === 'container' && payload?.container === 'my-notes') {
+      return { entity: { type: 'my-notes', id: 'my-notes', label: 'My Notes' }, pending: !!payload.pending };
+    }
+    if (payload?.targetType === 'container' && payload?.container === 'team-notes') {
+      return { entity: { type: 'teams', id: 'teams', label: 'Teams' }, pending: !!payload.pending };
+    }
+    if (payload?.targetType === 'container' && payload?.container === 'recent-notes') {
+      return { entity: { type: 'recent-notes', id: 'recent-notes', label: 'Recent Notes' }, pending: !!payload.pending };
+    }
+
+    if (payload?.targetType === 'team' && payload?.scope) {
+      const team = state.teamByPath.get(payload.scope);
+      if (team) {
+        return { entity: { type: 'team', ...team }, pending: !!payload.pending };
+      }
+    }
+
+    if (payload?.targetType === 'folder' && payload?.id) {
+      const scope = payload.scope ?? null;
+      const folder = state.foldersByScopeAndId.get(key(scope, payload.id));
+      if (folder) {
+        return { entity: { type: 'folder', ...folder }, pending: !!payload.pending };
+      }
+    }
+
+    if (payload?.targetType === 'note' && payload?.id) {
+      const scope = payload.scope ?? null;
+      const note = state.notesByScopeAndId.get(key(scope, payload.id));
+      if (note) {
+        return { entity: { type: 'note', ...note }, pending: !!payload.pending };
+      }
+    }
+
+    return payload;
+  };
+
+  const pendingKey = (payload) => {
+    const normalized = normalizePendingEventPayload(payload);
+    const entity = normalized?.entity;
+    if (!entity) {
+      return undefined;
+    }
+
+    if (entity.type === 'my-notes') {
+      return 'container:my-notes';
+    }
+    if (entity.type === 'teams') {
+      return 'container:team-notes';
+    }
+    if (entity.type === 'recent-notes') {
+      return 'container:recent-notes';
+    }
+    if (entity.type === 'team') {
+      return `team:${entity.path}`;
+    }
+    if (entity.type === 'folder') {
+      return `folder:${entity.teamPath ?? '__personal__'}:${entity.id}`;
+    }
+    if (entity.type === 'note') {
+      return `note:${entity.teamPath ?? '__personal__'}:${entity.id}`;
+    }
+    return undefined;
+  };
 
   const api = {
     onDidChangeEntity: (listener) => entityBus.on(listener),
@@ -59,31 +195,63 @@ function createMockModel(overrides = {}) {
       state.calls.refreshHistory += 1;
     },
 
-    getScopeSnapshotSync: (scope) => state.snapshots.get(scope ?? null) || null,
-    getTeams: () => state.teams,
-    getTeamByPath: (teamPath) => state.teamByPath.get(teamPath),
-    getTeamById: (teamId) => state.teamById.get(teamId),
-    getNoteSync: (noteId, scope) => state.notesByScopeAndId.get(key(scope ?? null, noteId)),
-    getNoteById: (noteId, scope) => state.notesByScopeAndId.get(key(scope ?? null, noteId)),
-    getFolderById: (folderId, scope) => state.foldersByScopeAndId.get(key(scope ?? null, folderId)),
-    getHistoryNotes: () => state.historyNotes,
+    getScopeSnapshotSync: (scope) => {
+      const scopeKey = !scope || scope.type === 'my-notes' ? null : (scope.type === 'team' ? scope.path : null);
+      return normalizeSnapshot(scopeKey ?? null, state.snapshots.get(scopeKey ?? null) || null);
+    },
+    getMyNotesEntity: () => ({ type: 'my-notes' }),
+    getTeams: () => state.teams.map((team) => ({ type: 'team', ...team })),
+    getTeamByPath: (teamPath) => {
+      const team = state.teamByPath.get(teamPath);
+      return team ? { type: 'team', ...team } : team;
+    },
+    getTeamById: (teamId) => {
+      const team = state.teamById.get(teamId);
+      return team ? { type: 'team', ...team } : team;
+    },
+    getNoteSync: (noteId, scope) => {
+      const note = state.notesByScopeAndId.get(key(scope ?? null, noteId));
+      return note ? { type: 'note', ...note } : note;
+    },
+    getNoteById: (noteId, scope) => {
+      const note = state.notesByScopeAndId.get(key(scope ?? null, noteId));
+      return note ? { type: 'note', ...note } : note;
+    },
+    getFolderById: (folderId, scope) => {
+      const folder = state.foldersByScopeAndId.get(key(scope ?? null, folderId));
+      return folder ? { type: 'folder', ...folder } : folder;
+    },
+    getHistoryNotes: () => state.historyNotes.map((note) => ({ type: 'note', ...note })),
     isMyNotesPendingOperation: () => !!state.myNotesPendingOperation,
     isTeamNotesPendingOperation: () => !!state.teamNotesPendingOperation,
     isRecentNotesPendingOperation: () => !!state.recentNotesPendingOperation,
-    isFolderPendingOperation: () => false,
+    isTeamPendingOperation: (teamPath) => (state.pendingByTarget.get(`team:${teamPath}`) || 0) > 0,
+    isFolderPendingOperation: (folderId, scope) => (state.pendingByTarget.get(`folder:${scope ?? '__personal__'}:${folderId}`) || 0) > 0,
+    isNotePendingOperation: (noteId, scope) => (state.pendingByTarget.get(`note:${scope ?? '__personal__'}:${noteId}`) || 0) > 0,
 
-    __emitEntity: (payload) => entityBus.emit(payload),
+    __emitEntity: (payload) => entityBus.emit(normalizeEntityEventPayload(payload)),
     __emitPending: (payload) => {
-      if (payload?.targetType === 'container' && payload?.container === 'my-notes') {
-        state.myNotesPendingOperation = !!payload.pending;
+      const normalized = normalizePendingEventPayload(payload);
+      const entity = normalized?.entity;
+
+      if (entity?.type === 'my-notes') {
+        state.myNotesPendingOperation = !!normalized.pending;
       }
-      if (payload?.targetType === 'container' && payload?.container === 'team-notes') {
-        state.teamNotesPendingOperation = !!payload.pending;
+      if (entity?.type === 'teams') {
+        state.teamNotesPendingOperation = !!normalized.pending;
       }
-      if (payload?.targetType === 'container' && payload?.container === 'recent-notes') {
-        state.recentNotesPendingOperation = !!payload.pending;
+      if (entity?.type === 'recent-notes') {
+        state.recentNotesPendingOperation = !!normalized.pending;
       }
-      pendingBus.emit(payload);
+      const key = pendingKey(normalized);
+      if (key) {
+        if (normalized.pending) {
+          state.pendingByTarget.set(key, (state.pendingByTarget.get(key) || 0) + 1);
+        } else {
+          state.pendingByTarget.delete(key);
+        }
+      }
+      pendingBus.emit(normalized);
     },
     __state: state,
   };
@@ -172,7 +340,7 @@ test('MyNotesProvider sorts folders before notes and uses deterministic folder/n
   const provider = new MyNotesProvider('/tmp');
 
   const children = await provider.getChildren();
-  assert.deepEqual(children.map((c) => `${c.type}:${c.type === 'folder' ? c.id : c.note.id}`), [
+  assert.deepEqual(children.map((c) => `${c.type}:${c.id}`), [
     'folder:f1',
     'folder:f2',
     'note:n1',
@@ -231,7 +399,7 @@ test('MyNotesProvider note tree items bind single-click open with preserveFocus'
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note, preserveFocus: true }]);
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode, preserveFocus: true }]);
 });
 
 test('MyNotesProvider emits pending-state changes without marking tree dirty', async () => {
@@ -315,7 +483,7 @@ test('MyNotesProvider refreshes folder node on personal folder pending events', 
   assert.equal(treeEvents[0].id, 'f1');
 });
 
-test('MyNotesProvider reuses note TreeItem instance across pending toggles', async () => {
+test('MyNotesProvider updates note TreeItem contextValue across pending toggles', async () => {
   const model = createMockModel();
   const snapshot = {
     scope: null,
@@ -346,7 +514,7 @@ test('MyNotesProvider reuses note TreeItem instance across pending toggles', asy
   const [updatedNode] = await provider.getChildren();
   const secondItem = provider.getTreeItem(updatedNode);
 
-  assert.equal(secondItem, firstItem);
+  assert.notEqual(secondItem, firstItem);
   assert.equal(secondItem.contextValue, 'file-pending');
 });
 
@@ -420,8 +588,8 @@ test('MyNotesProvider folder upsert emits parent refresh only when root sorting 
 
 test('TeamNotesProvider sorts teams and children deterministically with folders before notes', async () => {
   const model = createMockModel();
-  const teamA = { id: 't2', path: 'scope-b', name: 'Alpha', pendingOperation: false, rootFolders: [], rootNotes: [] };
-  const teamB = { id: 't1', path: 'scope-a', name: 'Alpha', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  const teamA = { id: 't2', path: 'scope-b', name: 'Alpha', type: 'team', rootFolders: [], rootNotes: [] };
+  const teamB = { id: 't1', path: 'scope-a', name: 'Alpha', type: 'team', rootFolders: [], rootNotes: [] };
 
   model.__state.teams = [teamA, teamB];
   model.__state.teamById.set(teamA.id, teamA);
@@ -448,10 +616,10 @@ test('TeamNotesProvider sorts teams and children deterministically with folders 
   const provider = new TeamNotesProvider('/tmp');
 
   const teams = await provider.getChildren();
-  assert.deepEqual(teams.map((t) => t.team.id), ['t1', 't2']);
+  assert.deepEqual(teams.map((t) => t.id), ['t1', 't2']);
 
   const teamChildren = await provider.getChildren(teams[0]);
-  assert.deepEqual(teamChildren.map((c) => `${c.type}:${c.type === 'folder' ? c.id : c.note.id}`), [
+  assert.deepEqual(teamChildren.map((c) => `${c.type}:${c.id}`), [
     'folder:f1',
     'folder:f2',
     'note:n1',
@@ -461,7 +629,7 @@ test('TeamNotesProvider sorts teams and children deterministically with folders 
 
 test('TeamNotesProvider fires parent team refresh when root note sort order changes on upsert', async () => {
   const model = createMockModel();
-  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', type: 'team', rootFolders: [], rootNotes: [] };
   model.__state.teams = [team];
   model.__state.teamById.set(team.id, team);
   model.__state.teamByPath.set(team.path, team);
@@ -493,12 +661,12 @@ test('TeamNotesProvider fires parent team refresh when root note sort order chan
   model.__emitEntity({ entityType: 'note', changeType: 'upsert', scope: 'scope-a', id: 'n2' });
 
   assert.ok(events.length > 0);
-  assert.ok(events.some((e) => e && e.type === 'team' && e.team.id === 't1'));
+  assert.ok(events.some((e) => e && e.type === 'team' && e.id === 't1'));
 });
 
 test('TeamNotesProvider note tree items bind single-click open with preserveFocus', async () => {
   const model = createMockModel();
-  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', type: 'team', rootFolders: [], rootNotes: [] };
   model.__state.teams = [team];
   model.__state.teamById.set(team.id, team);
   model.__state.teamByPath.set(team.path, team);
@@ -521,12 +689,12 @@ test('TeamNotesProvider note tree items bind single-click open with preserveFocu
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note, preserveFocus: true }]);
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode, preserveFocus: true }]);
 });
 
 test('TeamNotesProvider emits pending-state changes without marking tree dirty for container transitions', async () => {
   const model = createMockModel();
-  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', type: 'team', rootFolders: [], rootNotes: [] };
   model.__state.teams = [team];
   model.__state.teamById.set(team.id, team);
   model.__state.teamByPath.set(team.path, team);
@@ -565,7 +733,7 @@ test('TeamNotesProvider emits pending-state changes without marking tree dirty f
 
 test('TeamNotesProvider refreshes team node on team pending events', async () => {
   const model = createMockModel();
-  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', type: 'team', rootFolders: [], rootNotes: [] };
   model.__state.teams = [team];
   model.__state.teamById.set(team.id, team);
   model.__state.teamByPath.set(team.path, team);
@@ -588,12 +756,12 @@ test('TeamNotesProvider refreshes team node on team pending events', async () =>
   assert.equal(treeEvents.length, 1);
   assert.ok(treeEvents[0]);
   assert.equal(treeEvents[0].type, 'team');
-  assert.equal(treeEvents[0].team.id, 't1');
+  assert.equal(treeEvents[0].id, 't1');
 });
 
 test('TeamNotesProvider refreshes folder node on team folder pending events', async () => {
   const model = createMockModel();
-  const team = { id: 't1', path: 'scope-a', name: 'Team A', pendingOperation: false, rootFolders: [], rootNotes: [] };
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', type: 'team', rootFolders: [], rootNotes: [] };
   model.__state.teams = [team];
   model.__state.teamById.set(team.id, team);
   model.__state.teamByPath.set(team.path, team);
@@ -642,7 +810,7 @@ test('HistoryProvider sorts by lastChangedAt desc then id and refreshes targeted
   setMockModel(model);
   const provider = new HistoryProvider('/tmp');
   const initial = await provider.getChildren();
-  assert.deepEqual(initial.map((n) => n.note.id), ['n1', 'n2']);
+  assert.deepEqual(initial.map((n) => n.id), ['n1', 'n2']);
 
   const events = [];
   provider.onDidChangeTreeData((e) => events.push(e));
@@ -657,7 +825,7 @@ test('HistoryProvider sorts by lastChangedAt desc then id and refreshes targeted
   assert.equal(afterTitleOnly, 1);
   assert.ok(events[0]);
   assert.equal(events[0].type, 'note');
-  assert.equal(events[0].note.id, 'n2');
+  assert.equal(events[0].id, 'n2');
   assert.ok(events.some((event) => event === undefined));
 });
 
@@ -673,7 +841,7 @@ test('HistoryProvider note tree items bind single-click open with preserveFocus'
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode.note, preserveFocus: true }]);
+  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode, preserveFocus: true }]);
 });
 
 test('HistoryProvider emits pending-state changes around refresh lifecycle', async () => {

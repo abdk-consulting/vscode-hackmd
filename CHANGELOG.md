@@ -4,7 +4,12 @@
 
 ## Recent Changes (Unreleased)
 
-### Fixed
+### Changed
+
+- `getScopeSnapshotSync` now accepts a scope entity (`ModelMyNotes | ModelTeam`) instead of a `teamPath` string or `null`:
+  - All call sites across `myNotesProvider.ts`, `teamNotesProvider.ts`, `noteCompletionProvider.ts`, `pickers.ts`, `model.ts`, and `ui.ts` were updated to resolve the appropriate entity before calling the method.
+  - Callers that previously held a `teamPath` string now look up the team entity via `model.getTeamByPath(teamPath)` and pass it directly; personal-scope callers pass `model.getMyNotesEntity()`.
+  - Test mocks in `hackmdModel.node.test.js`, `modelCommands.node.test.js`, `uiCommands.node.test.js`, `noteCompletionProvider.node.test.js`, and `providers.node.test.js` were updated to match the new signature (entity type-switch instead of null/string check).
 
 - Fixed visual jitter/jumping of tree nodes during pending (spinner) operations in My Notes and Team Notes views:
   - Root cause: VS Code treats the built-in `'folder'` ThemeIcon specially and uses it to compute sibling indentation/alignment. Switching from `'folder'` to `'sync~spin'` (spinner) and back caused all sibling nodes to reposition.

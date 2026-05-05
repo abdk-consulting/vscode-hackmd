@@ -336,7 +336,7 @@ function createModelAndApi() {
 test('scope snapshot sync/async loading without model-level team sorting', async () => {
   const { model } = createModelAndApi();
 
-  assert.equal(model.getScopeSnapshotSync(null), null);
+  assert.equal(model.getScopeSnapshotSync(model.getMyNotesEntity()), null);
 
   const personal = await model.getScopeSnapshot(null);
   assert.equal(personal.scope, null);
@@ -405,7 +405,7 @@ test('refreshScope(personal) toggles My Notes pending flag and emits pending eve
   await inflight;
   assert.equal(model.isMyNotesPendingOperation(), false);
 
-  const myNotesEvents = pendingEvents.filter((e) => e.targetType === 'container' && e.container === 'my-notes');
+  const myNotesEvents = pendingEvents.filter((e) => e.entity.type === 'my-notes');
   assert.equal(myNotesEvents.length, 2);
   assert.equal(myNotesEvents[0].pending, true);
   assert.equal(myNotesEvents[1].pending, false);
@@ -432,8 +432,8 @@ test('refreshScope(team) toggles Team Notes container and team pending flags', a
   assert.equal(model.isTeamNotesPendingOperation(), false);
   assert.equal(model.isTeamPendingOperation('foo-team'), false);
 
-  const teamContainerEvents = pendingEvents.filter((e) => e.targetType === 'container' && e.container === 'team-notes');
-  const teamEvents = pendingEvents.filter((e) => e.targetType === 'team' && e.scope === 'foo-team');
+  const teamContainerEvents = pendingEvents.filter((e) => e.entity.type === 'teams');
+  const teamEvents = pendingEvents.filter((e) => e.entity.type === 'team' && e.entity.path === 'foo-team');
   assert.equal(teamContainerEvents.length, 2);
   assert.equal(teamContainerEvents[0].pending, true);
   assert.equal(teamContainerEvents[1].pending, false);
@@ -461,9 +461,8 @@ test('loadNoteContent toggles per-note pending flag and emits pending events', a
   assert.equal(model.isNotePendingOperation('pn1', null), false);
   const note = model.getNoteById('pn1', null);
   assert.ok(note);
-  assert.equal(note.pendingOperation, false);
 
-  const noteEvents = pendingEvents.filter((e) => e.targetType === 'note' && e.id === 'pn1');
+  const noteEvents = pendingEvents.filter((e) => e.entity.type === 'note' && e.entity.id === 'pn1');
   assert.equal(noteEvents.length, 2);
   assert.equal(noteEvents[0].pending, true);
   assert.equal(noteEvents[1].pending, false);
@@ -604,7 +603,7 @@ test('refreshScope keeps existing root note order on reorder-only backend change
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
 
   await model.refreshScope({ teamPath: null });
-  const initialRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
+  const initialRootOrder = model.getScopeSnapshotSync(model.getMyNotesEntity()).rootNotes.map((n) => n.id);
   assert.deepEqual(initialRootOrder, ['pn1', 'pn2']);
 
   entityEvents.length = 0;
@@ -612,7 +611,7 @@ test('refreshScope keeps existing root note order on reorder-only backend change
 
   await model.refreshScope({ teamPath: null });
 
-  const finalRootOrder = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id);
+  const finalRootOrder = model.getScopeSnapshotSync(model.getMyNotesEntity()).rootNotes.map((n) => n.id);
   assert.deepEqual(finalRootOrder, ['pn1', 'pn2']);
   assert.equal(entityEvents.length, 0);
   d1.dispose();
@@ -623,7 +622,7 @@ test('create, update, move, and delete note workflow', async () => {
 
   await model.refreshScope({ teamPath: null });
 
-  const created = await model.createNote({ title: 'New Note', content: '# hello' });
+  const created = await model.createNote(model.getMyNotesEntity(), { title: 'New Note', content: '# hello' });
   assert.ok(created.id);
 
   const renamed = await model.renameNote(created.id, 'Renamed Note');
@@ -644,7 +643,7 @@ test('createNote skips scope refresh when scope is already loaded', async () => 
   const getNoteListBefore = api.calls.getNoteList || 0;
   const getFoldersBefore = api.calls.getFolders || 0;
 
-  await model.createNote({ title: 'No extra refresh' });
+  await model.createNote(model.getMyNotesEntity(), { title: 'No extra refresh' });
 
   assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
   assert.equal(api.calls.getFolders || 0, getFoldersBefore);
@@ -658,7 +657,7 @@ test('createFolder skips scope refresh when scope is already loaded', async () =
   const getNoteListBefore = api.calls.getNoteList || 0;
   const getFoldersBefore = api.calls.getFolders || 0;
 
-  await model.createFolder({ name: 'No extra refresh' });
+  await model.createFolder(model.getMyNotesEntity(), { name: 'No extra refresh' });
 
   assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
   assert.equal(api.calls.getFolders || 0, getFoldersBefore);
@@ -674,7 +673,7 @@ test('createFolder under personal parent sets pending on parent folder and updat
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.createFolder({ name: 'Nested Child', parentFolderId: 'pf1' });
+  const inflight = model.createFolder(model.getFolderById('pf1', null), { name: 'Nested Child' });
   await new Promise((resolve) => setTimeout(resolve, 1));
 
   assert.equal(model.isFolderPendingOperation('pf1', null), true);
@@ -689,12 +688,12 @@ test('createFolder under personal parent sets pending on parent folder and updat
   assert.ok(parent);
   assert.ok(parent.children.some((child) => child.id === created.id));
 
-  const folderPendingEvents = pendingEvents.filter((event) => event.targetType === 'folder' && event.id === 'pf1');
+  const folderPendingEvents = pendingEvents.filter((event) => event.entity.type === 'folder' && event.entity.id === 'pf1');
   assert.equal(folderPendingEvents.length, 2);
   assert.equal(folderPendingEvents[0].pending, true);
   assert.equal(folderPendingEvents[1].pending, false);
 
-  const myNotesPendingEvents = pendingEvents.filter((event) => event.targetType === 'container' && event.container === 'my-notes');
+  const myNotesPendingEvents = pendingEvents.filter((event) => event.entity.type === 'my-notes');
   assert.equal(myNotesPendingEvents.length, 0);
 
   d.dispose();
@@ -709,7 +708,7 @@ test('createNote under personal parent sets pending on parent folder and updates
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.createNote({ title: 'Nested Note', parentFolderId: 'pf1' });
+  const inflight = model.createNote(model.getFolderById('pf1', null), { title: 'Nested Note' });
   await new Promise((resolve) => setTimeout(resolve, 1));
 
   assert.equal(model.isFolderPendingOperation('pf1', null), true);
@@ -724,12 +723,12 @@ test('createNote under personal parent sets pending on parent folder and updates
   assert.ok(parent);
   assert.ok(parent.notes.some((note) => note.id === created.id));
 
-  const folderPendingEvents = pendingEvents.filter((event) => event.targetType === 'folder' && event.id === 'pf1');
+  const folderPendingEvents = pendingEvents.filter((event) => event.entity.type === 'folder' && event.entity.id === 'pf1');
   assert.equal(folderPendingEvents.length, 2);
   assert.equal(folderPendingEvents[0].pending, true);
   assert.equal(folderPendingEvents[1].pending, false);
 
-  const myNotesPendingEvents = pendingEvents.filter((event) => event.targetType === 'container' && event.container === 'my-notes');
+  const myNotesPendingEvents = pendingEvents.filter((event) => event.entity.type === 'my-notes');
   assert.equal(myNotesPendingEvents.length, 0);
 
   d.dispose();
@@ -744,7 +743,7 @@ test('createNote refreshes unloaded scope in parallel with create call', async (
   api.setDelay('getFolders', delayMs);
 
   const start = Date.now();
-  await model.createNote({ title: 'Parallel note' });
+  await model.createNote(model.getMyNotesEntity(), { title: 'Parallel note' });
   const elapsedMs = Date.now() - start;
 
   assert.equal(api.calls.createNote || 0, 1);
@@ -761,7 +760,7 @@ test('createNote skips team scope refresh when scope is already loaded', async (
   const getTeamNotesBefore = api.calls.getTeamNotes || 0;
   const getTeamFoldersBefore = api.calls.getTeamFolders || 0;
 
-  await model.createNote({ teamPath: 'foo-team', title: 'No extra team refresh' });
+  await model.createNote(model.getTeamByPath('foo-team'), { title: 'No extra team refresh' });
 
   assert.equal(api.calls.getTeamNotes || 0, getTeamNotesBefore);
   assert.equal(api.calls.getTeamFolders || 0, getTeamFoldersBefore);
@@ -784,7 +783,7 @@ test('save/update/move/delete note in loaded personal scope do not refresh scope
     targetParentFolderId: null,
   });
 
-  const created = await model.createNote({ title: 'Delete me', teamPath: null });
+  const created = await model.createNote(model.getMyNotesEntity(), { title: 'Delete me' });
   await model.deleteNote(created.id, null);
 
   assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
@@ -803,9 +802,9 @@ test('saveNoteContent with partial PATCH response updates existing note identity
     return response({ content: payload.content });
   };
 
-  const beforeIds = model.getScopeSnapshotSync(null).rootNotes.map((n) => n.id).sort();
+  const beforeIds = model.getScopeSnapshotSync(model.getMyNotesEntity()).rootNotes.map((n) => n.id).sort();
   const updated = await model.saveNoteContent('pn2', '# partial response content', null);
-  const afterSnapshot = model.getScopeSnapshotSync(null);
+  const afterSnapshot = model.getScopeSnapshotSync(model.getMyNotesEntity());
   const afterIds = afterSnapshot.rootNotes.map((n) => n.id).sort();
 
   assert.equal(updated.id, 'pn2');
@@ -899,7 +898,7 @@ test('createFolder refreshes unloaded scope in parallel with create call', async
   api.setDelay('getFolders', delayMs);
 
   const start = Date.now();
-  await model.createFolder({ name: 'Parallel folder' });
+  await model.createFolder(model.getMyNotesEntity(), { name: 'Parallel folder' });
   const elapsedMs = Date.now() - start;
 
   assert.equal(api.calls.createFolder || 0, 1);
@@ -918,7 +917,7 @@ test('createFolder refreshes unloaded team scope in parallel with create call', 
   api.setDelay('getTeamFolders', delayMs);
 
   const start = Date.now();
-  await model.createFolder({ teamPath: 'foo-team', name: 'Parallel team folder' });
+  await model.createFolder(model.getTeamByPath('foo-team'), { name: 'Parallel team folder' });
   const elapsedMs = Date.now() - start;
 
   assert.equal(api.calls.createTeamFolder || 0, 1);
@@ -931,7 +930,7 @@ test('createNote marks created content as loaded for instant reads', async () =>
   const { api, model } = createModelAndApi();
 
   await model.refreshScope({ teamPath: null });
-  const created = await model.createNote({ title: 'Instant Read' });
+  const created = await model.createNote(model.getMyNotesEntity(), { title: 'Instant Read' });
   const getNoteCallsBeforeRead = api.calls.getNote || 0;
 
   const content = await model.getNoteContent(created.id, null);

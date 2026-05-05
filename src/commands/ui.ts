@@ -10,7 +10,7 @@ import {
   getTeamNotesProvider,
   getTeamNotesTreeView
 } from '../extension';
-import { getHackmdModel, ModelFolder, ModelNote, ModelScope } from '../model';
+import { getHackmdModel, ModelFolder, ModelMyNotes, ModelNote, ModelScope, ModelTeam } from '../model';
 import { pickCreateLocation } from './model';
 import { collectNotes, pickEntity, pickNote } from './pickers';
 
@@ -176,6 +176,7 @@ function extractScopeContext(node: any): { teamPath?: string | null; parentFolde
     return { teamPath: null };
   }
   if (node.team !== undefined) { return { teamPath: node.team?.path ?? null }; }
+  if (node.type === 'team' && typeof node.path === 'string') { return { teamPath: node.path }; }
   if (node.type === 'folder') { return { teamPath: node.teamPath ?? null, parentFolderId: node.id }; }
   const note = extractNote(node);
   if (note) { return { teamPath: note.teamPath ?? null }; }
@@ -206,6 +207,10 @@ type RevealQuickPickItem = vscode.QuickPickItem & RevealTarget;
 function extractRevealTarget(node: any): RevealTarget | undefined {
   if (node?.team?.path) {
     return { targetType: 'team', teamPath: node.team.path };
+  }
+
+  if (node?.type === 'team' && typeof node.path === 'string') {
+    return { targetType: 'team', teamPath: node.path };
   }
 
   if (node?.type === 'folder' && node?.id) {
@@ -305,9 +310,9 @@ function buildRevealPickerItems(model: ReturnType<typeof getHackmdModel>): Revea
     }
   };
 
-  appendScopeItems(null, model.getScopeSnapshotSync(null));
+  appendScopeItems(null, model.getScopeSnapshotSync(model.getMyNotesEntity()));
   for (const team of teams) {
-    appendScopeItems(team.path, model.getScopeSnapshotSync(team.path));
+    appendScopeItems(team.path, model.getScopeSnapshotSync(team));
   }
 
   return items;
@@ -341,7 +346,8 @@ async function pickRevealTarget(model: ReturnType<typeof getHackmdModel>): Promi
 }
 
 function isScopeLoadedForReveal(model: ReturnType<typeof getHackmdModel>, teamPath: ModelScope): boolean {
-  return model.getScopeSnapshotSync(teamPath) !== null;
+  const scopeEntity = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+  return scopeEntity ? model.getScopeSnapshotSync(scopeEntity) !== null : false;
 }
 
 async function revealLoadedTarget(model: ReturnType<typeof getHackmdModel>, target: RevealTarget): Promise<void> {
@@ -443,7 +449,8 @@ async function resolveNoteUri(
     if (teamPath === undefined) {
       teamPath = null;
     }
-    const snapshot = model.getScopeSnapshotSync(teamPath ?? null);
+    const scopeEntity = (teamPath ?? null) ? model.getTeamByPath(teamPath!) : model.getMyNotesEntity();
+    const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
     if (snapshot) {
       note = collectNotes(snapshot.rootFolders, snapshot.rootNotes).find((n) => n.id === noteId);
     }
@@ -582,6 +589,11 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
+    if (targetNode?.type === 'team' && typeof targetNode.path === 'string') {
+      await vscode.env.openExternal(vscode.Uri.parse(`https://hackmd.io/team/${targetNode.path}`));
+      return;
+    }
+
     const noteFromNode = extractNote(targetNode);
     if (targetNode !== undefined && !noteFromNode) {
       return;
@@ -602,7 +614,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
     // Try sync cache first to avoid an extra API call.
     let publishLink: string | undefined;
-    const snapshot = model.getScopeSnapshotSync(teamPath ?? null);
+    const publishScopeEntity = (teamPath ?? null) ? model.getTeamByPath(teamPath!) : model.getMyNotesEntity();
+    const snapshot = publishScopeEntity ? model.getScopeSnapshotSync(publishScopeEntity) : null;
     if (snapshot) {
       const cached = collectNotes(snapshot.rootFolders, snapshot.rootNotes).find((n) => n.id === noteId);
       publishLink = cached?.publishLink;
@@ -677,12 +690,12 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         title: `Importing ${files.length} note${files.length === 1 ? '' : 's'}…`,
         cancellable: false,
       },
-      async () => Promise.all(files.map((file) => model.createNote({
-        teamPath: resolvedTeamPath,
-        title: file.title,
-        content: file.content,
-        parentFolderId: resolvedFolderId,
-      })))
+      async () => Promise.all(files.map((file) => {
+        const container: ModelMyNotes | ModelTeam | ModelFolder = resolvedFolderId
+          ? (model.getFolderById(resolvedFolderId, resolvedTeamPath ?? null) ?? (resolvedTeamPath ? model.getTeamByPath(resolvedTeamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
+          : (resolvedTeamPath ? model.getTeamByPath(resolvedTeamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+        return model.createNote(container, { title: file.title, content: file.content });
+      }))
     );
 
     if (createdNotes.length > 0) {
@@ -725,8 +738,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
       for (const n of effectiveNodes) {
         // Team node: export all root notes + folders for that team
-        if (n?.team?.path) {
-          const teamPath: string = n.team.path;
+        if (n?.team?.path || (n?.type === 'team' && typeof n.path === 'string')) {
+          const teamPath: string = n?.team?.path || n.path;
           const snapshot = await model.getScopeSnapshot(teamPath) as any;
           const rootNotes: any[] = snapshot?.rootNotes ?? [];
           const rootFolders: any[] = snapshot?.rootFolders ?? [];
@@ -771,7 +784,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       // Single note → ask where to save the .md file.
       // Use sync cache so no async call happens before the dialog.
       const nt = noteTargets[0];
-      const ntSnapshot = model.getScopeSnapshotSync(nt.teamPath);
+      const ntScopeEntity = nt.teamPath ? model.getTeamByPath(nt.teamPath) : model.getMyNotesEntity();
+      const ntSnapshot = ntScopeEntity ? model.getScopeSnapshotSync(ntScopeEntity) : null;
       const ntCached = ntSnapshot
         ? collectNotes(ntSnapshot.rootFolders, ntSnapshot.rootNotes).find((n) => n.id === nt.noteId)
         : undefined;
@@ -805,7 +819,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         const usedNames = await getUsedNamesForDirectory(exportDirUri);
 
         const noteJobs = noteTargets.map((nt) => {
-          const snapshot = model.getScopeSnapshotSync(nt.teamPath);
+          const ntScopeEntity = nt.teamPath ? model.getTeamByPath(nt.teamPath) : model.getMyNotesEntity();
+          const snapshot = ntScopeEntity ? model.getScopeSnapshotSync(ntScopeEntity) : null;
           const cached = snapshot
             ? collectNotes(snapshot.rootFolders, snapshot.rootNotes).find((n) => n.id === nt.noteId)
             : undefined;
@@ -822,7 +837,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
         const folderJobs: Promise<number>[] = [];
         for (const ft of folderTargets) {
-          const snapshot = model.getScopeSnapshotSync(ft.teamPath);
+          const ftScopeEntity = ft.teamPath ? model.getTeamByPath(ft.teamPath) : model.getMyNotesEntity();
+          const snapshot = ftScopeEntity ? model.getScopeSnapshotSync(ftScopeEntity) : null;
           if (!snapshot) {
             vscode.window.showWarningMessage(
               `Scope data for "${ft.name ?? ft.folderId}" is not loaded. Refresh the scope first.`

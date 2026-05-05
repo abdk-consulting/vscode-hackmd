@@ -26,13 +26,13 @@ function collectCachedNotes(): ModelNote[] {
 
   const notes: ModelNote[] = [];
 
-  const personal = model.getScopeSnapshotSync(null);
+  const personal = model.getScopeSnapshotSync(model.getMyNotesEntity());
   if (personal) {
     notes.push(...collectNotes(personal.rootFolders, personal.rootNotes));
   }
 
   for (const team of model.getTeams()) {
-    const snapshot = model.getScopeSnapshotSync(team.path);
+    const snapshot = model.getScopeSnapshotSync(team);
     if (snapshot) {
       notes.push(...collectNotes(snapshot.rootFolders, snapshot.rootNotes));
     }

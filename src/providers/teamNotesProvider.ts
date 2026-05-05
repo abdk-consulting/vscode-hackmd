@@ -7,34 +7,7 @@ const ICON_SPINNER = new vscode.ThemeIcon('sync~spin');
 const ICON_FILE = new vscode.ThemeIcon('file');
 const ICON_ORGANIZATION = new vscode.ThemeIcon('organization');
 
-type TreeNode = TeamNode | FolderNode | NoteNode | PlaceholderNode;
-
-interface TeamNode {
-  type: 'team';
-  source: 'model';
-  team: ModelTeam;
-}
-
-interface FolderNode {
-  type: 'folder';
-  source: 'model';
-  id: string;
-  name: string;
-  pendingOperation: boolean;
-  icon?: string;
-  color?: string;
-  parentId?: string;
-  clientId: string;
-  teamPath: string;
-  children: FolderNode[];
-  notes: ModelNote[];
-}
-
-interface NoteNode {
-  type: 'note';
-  source: 'model';
-  note: ModelNote;
-}
+type TreeNode = ModelTeam | ModelFolder | ModelNote | PlaceholderNode;
 
 interface PlaceholderNode {
   type: 'placeholder';
@@ -82,6 +55,10 @@ function sortedNotes(notes: readonly ModelNote[]): ModelNote[] {
   return [...notes].sort(compareNoteEntities);
 }
 
+function isPlaceholderNode(node: TreeNode): node is PlaceholderNode {
+  return node.type === 'placeholder';
+}
+
 export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -95,14 +72,10 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly scopeLoadingPromises = new Map<string, Promise<void>>();
   private lastError: string | null = null;
 
-  private readonly teamNodesCache = new Map<string, TeamNode>();
   private readonly folderByTeamPath = new Map<string, Map<string, ModelFolder>>();
   private readonly folderParentByTeamPath = new Map<string, Map<string, string | null>>();
   private readonly noteParentByTeamPath = new Map<string, Map<string, string | null>>();
   private readonly childOrderSignatureByParent = new Map<string, string>();
-  private readonly teamTreeItemCache = new Map<string, vscode.TreeItem>();
-  private readonly folderTreeItemCache = new Map<string, vscode.TreeItem>();
-  private readonly noteTreeItemCache = new Map<string, vscode.TreeItem>();
   private lastTeamsOrderSignature = '';
 
   constructor(private extensionPath: string) {
@@ -110,17 +83,23 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       this.model = getHackmdModel();
       this.teamNotesPendingOperation = !!this.model.isTeamNotesPendingOperation();
       this.model.onDidChangeEntity((event) => {
-        if (event.changeType !== 'upsert' || !this.teamsLoaded) {
+        if (!this.teamsLoaded) {
           return;
         }
-        if (event.entityType === 'team') {
-          this.handleTeamEntityChange(event.id);
-        } else if (event.scope !== null) {
-          this.handleEntityUpsert(event.scope, event.entityType, event.id);
+
+        const entity = event.entity;
+        if (entity.type === 'team') {
+          this.handleTeamEntityChange(entity.id);
+        } else if (entity.type === 'folder' && entity.teamPath !== null) {
+          this.handleEntityUpsert(entity.teamPath, 'folder', entity.id);
+        } else if (entity.type === 'note' && entity.teamPath !== null) {
+          this.handleEntityUpsert(entity.teamPath, 'note', entity.id);
         }
       });
       this.model.onDidChangePending((event) => {
-        if (event.targetType === 'container' && event.container === 'team-notes') {
+        const entity = event.entity;
+
+        if (entity.type === 'teams') {
           if (this.teamNotesPendingOperation !== event.pending) {
             this.teamNotesPendingOperation = event.pending;
             this._onDidChangePendingState.fire(event.pending);
@@ -128,18 +107,18 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
           return;
         }
 
-        if (event.targetType === 'team' && event.scope !== null) {
-          this.fireTeamPendingRefresh(event.scope);
+        if (entity.type === 'team') {
+          this.fireTeamPendingRefresh(entity.path);
           return;
         }
 
-        if (event.targetType === 'folder' && event.scope !== null && event.id) {
-          this.fireFolderPendingRefresh(event.scope, event.id);
+        if (entity.type === 'folder' && entity.teamPath !== null) {
+          this.fireFolderPendingRefresh(entity.teamPath, entity.id);
           return;
         }
 
-        if (event.targetType === 'note' && event.scope !== null && event.id) {
-          this.fireNotePendingRefresh(event.scope, event.id);
+        if (entity.type === 'note' && entity.teamPath !== null) {
+          this.fireNotePendingRefresh(entity.teamPath, entity.id);
         }
       });
     } catch {
@@ -178,32 +157,32 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return this.teamsLoadingPromise;
   }
 
-  private async ensureScopeLoaded(teamPath: string, force = false): Promise<void> {
+  private async ensureScopeLoaded(team: ModelTeam, force = false): Promise<void> {
     if (!this.model) {
       return;
     }
-    if (!force && this.model.getScopeSnapshotSync(teamPath)) {
+    if (!force && this.model.getScopeSnapshotSync(team)) {
       return;
     }
 
-    const existing = this.scopeLoadingPromises.get(teamPath);
+    const existing = this.scopeLoadingPromises.get(team.path);
     if (existing) {
       return existing;
     }
 
     const promise = (async () => {
       try {
-        await this.model!.refreshScope({ teamPath });
+        await this.model!.refreshScope({ teamPath: team.path });
       } finally {
-        this.scopeLoadingPromises.delete(teamPath);
+        this.scopeLoadingPromises.delete(team.path);
       }
     })();
 
-    this.scopeLoadingPromises.set(teamPath, promise);
+    this.scopeLoadingPromises.set(team.path, promise);
     return promise;
   }
 
-  private buildTeamIndexes(teamPath: string, snapshot: ModelScopeSnapshot | null): void {
+  private buildTeamIndexes(team: ModelTeam, snapshot: ModelScopeSnapshot | null): void {
     const folderMap = new Map<string, ModelFolder>();
     const parentMap = new Map<string, string | null>();
     const noteParentMap = new Map<string, string | null>();
@@ -228,36 +207,21 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       }
     }
 
-    this.folderByTeamPath.set(teamPath, folderMap);
-    this.folderParentByTeamPath.set(teamPath, parentMap);
-    this.noteParentByTeamPath.set(teamPath, noteParentMap);
+    this.folderByTeamPath.set(team.path, folderMap);
+    this.folderParentByTeamPath.set(team.path, parentMap);
+    this.noteParentByTeamPath.set(team.path, noteParentMap);
 
-    const folderPrefix = `${teamPath}:`;
-    const validFolderKeys = new Set([...folderMap.keys()].map((folderId) => `${teamPath}:${folderId}`));
-    for (const key of [...this.folderTreeItemCache.keys()]) {
-      if (key.startsWith(folderPrefix) && !validFolderKeys.has(key)) {
-        this.folderTreeItemCache.delete(key);
-      }
-    }
-
-    const validNoteKeys = new Set([...noteParentMap.keys()].map((noteId) => `${teamPath}:${noteId}`));
-    for (const key of [...this.noteTreeItemCache.keys()]) {
-      if (key.startsWith(folderPrefix) && !validNoteKeys.has(key)) {
-        this.noteTreeItemCache.delete(key);
-      }
-    }
-
-    this.rebuildTeamChildOrderSignatures(teamPath, snapshot);
+    this.rebuildTeamChildOrderSignatures(team, snapshot);
   }
 
   private getParentSignatureKey(teamPath: string, parentFolderId: string | null): string {
     return parentFolderId ? `${teamPath}:folder:${parentFolderId}` : `${teamPath}:root`;
   }
 
-  private computeChildOrderSignature(teamPath: string, parentFolderId: string | null): string {
-    const snapshot = this.model?.getScopeSnapshotSync(teamPath) || null;
+  private computeChildOrderSignature(team: ModelTeam, parentFolderId: string | null): string {
+    const snapshot = this.model?.getScopeSnapshotSync(team) || null;
     const root = !parentFolderId;
-    const folder = parentFolderId ? this.folderByTeamPath.get(teamPath)?.get(parentFolderId) : undefined;
+    const folder = parentFolderId ? this.folderByTeamPath.get(team.path)?.get(parentFolderId) : undefined;
     const folders = root
       ? sortedFolders(snapshot?.rootFolders || [])
       : sortedFolders(folder?.children || []);
@@ -272,25 +236,25 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return parts.join('|');
   }
 
-  private rebuildTeamChildOrderSignatures(teamPath: string, snapshot: ModelScopeSnapshot | null): void {
-    const prefix = `${teamPath}:`;
+  private rebuildTeamChildOrderSignatures(team: ModelTeam, snapshot: ModelScopeSnapshot | null): void {
+    const prefix = `${team.path}:`;
     for (const key of [...this.childOrderSignatureByParent.keys()]) {
       if (key.startsWith(prefix)) {
         this.childOrderSignatureByParent.delete(key);
       }
     }
 
-    this.childOrderSignatureByParent.set(this.getParentSignatureKey(teamPath, null), this.computeChildOrderSignature(teamPath, null));
+    this.childOrderSignatureByParent.set(this.getParentSignatureKey(team.path, null), this.computeChildOrderSignature(team, null));
 
     if (!snapshot) {
       return;
     }
 
-    const folderMap = this.folderByTeamPath.get(teamPath) || new Map<string, ModelFolder>();
+    const folderMap = this.folderByTeamPath.get(team.path) || new Map<string, ModelFolder>();
     for (const folderId of folderMap.keys()) {
       this.childOrderSignatureByParent.set(
-        this.getParentSignatureKey(teamPath, folderId),
-        this.computeChildOrderSignature(teamPath, folderId)
+        this.getParentSignatureKey(team.path, folderId),
+        this.computeChildOrderSignature(team, folderId)
       );
     }
   }
@@ -298,25 +262,25 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   private fireParentRefresh(teamPath: string, parentFolderId: string | null): void {
     if (!parentFolderId) {
       const team = this.model?.getTeamByPath(teamPath);
-      this._onDidChangeTreeData.fire(team ? this.getCachedTeamNode(team) : undefined);
+      this._onDidChangeTreeData.fire(team || undefined);
       return;
     }
 
     const parent = this.folderByTeamPath.get(teamPath)?.get(parentFolderId);
-    this._onDidChangeTreeData.fire(parent ? this.toFolderNode(parent, teamPath) : undefined);
+    this._onDidChangeTreeData.fire(parent || undefined);
   }
 
   private fireFolderPendingRefresh(teamPath: string, folderId: string): void {
     const folder = this.folderByTeamPath.get(teamPath)?.get(folderId) || this.model?.getFolderById(folderId, teamPath);
-    this._onDidChangeTreeData.fire(folder ? this.toFolderNode(folder, teamPath) : undefined);
+    this._onDidChangeTreeData.fire(folder || undefined);
   }
 
   private fireNotePendingRefresh(teamPath: string, noteId: string): void {
     const note = this.model?.getNoteById(noteId, teamPath);
-    this._onDidChangeTreeData.fire(note ? ({ type: 'note', source: 'model', note } as NoteNode) : undefined);
+    this._onDidChangeTreeData.fire(note || undefined);
   }
 
-  private handleEntityUpsert(teamPath: string, entityType: 'team' | 'folder' | 'note', entityId: string): void {
+  private handleEntityUpsert(teamPath: string, entityType: 'folder' | 'note', entityId: string): void {
     const previousParentMap = this.folderParentByTeamPath.get(teamPath) || new Map<string, string | null>();
     const previousNoteParent = this.noteParentByTeamPath.get(teamPath)?.get(entityId) || null;
     const previousFolderParent = previousParentMap.get(entityId) || null;
@@ -335,8 +299,12 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       previousByParent.set(key, this.childOrderSignatureByParent.get(key) || '');
     }
 
-    const snapshot = this.model?.getScopeSnapshotSync(teamPath) || null;
-    this.buildTeamIndexes(teamPath, snapshot);
+    const team = this.model?.getTeamByPath(teamPath);
+    if (!team) {
+      return;
+    }
+    const snapshot = this.model!.getScopeSnapshotSync(team) || null;
+    this.buildTeamIndexes(team, snapshot);
 
     if (entityType === 'note') {
       const currentParent = this.model?.getNoteById(entityId, teamPath)?.parentFolderId || null;
@@ -352,7 +320,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     for (const parentId of parentCandidates) {
       const key = this.getParentSignatureKey(teamPath, parentId);
       const previous = previousByParent.get(key) || '';
-      const next = this.computeChildOrderSignature(teamPath, parentId);
+      const next = this.computeChildOrderSignature(team, parentId);
       this.childOrderSignatureByParent.set(key, next);
       if (previous !== next) {
         this.fireParentRefresh(teamPath, parentId);
@@ -362,12 +330,12 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     if (entityType === 'folder' && !parentOrderChanged) {
       const folder = this.folderByTeamPath.get(teamPath)?.get(entityId) || this.model?.getFolderById(entityId, teamPath);
-      this._onDidChangeTreeData.fire(folder ? this.toFolderNode(folder, teamPath) : undefined);
+      this._onDidChangeTreeData.fire(folder || undefined);
     }
 
     if (entityType === 'note' && !parentOrderChanged) {
       const note = this.model?.getNoteById(entityId, teamPath);
-      this._onDidChangeTreeData.fire(note ? ({ type: 'note', source: 'model', note } as NoteNode) : undefined);
+      this._onDidChangeTreeData.fire(note || undefined);
     }
   }
 
@@ -383,7 +351,7 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     const team = this.model?.getTeamByPath(teamPath);
-    this._onDidChangeTreeData.fire(team ? this.getCachedTeamNode(team) : undefined);
+    this._onDidChangeTreeData.fire(team || undefined);
   }
 
   private handleTeamEntityChange(teamId: string): void {
@@ -396,50 +364,43 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     const team = this.model?.getTeamById(teamId);
-    this._onDidChangeTreeData.fire(team ? this.getCachedTeamNode(team) : undefined);
+    this._onDidChangeTreeData.fire(team || undefined);
   }
 
-  private getCachedTeamNode(team: ModelTeam): TeamNode {
-    const existing = this.teamNodesCache.get(team.id);
-    if (existing) {
-      existing.team = team;
-      return existing;
-    }
-
-    const created: TeamNode = {
-      type: 'team',
-      source: 'model',
-      team,
-    };
-    this.teamNodesCache.set(team.id, created);
-    return created;
-  }
-
-  refresh(): void {
-    this.teamsLoaded = false;
-    void this.ensureTeamsLoaded(true);
-  }
-
-  refreshTeam(teamId: string): void {
-    const team = this.model?.getTeamById(teamId);
-    if (!team) {
-      return;
-    }
-    void this.ensureScopeLoaded(team.path, true);
-  }
-
-  refreshElement(element: TreeNode): void {
+  refresh(teamPath?: string): void {
     if (!this.model) {
       return;
     }
 
+    if (!teamPath) {
+      this.teamsLoaded = false;
+      this.lastTeamsOrderSignature = '';
+      void this.ensureTeamsLoaded(true);
+      return;
+    }
+
+    const team = this.model?.getTeamByPath(teamPath);
+    if (team) {
+      void this.ensureScopeLoaded(team, true);
+    }
+  }
+
+  refreshElement(element?: TreeNode): void {
+    if (!element || isPlaceholderNode(element)) {
+      this.refresh();
+      return;
+    }
+
     if (element.type === 'team') {
-      void this.ensureScopeLoaded(element.team.path, true);
+      void this.ensureScopeLoaded(element, true);
       return;
     }
 
     if (element.type === 'folder') {
-      void this.ensureScopeLoaded(element.teamPath, true);
+      const team = this.model?.getTeamByPath(element.teamPath || '');
+      if (team) {
+        void this.ensureScopeLoaded(team, true);
+      }
     }
   }
 
@@ -447,15 +408,11 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return this.model?.getTeamByPath(teamPath)?.id;
   }
 
-  isTeamNotesCached(teamId: string): boolean {
+  isTeamLoaded(team: ModelTeam): boolean {
     if (!this.model) {
       return false;
     }
-    const team = this.model.getTeamById(teamId);
-    if (!team) {
-      return false;
-    }
-    return this.model.getScopeSnapshotSync(team.path) !== null;
+    return this.model.getScopeSnapshotSync(team) !== null;
   }
 
   findNoteInCache(noteId: string, teamPath?: string): ModelNote | undefined {
@@ -473,25 +430,27 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         return note;
       }
     }
+
     return undefined;
   }
 
   getMoveFolderTargetsFromCache(teamPath: string): Array<{ label: string; folderId: string; folderPaths: any[] }> {
-    const snapshot = this.model?.getScopeSnapshotSync(teamPath);
+    const team = this.model?.getTeamByPath(teamPath);
+    if (!team) {
+      return [];
+    }
+    const snapshot = this.model!.getScopeSnapshotSync(team);
     if (!snapshot) {
       return [];
     }
 
-    this.buildTeamIndexes(teamPath, snapshot);
+    this.buildTeamIndexes(team, snapshot);
     const parentMap = this.folderParentByTeamPath.get(teamPath) || new Map<string, string | null>();
     const folderMap = this.folderByTeamPath.get(teamPath) || new Map<string, ModelFolder>();
 
-    const targets: Array<{ label: string; folderId: string; folderPaths: any[] }> = [];
-
-    const buildFolderPath = (folderId: string): any[] => {
+    const buildPath = (folderId: string): any[] => {
       const path: any[] = [];
       let currentId: string | null | undefined = folderId;
-
       while (currentId) {
         const folder = folderMap.get(currentId);
         if (!folder) {
@@ -505,16 +464,15 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         });
         currentId = parentMap.get(currentId) || null;
       }
-
       return path;
     };
 
+    const targets: Array<{ label: string; folderId: string; folderPaths: any[] }> = [];
     for (const folder of folderMap.values()) {
-      const folderPaths = buildFolderPath(folder.id);
+      const folderPaths = buildPath(folder.id);
       if (folderPaths.length === 0) {
         continue;
       }
-
       targets.push({
         label: folderPaths.map((entry) => entry.name).join(' / '),
         folderId: folder.id,
@@ -526,16 +484,19 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
-    switch (element.type) {
-      case 'team':
-        return this.getTeamTreeItem(element);
-      case 'folder':
-        return this.getFolderTreeItem(element);
-      case 'note':
-        return this.getNoteTreeItem(element);
-      case 'placeholder':
-        return this.getPlaceholderTreeItem(element);
+    if (isPlaceholderNode(element)) {
+      return new vscode.TreeItem(element.message, vscode.TreeItemCollapsibleState.None);
     }
+
+    if (element.type === 'team') {
+      return this.getTeamTreeItem(element);
+    }
+
+    if (element.type === 'folder') {
+      return this.getFolderTreeItem(element);
+    }
+
+    return this.getNoteTreeItem(element);
   }
 
   async getChildren(element?: TreeNode): Promise<TreeNode[]> {
@@ -550,77 +511,65 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       }
 
       const teams = [...this.model.getTeams()].sort(compareTeamEntities);
-      const validTeamIds = new Set(teams.map((team) => team.id));
-      for (const teamId of [...this.teamTreeItemCache.keys()]) {
-        if (!validTeamIds.has(teamId)) {
-          this.teamTreeItemCache.delete(teamId);
-        }
-      }
       if (teams.length === 0) {
         return [{ type: 'placeholder', message: 'No teams' }];
       }
 
-      return teams.map((team) => this.getCachedTeamNode(team));
+      return teams;
+    }
+
+    if (isPlaceholderNode(element) || element.type === 'note') {
+      return [];
     }
 
     if (element.type === 'team') {
       return this.getTeamChildren(element);
     }
 
-    if (element.type === 'folder') {
-      return this.getFolderChildren(element);
-    }
-
-    return [];
+    return this.getFolderChildren(element);
   }
 
   async getParent(element: TreeNode): Promise<TreeNode | undefined> {
-    if (element.type === 'team' || element.type === 'placeholder') {
+    if (isPlaceholderNode(element) || element.type === 'team') {
       return undefined;
     }
 
     if (element.type === 'note') {
-      const teamPath = element.note.teamPath || null;
+      const teamPath = element.teamPath || null;
       if (!teamPath) {
         return undefined;
       }
 
-      const parentFolderId = element.note.parentFolderId || null;
+      const parentFolderId = element.parentFolderId || null;
       if (parentFolderId) {
         const folder = this.folderByTeamPath.get(teamPath)?.get(parentFolderId);
         if (folder) {
-          return this.toFolderNode(folder, teamPath);
+          return folder;
         }
       }
 
-      const team = this.model?.getTeamByPath(teamPath);
-      return team ? this.getCachedTeamNode(team) : undefined;
+      return this.model?.getTeamByPath(teamPath);
     }
 
-    const parentId = element.parentId || null;
+    const parentId = this.folderParentByTeamPath.get(element.teamPath || '')?.get(element.id) || null;
     if (parentId) {
-      const parent = this.folderByTeamPath.get(element.teamPath)?.get(parentId);
-      if (parent) {
-        return this.toFolderNode(parent, element.teamPath);
-      }
+      return this.folderByTeamPath.get(element.teamPath || '')?.get(parentId);
     }
 
-    const team = this.model?.getTeamByPath(element.teamPath);
-    return team ? this.getCachedTeamNode(team) : undefined;
+    return this.model?.getTeamByPath(element.teamPath || '');
   }
 
-  private async getTeamChildren(teamNode: TeamNode): Promise<TreeNode[]> {
-    const teamPath = teamNode.team.path;
-    const snapshot = this.model?.getScopeSnapshotSync(teamPath) || null;
+  private async getTeamChildren(team: ModelTeam): Promise<TreeNode[]> {
+    const snapshot = this.model?.getScopeSnapshotSync(team) || null;
     if (!snapshot) {
-      void this.ensureScopeLoaded(teamPath);
+      void this.ensureScopeLoaded(team);
       return [{ type: 'placeholder', message: 'Loading notes...' }];
     }
 
-    this.buildTeamIndexes(teamPath, snapshot);
+    this.buildTeamIndexes(team, snapshot);
 
-    const rootFolders = sortedFolders(snapshot.rootFolders).map((folder) => this.toFolderNode(folder, teamPath));
-    const rootNotes = sortedNotes(snapshot.rootNotes).map((note) => ({ type: 'note', source: 'model', note } as NoteNode));
+    const rootFolders = sortedFolders(snapshot.rootFolders);
+    const rootNotes = sortedNotes(snapshot.rootNotes);
 
     if (rootFolders.length === 0 && rootNotes.length === 0) {
       return [{ type: 'placeholder', message: 'No notes' }];
@@ -629,49 +578,23 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     return [...rootFolders, ...rootNotes];
   }
 
-  private getFolderChildren(folderNode: FolderNode): TreeNode[] {
-    const teamPath = folderNode.teamPath;
-    const folder = this.folderByTeamPath.get(teamPath)?.get(folderNode.id);
-    if (!folder) {
-      return [];
-    }
+  private getFolderChildren(folder: ModelFolder): TreeNode[] {
+    const teamPath = folder.teamPath || '';
+    const cached = this.folderByTeamPath.get(teamPath)?.get(folder.id) || folder;
 
-    const children: TreeNode[] = [];
-    children.push(...sortedFolders(folder.children).map((child) => this.toFolderNode(child, teamPath)));
-    children.push(...sortedNotes(folder.notes).map((note) => ({ type: 'note', source: 'model', note } as NoteNode)));
-    return children;
+    return [
+      ...sortedFolders(cached.children),
+      ...sortedNotes(cached.notes),
+    ];
   }
 
-  private toFolderNode(folder: ModelFolder, teamPath: string): FolderNode {
-    const parentId = this.folderParentByTeamPath.get(teamPath)?.get(folder.id) || undefined;
-    return {
-      type: 'folder',
-      source: 'model',
-      id: folder.id,
-      name: folder.name,
-      pendingOperation: !!folder.pendingOperation,
-      icon: undefined,
-      color: undefined,
-      parentId,
-      clientId: folder.clientId || '',
-      teamPath,
-      children: folder.children.map((child) => this.toFolderNode(child, teamPath)),
-      notes: [...folder.notes],
-    };
-  }
+  private getTeamTreeItem(team: ModelTeam): vscode.TreeItem {
+    const item = new vscode.TreeItem(team.name, vscode.TreeItemCollapsibleState.Collapsed);
+    item.label = team.name;
+    item.id = `team-${team.id}`;
 
-  private getTeamTreeItem(teamNode: TeamNode): vscode.TreeItem {
-    let item = this.teamTreeItemCache.get(teamNode.team.id);
-    if (!item) {
-      item = new vscode.TreeItem(teamNode.team.name, vscode.TreeItemCollapsibleState.Collapsed);
-      this.teamTreeItemCache.set(teamNode.team.id, item);
-    }
-
-    item.label = teamNode.team.name;
-    item.id = `team-${teamNode.team.id}`;
-
-    const isLoaded = (this.model?.getScopeSnapshotSync(teamNode.team.path) || null) !== null;
-    const isPending = !!teamNode.team.pendingOperation;
+    const isLoaded = (this.model?.getScopeSnapshotSync(team) || null) !== null;
+    const isPending = !!this.model?.isTeamPendingOperation(team.path);
 
     if (isPending) {
       item.contextValue = isLoaded ? 'team-loaded-pending' : 'team-pending';
@@ -681,59 +604,43 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       item.iconPath = ICON_ORGANIZATION;
     }
 
-    item.description = teamNode.team.path;
-    (item as any).teamPath = teamNode.team.path;
+    item.description = team.path;
+    (item as any).teamPath = team.path;
+    (item as any).team = team;
     return item;
   }
 
-  private getFolderTreeItem(folderNode: FolderNode): vscode.TreeItem {
-    const folderKey = `${folderNode.teamPath}:${folderNode.id}`;
-    let item = this.folderTreeItemCache.get(folderKey);
-    if (!item) {
-      item = new vscode.TreeItem(folderNode.name, vscode.TreeItemCollapsibleState.Collapsed);
-      this.folderTreeItemCache.set(folderKey, item);
-    }
+  private getFolderTreeItem(folder: ModelFolder): vscode.TreeItem {
+    const item = new vscode.TreeItem(folder.name, vscode.TreeItemCollapsibleState.Collapsed);
+    item.label = folder.name;
+    item.id = `folder-${folder.id}`;
 
-    item.label = folderNode.name;
-    item.id = `folder-${folderNode.id}`;
-
-    const isPending = !!folderNode.pendingOperation;
-    const hasClientId = !!folderNode.clientId;
+    const isPending = !!this.model?.isFolderPendingOperation(folder.id, folder.teamPath);
+    const hasClientId = !!folder.clientId;
     item.contextValue = hasClientId
       ? (isPending ? 'folder-pending' : 'folder')
       : (isPending ? 'folder-no-client-id-pending' : 'folder-no-client-id');
-    item.tooltip = folderNode.name;
+    item.tooltip = folder.name;
 
     (item as any).source = 'model';
-    (item as any).folderId = folderNode.id;
-    (item as any).folderName = folderNode.name;
-    (item as any).parentId = folderNode.parentId;
-    (item as any).folderClientId = folderNode.clientId || '';
-    (item as any).teamPath = folderNode.teamPath;
+    (item as any).folderId = folder.id;
+    (item as any).folderName = folder.name;
+    (item as any).parentId = this.folderParentByTeamPath.get(folder.teamPath || '')?.get(folder.id) || undefined;
+    (item as any).folderClientId = folder.clientId || '';
+    (item as any).teamPath = folder.teamPath;
 
-    if (isPending) {
-      item.iconPath = ICON_SPINNER;
-    } else {
-      item.iconPath = folderNode.icon ? new vscode.ThemeIcon(folderNode.icon) : ICON_FOLDER;
-    }
+    item.iconPath = isPending ? ICON_SPINNER : ICON_FOLDER;
 
     return item;
   }
 
-  private getNoteTreeItem(noteNode: NoteNode): vscode.TreeItem {
-    const note = noteNode.note;
+  private getNoteTreeItem(note: ModelNote): vscode.TreeItem {
     const label = note.title || note.shortId || 'Unnamed';
-    const noteKey = `${note.teamPath || ''}:${note.id}`;
-    let item = this.noteTreeItemCache.get(noteKey);
-    if (!item) {
-      item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-      this.noteTreeItemCache.set(noteKey, item);
-    }
-
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.label = label;
     item.id = `note-${note.id}`;
 
-    const isPending = !!note.pendingOperation;
+    const isPending = !!this.model?.isNotePendingOperation(note.id, note.teamPath);
 
     if (!isPending) {
       item.command = {
@@ -750,9 +657,5 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     item.contextValue = isPending ? 'file-pending' : 'file';
     item.iconPath = isPending ? ICON_SPINNER : ICON_FILE;
     return item;
-  }
-
-  private getPlaceholderTreeItem(placeholderNode: PlaceholderNode): vscode.TreeItem {
-    return new vscode.TreeItem(placeholderNode.message, vscode.TreeItemCollapsibleState.None);
   }
 }

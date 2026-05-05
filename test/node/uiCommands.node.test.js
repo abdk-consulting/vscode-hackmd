@@ -103,7 +103,7 @@ class MockUiModel {
   constructor() {
     this.calls = {};
 
-    this.teams = [{ id: 't1', path: 'acme', name: 'Acme' }];
+    this.teams = [{ id: 't1', type: 'team', path: 'acme', name: 'Acme' }];
 
     this.personalSnapshot = {
       scope: null,
@@ -184,17 +184,21 @@ class MockUiModel {
     this.calls[method].push(args);
   }
 
+  getMyNotesEntity() {
+    return { type: 'my-notes' };
+  }
+
   getTeams() {
     this._record('getTeams', []);
     return this.teams;
   }
 
-  getScopeSnapshotSync(teamPath) {
-    this._record('getScopeSnapshotSync', [teamPath]);
-    if (teamPath === null || teamPath === undefined) {
+  getScopeSnapshotSync(scope) {
+    this._record('getScopeSnapshotSync', [scope]);
+    if (!scope || scope.type === 'my-notes') {
       return this.personalSnapshot;
     }
-    if (teamPath === 'acme') {
+    if (scope.type === 'team' && scope.path === 'acme') {
       return this.acmeSnapshot;
     }
     return null;
@@ -212,7 +216,8 @@ class MockUiModel {
 
   getFolderById(folderId, teamPath) {
     this._record('getFolderById', [folderId, teamPath]);
-    const snapshot = this.getScopeSnapshotSync(teamPath ?? null);
+    const scopeEntity = teamPath ? this.getTeamByPath(teamPath) : this.getMyNotesEntity();
+    const snapshot = scopeEntity ? this.getScopeSnapshotSync(scopeEntity) : null;
     if (!snapshot) {
       return undefined;
     }
@@ -268,13 +273,16 @@ class MockUiModel {
     return this.noteContentByKey.get(this._k(teamPath ?? null, noteId)) || '';
   }
 
-  async createNote(input) {
-    this._record('createNote', [input]);
+  async createNote(container, props) {
+    this._record('createNote', [container, props]);
+    const teamPath = container.type === 'my-notes' ? null
+      : container.type === 'team' ? container.path
+        : container.teamPath ?? null;
     return {
       type: 'note',
       id: `new-${(this.calls.createNote || []).length}`,
-      title: input.title,
-      teamPath: input.teamPath ?? null,
+      title: props?.title ?? null,
+      teamPath,
     };
   }
 }
@@ -679,12 +687,9 @@ test('import: interactive file picker + single location picker create notes', as
   await invoke('hackmd.ui.import');
 
   assert.equal(callCount(model, 'createNote'), 2);
-  assert.deepEqual(model.calls.createNote[0][0], {
-    teamPath: null,
-    title: 'first',
-    content: '# first',
-    parentFolderId: null,
-  });
+  assert.deepEqual(model.calls.createNote[0][0].type, 'my-notes');
+  assert.deepEqual(model.calls.createNote[0][1].title, 'first');
+  assert.deepEqual(model.calls.createNote[0][1].content, '# first');
   const refreshCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.model.refreshTeam');
   assert.equal(refreshCalls.length, 0);
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
@@ -718,15 +723,15 @@ test('import: creates multiple notes in parallel', async () => {
 
   const started = [];
   const resolvers = [];
-  model.createNote = async (input) => {
-    model._record('createNote', [input]);
-    started.push(input.title);
+  model.createNote = async (container, props) => {
+    model._record('createNote', [container, props]);
+    started.push(props?.title ?? null);
     return new Promise((resolve) => {
       resolvers.push(() => resolve({
         type: 'note',
         id: `new-${started.length}`,
-        title: input.title,
-        teamPath: input.teamPath ?? null,
+        title: props?.title ?? null,
+        teamPath: container.type === 'my-notes' ? null : container.path ?? null,
       }));
     });
   };

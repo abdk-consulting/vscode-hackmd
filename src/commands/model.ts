@@ -5,9 +5,11 @@ import * as extensionApi from '../extension';
 import {
   getHackmdModel,
   ModelFolder,
+  ModelMyNotes,
   ModelNote,
   ModelScope,
-  ModelScopeSnapshot
+  ModelScopeSnapshot,
+  ModelTeam
 } from '../model';
 import {
   collectFolders,
@@ -90,14 +92,18 @@ function extractScopeContext(node: any): { teamPath?: string | null; parentFolde
   ) {
     return { teamPath: null };
   }
-  // Team node: { team: { path: '...' }, type: 'team' }
+  // Team node: wrapper or direct model team object.
   if (node.team !== undefined) { return { teamPath: node.team?.path ?? null }; }
+  if (node.type === 'team' && typeof node.path === 'string') { return { teamPath: node.path }; }
   // Folder node can be a direct provider node or a wrapped context-menu node.
   if (node.type === 'folder') {
-    const parentFolderId = node.id
-      || node.folderId
+    const rawParentFolderId = node.folderId
+      || node.id
       || node.value?.context?.folderId
       || node.value?.context?.folderClientId;
+    const parentFolderId = typeof rawParentFolderId === 'string' && rawParentFolderId.startsWith('folder-')
+      ? rawParentFolderId.slice('folder-'.length)
+      : rawParentFolderId;
     const teamPath = node.teamPath
       ?? node.value?.context?.teamPath
       ?? null;
@@ -110,6 +116,33 @@ function extractScopeContext(node: any): { teamPath?: string | null; parentFolde
   const note = extractNote(node);
   if (note) { return { teamPath: note.teamPath ?? null }; }
   return {};
+}
+
+function inferTeamPathFromFolderId(
+  model: ReturnType<typeof getHackmdModel>,
+  parentFolderId: string,
+  explicitTeamPath?: string | null
+): string | null | undefined {
+  if (explicitTeamPath !== undefined && explicitTeamPath !== null) {
+    return explicitTeamPath;
+  }
+
+  const personalSnapshot = model.getScopeSnapshotSync(model.getMyNotesEntity());
+  if (personalSnapshot && collectFolders(personalSnapshot.rootFolders).some((folder) => folder.id === parentFolderId)) {
+    return null;
+  }
+
+  for (const team of model.getTeams()) {
+    const teamSnapshot = model.getScopeSnapshotSync(team);
+    if (!teamSnapshot) {
+      continue;
+    }
+    if (collectFolders(teamSnapshot.rootFolders).some((folder) => folder.id === parentFolderId)) {
+      return team.path;
+    }
+  }
+
+  return explicitTeamPath ?? null;
 }
 
 type MoveItem = {
@@ -173,7 +206,8 @@ function toMoveItem(node: any): MoveItem | undefined {
 }
 
 function buildScopeIndex(model: ReturnType<typeof getHackmdModel>, teamPath: ModelScope): ScopeIndex {
-  const snapshot = model.getScopeSnapshotSync(teamPath);
+  const scopeEntity = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
   const folderById = new Map<string, ModelFolder>();
   const noteById = new Map<string, ModelNote>();
   const folderParentById = new Map<string, string | null>();
@@ -334,7 +368,7 @@ export async function pickCreateLocation(
     parentFolderId: null,
   });
 
-  const personalSnapshot = model.getScopeSnapshotSync(null);
+  const personalSnapshot = model.getScopeSnapshotSync(model.getMyNotesEntity());
   if (personalSnapshot) {
     for (const folder of collectFolders(personalSnapshot.rootFolders)) {
       items.push({
@@ -356,7 +390,7 @@ export async function pickCreateLocation(
       parentFolderId: null,
     });
 
-    const snapshot = model.getScopeSnapshotSync(team.path);
+    const snapshot = model.getScopeSnapshotSync(team);
     if (!snapshot) {
       continue;
     }
@@ -392,15 +426,15 @@ export async function pickCreateLocation(
 async function pickRenameTarget(
   model: ReturnType<typeof getHackmdModel>
 ): Promise<RenameQuickPickItem | undefined> {
-  const scopes = [
-    { teamPath: null as ModelScope, scopeLabel: 'My Notes' },
-    ...model.getTeams().map((team) => ({ teamPath: team.path as ModelScope, scopeLabel: team.name || team.path })),
+  const scopes: Array<{ entity: ModelMyNotes | ModelTeam; teamPath: ModelScope; scopeLabel: string }> = [
+    { entity: model.getMyNotesEntity(), teamPath: null, scopeLabel: 'My Notes' },
+    ...model.getTeams().map((team) => ({ entity: team, teamPath: team.path as ModelScope, scopeLabel: team.name || team.path })),
   ];
 
   const items: RenameQuickPickItem[] = [];
 
   for (const scope of scopes) {
-    const snapshot = model.getScopeSnapshotSync(scope.teamPath);
+    const snapshot = model.getScopeSnapshotSync(scope.entity);
     if (!snapshot) {
       continue;
     }
@@ -566,15 +600,42 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     return model.refreshHistory();
   });
 
-  register('hackmd.model.refreshTeam', async (args?: { teamPath?: string | null; team?: { path?: string } } | any) => {
+  register('hackmd.model.refreshScope', async (args?: { teamPath?: string | null; team?: { path?: string }; path?: string } | any) => {
     const model = getModel();
     if (!model) {
       return;
     }
 
-    let teamPath: string | null | undefined = args?.teamPath;
-    if (teamPath === undefined && args?.team?.path) {
-      teamPath = args.team.path;
+    let teamPath: string | null | undefined;
+    if (args && Object.prototype.hasOwnProperty.call(args, 'teamPath')) {
+      teamPath = args.teamPath;
+    } else {
+      teamPath = args?.team?.path ?? args?.path;
+    }
+
+    if (teamPath === undefined) {
+      const selectedScope = await pickScope(model, 'Choose scope to refresh');
+      if (selectedScope === undefined) {
+        return;
+      }
+      teamPath = selectedScope;
+    }
+
+    await model.refreshScope({ teamPath });
+    return true;
+  });
+
+  register('hackmd.model.refreshTeam', async (args?: { teamPath?: string | null; team?: { path?: string }; path?: string } | any) => {
+    const model = getModel();
+    if (!model) {
+      return;
+    }
+
+    let teamPath: string | null | undefined;
+    if (args && Object.prototype.hasOwnProperty.call(args, 'teamPath')) {
+      teamPath = args.teamPath;
+    } else {
+      teamPath = args?.team?.path ?? args?.path;
     }
 
     if (teamPath === undefined) {
@@ -599,19 +660,27 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     let teamPath = scope.teamPath;
     let parentFolderId = scope.parentFolderId;
 
+    if (parentFolderId) {
+      teamPath = inferTeamPathFromFolderId(model, parentFolderId, teamPath);
+    }
+
     if (teamPath === undefined && parentFolderId === undefined) {
       const location = await pickCreateLocation(model, 'Choose where to create the new note');
       if (!location) {
         return;
       }
       teamPath = location.teamPath;
-      parentFolderId = location.parentFolderId;
+      parentFolderId = location.parentFolderId ?? undefined;
     } else {
       // Node provided: default parentFolderId to root if not set (e.g. team node)
-      parentFolderId = parentFolderId ?? null;
+      parentFolderId = parentFolderId ?? undefined;
     }
 
-    const created = await model.createNote({ teamPath, parentFolderId });
+    const container: ModelMyNotes | ModelTeam | ModelFolder = parentFolderId
+      ? (model.getFolderById(parentFolderId, teamPath ?? null) ?? (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
+      : (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+
+    const created = await model.createNote(container, {});
     await vscode.commands.executeCommand('hackmd.ui.reveal', { type: 'note', note: created });
     await vscode.commands.executeCommand('hackmd.ui.edit', { type: 'note', note: created });
     return created;
@@ -627,16 +696,20 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     let teamPath = scope.teamPath;
     let parentFolderId = scope.parentFolderId;
 
+    if (parentFolderId) {
+      teamPath = inferTeamPathFromFolderId(model, parentFolderId, teamPath);
+    }
+
     if (teamPath === undefined && parentFolderId === undefined) {
       const location = await pickCreateLocation(model, 'Choose where to create the new folder');
       if (!location) {
         return;
       }
       teamPath = location.teamPath;
-      parentFolderId = location.parentFolderId;
+      parentFolderId = location.parentFolderId ?? undefined;
     } else {
       // Node provided: default parentFolderId to root if not set (e.g. team node)
-      parentFolderId = parentFolderId ?? null;
+      parentFolderId = parentFolderId ?? undefined;
     }
 
     const name = await promptRequiredInput('Folder name');
@@ -644,7 +717,11 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const created = await model.createFolder({ teamPath, name, parentFolderId });
+    const container: ModelMyNotes | ModelTeam | ModelFolder = parentFolderId
+      ? (model.getFolderById(parentFolderId, teamPath ?? null) ?? (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
+      : (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+
+    const created = await model.createFolder(container, { name });
     await vscode.commands.executeCommand('hackmd.ui.reveal', {
       type: 'folder',
       id: created.id,
@@ -838,11 +915,12 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
 
     try {
       const content = await model.getNoteContent(note.id, note.teamPath ?? null);
-      return model.createNote({
-        teamPath: note.teamPath ?? null,
+      const container: ModelMyNotes | ModelTeam | ModelFolder = note.parentFolderId
+        ? (model.getFolderById(note.parentFolderId, note.teamPath ?? null) ?? (note.teamPath ? model.getTeamByPath(note.teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
+        : (note.teamPath ? model.getTeamByPath(note.teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+      return model.createNote(container, {
         title: note.title || note.shortId || 'Untitled',
         content: content ?? '',
-        parentFolderId: note.parentFolderId ?? undefined,
       });
     } catch (error: any) {
       vscode.window.showErrorMessage(`Failed to duplicate note: ${error.message || 'Unknown error'}`);

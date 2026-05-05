@@ -35,7 +35,6 @@ export interface ModelTeam {
   id: string;
   path: string;
   name: string;
-  pendingOperation: boolean;
   rootFolders: ModelFolder[];
   rootNotes: ModelNote[];
 }
@@ -44,7 +43,6 @@ export interface ModelFolder {
   readonly type: 'folder';
   id: string;
   name: string;
-  pendingOperation: boolean;
   path?: string;
   clientId: string;
   parentId?: string | null;
@@ -57,7 +55,6 @@ export interface ModelNote {
   readonly type: 'note';
   id: string;
   title: string;
-  pendingOperation: boolean;
   shortId?: string;
   teamPath: string | null;
   content?: string;
@@ -82,22 +79,42 @@ export interface ModelNote {
   lastChangedAt?: string;
 }
 
-export interface ModelEntityChangedEvent {
-  entityType: 'team' | 'folder' | 'note';
-  changeType: 'upsert' | 'delete';
-  scope: ModelScope;
-  id: string;
+export interface ModelMyNotes {
+  readonly type: 'my-notes';
 }
 
-export type ModelPendingContainer = 'my-notes' | 'team-notes' | 'recent-notes';
+export interface ModelTeams {
+  readonly type: 'teams';
+}
+
+export interface ModelRecentNotes {
+  readonly type: 'recent-notes';
+}
+
+export interface ModelRoot {
+  readonly type: 'model-root';
+}
+
+export type ModelContainerEntity = ModelMyNotes | ModelTeams | ModelRecentNotes;
+
+export type ModelEntity = ModelTeam | ModelFolder | ModelNote | ModelContainerEntity | ModelRoot;
+
+export interface ModelEntityChangedEvent {
+  entity: ModelEntity;
+}
 
 export interface ModelPendingChangedEvent {
-  targetType: 'container' | 'team' | 'folder' | 'note';
+  entity: ModelEntity;
   pending: boolean;
-  scope: ModelScope;
-  id: string | null;
-  container?: ModelPendingContainer;
 }
+
+export type ModelPendingTarget =
+  | { targetType: 'my-notes' }
+  | { targetType: 'teams' }
+  | { targetType: 'recent-notes' }
+  | { targetType: 'team'; teamPath: string }
+  | { targetType: 'folder'; scope: ModelScope; id: string }
+  | { targetType: 'note'; scope: ModelScope; id: string };
 
 export interface ModelScopeSnapshot {
   scope: ModelScope;
@@ -109,10 +126,28 @@ export interface RefreshScopeInput {
   teamPath?: string | null;
 }
 
-export interface CreateNoteInput {
+export interface CreateNoteProps {
+  title?: string;
+  content?: string;
+  permalink?: string | null;
+  readPermission?: string;
+  writePermission?: string;
+}
+
+export interface CreateFolderProps {
+  name: string;
+}
+
+interface CreateNoteInput {
   teamPath?: string | null;
   title?: string;
   content?: string;
+  parentFolderId?: string | null;
+}
+
+interface CreateFolderInput {
+  teamPath?: string | null;
+  name: string;
   parentFolderId?: string | null;
 }
 
@@ -134,21 +169,15 @@ export interface MoveNoteInput {
   targetParentFolderId?: string | null;
 }
 
-export interface CreateFolderInput {
+export interface MoveFolderInput {
+  folderId: string;
   teamPath?: string | null;
-  name: string;
-  parentFolderId?: string | null;
+  targetParentFolderId?: string | null;
 }
 
 export interface UpdateFolderInput {
   name?: string;
   parentFolderId?: string | null;
-}
-
-export interface MoveFolderInput {
-  folderId: string;
-  teamPath?: string | null;
-  targetParentFolderId?: string | null;
 }
 
 function scopeKey(teamPath?: string | null): string {
@@ -304,10 +333,23 @@ export class HackmdModel {
   private entityEventBatchDepth = 0;
   private readonly batchedEntityEvents: ModelEntityChangedEvent[] = [];
   private entityChangeVersion = 0;
-  private readonly pendingCounts = new Map<string, number>();
-  private myNotesPendingOperation = false;
-  private teamNotesPendingOperation = false;
-  private recentNotesPendingOperation = false;
+  private readonly pendingCounts = new Map<ModelEntity, number>();
+
+  private readonly myNotesEntity: ModelMyNotes = {
+    type: 'my-notes',
+  };
+
+  private readonly teamsEntity: ModelTeams = {
+    type: 'teams',
+  };
+
+  private readonly recentNotesEntity: ModelRecentNotes = {
+    type: 'recent-notes',
+  };
+
+  private readonly modelRootEntity: ModelRoot = {
+    type: 'model-root',
+  };
 
   private static readonly EMPTY_FOLDERS: ModelFolder[] = [];
   private static readonly EMPTY_NOTES: ModelNote[] = [];
@@ -315,33 +357,62 @@ export class HackmdModel {
   readonly onDidChangeEntity = this.didChangeEntity.event;
   readonly onDidChangePending = this.didChangePending.event;
 
+  getMyNotesEntity(): ModelMyNotes {
+    return this.myNotesEntity;
+  }
+
+  getTeamsEntity(): ModelTeams {
+    return this.teamsEntity;
+  }
+
+  getRecentNotesEntity(): ModelRecentNotes {
+    return this.recentNotesEntity;
+  }
+
+  getModelRootEntity(): ModelRoot {
+    return this.modelRootEntity;
+  }
+
   isMyNotesPendingOperation(): boolean {
-    return this.myNotesPendingOperation;
+    return (this.pendingCounts.get(this.myNotesEntity) || 0) > 0;
   }
 
   isTeamNotesPendingOperation(): boolean {
-    return this.teamNotesPendingOperation;
+    return (this.pendingCounts.get(this.teamsEntity) || 0) > 0;
   }
 
   isRecentNotesPendingOperation(): boolean {
-    return this.recentNotesPendingOperation;
+    return (this.pendingCounts.get(this.recentNotesEntity) || 0) > 0;
   }
 
   isTeamPendingOperation(teamPath: string): boolean {
     const team = this.teamsByPath.get(teamPath);
-    return team ? team.pendingOperation : this.isPendingByKey(this.pendingKeyForTeam(teamPath));
+    return team ? (this.pendingCounts.get(team) || 0) > 0 : false;
   }
 
   isFolderPendingOperation(folderId: string, teamPath?: string | null): boolean {
-    const scope = teamPath || null;
-    const folder = this.getFolderById(folderId, scope);
-    return folder ? folder.pendingOperation : this.isPendingByKey(this.pendingKeyForFolder(scope, folderId));
+    const folder = this.getFolderById(folderId, teamPath);
+    return folder ? (this.pendingCounts.get(folder) || 0) > 0 : false;
   }
 
   isNotePendingOperation(noteId: string, teamPath?: string | null): boolean {
-    const scope = teamPath || null;
-    const note = this.getNoteById(noteId, scope);
-    return note ? note.pendingOperation : this.isPendingByKey(this.pendingKeyForNote(scope, noteId));
+    const note = this.getNoteById(noteId, teamPath);
+    return note ? (this.pendingCounts.get(note) || 0) > 0 : false;
+  }
+
+  isPending(target: ModelPendingTarget): boolean {
+    const entity: ModelEntity | undefined = target.targetType === 'my-notes'
+      ? this.myNotesEntity
+      : target.targetType === 'teams'
+        ? this.teamsEntity
+        : target.targetType === 'recent-notes'
+          ? this.recentNotesEntity
+          : target.targetType === 'team'
+            ? this.teamsByPath.get(target.teamPath)
+            : target.targetType === 'folder'
+              ? this.getFolderById(target.id, target.scope)
+              : this.getNoteById(target.id, target.scope);
+    return entity ? (this.pendingCounts.get(entity) || 0) > 0 : false;
   }
 
   getTeams(): readonly ModelTeam[] {
@@ -368,25 +439,23 @@ export class HackmdModel {
     return this.historyNotes;
   }
 
-  getScopeSnapshotSync(teamPath?: string | null): ModelScopeSnapshot | null {
-    const scope = teamPath || null;
-    const key = scopeKey(scope);
-    if (!this.loadedScopes.has(key)) {
-      return null;
-    }
-
-    if (scope) {
-      const team = this.teamsByPath.get(scope);
-      if (!team) {
+  getScopeSnapshotSync(scope: ModelMyNotes | ModelTeam): ModelScopeSnapshot | null {
+    if (scope.type === 'team') {
+      const key = scopeKey(scope.path);
+      if (!this.loadedScopes.has(key)) {
         return null;
       }
       return {
-        scope,
-        rootFolders: team.rootFolders,
-        rootNotes: team.rootNotes,
+        scope: scope.path,
+        rootFolders: scope.rootFolders,
+        rootNotes: scope.rootNotes,
       };
     }
 
+    const key = scopeKey(null);
+    if (!this.loadedScopes.has(key)) {
+      return null;
+    }
     return {
       scope: null,
       rootFolders: this.personalRootFolders,
@@ -395,13 +464,19 @@ export class HackmdModel {
   }
 
   async getScopeSnapshot(teamPath?: string | null): Promise<ModelScopeSnapshot> {
-    const existing = this.getScopeSnapshotSync(teamPath);
+    const entity: ModelMyNotes | ModelTeam | null = teamPath
+      ? (this.teamsByPath.get(teamPath) ?? null)
+      : this.myNotesEntity;
+    const existing = entity ? this.getScopeSnapshotSync(entity) : null;
     if (existing) {
       return existing;
     }
 
     await this.refreshScope({ teamPath: teamPath || null });
-    return this.getScopeSnapshotSync(teamPath) || {
+    const entityAfterLoad: ModelMyNotes | ModelTeam | null = teamPath
+      ? (this.teamsByPath.get(teamPath) ?? null)
+      : this.myNotesEntity;
+    return (entityAfterLoad ? this.getScopeSnapshotSync(entityAfterLoad) : null) || {
       scope: teamPath || null,
       rootFolders: [],
       rootNotes: [],
@@ -586,7 +661,7 @@ export class HackmdModel {
     }
 
     this.refreshTeamsPromise = this.withPendingOperation(
-      { targetType: 'container', container: 'team-notes' },
+      { targetType: 'teams' },
       async () => {
         const teams = await recordUsage(this.api.getTeams({ unwrapData: false }));
         this.withEntityEventBatch(() => {
@@ -651,7 +726,7 @@ export class HackmdModel {
     }
 
     this.refreshHistoryPromise = this.withPendingOperation(
-      { targetType: 'container', container: 'recent-notes' },
+      { targetType: 'recent-notes' },
       async () => {
         const notes = await recordUsage(this.api.getHistory({ unwrapData: false }));
         const next: ModelNote[] = [];
@@ -676,7 +751,17 @@ export class HackmdModel {
     }
   }
 
-  async createNote(input: CreateNoteInput): Promise<ModelNote> {
+  async createNote(container: ModelMyNotes | ModelTeam | ModelFolder, props?: CreateNoteProps): Promise<ModelNote> {
+    const teamPath = container.type === 'folder'
+      ? container.teamPath
+      : container.type === 'team'
+        ? container.path
+        : null;
+    const parentFolderId = container.type === 'folder' ? container.id : null;
+    return this.createNoteRaw({ teamPath, parentFolderId, ...props });
+  }
+
+  private async createNoteRaw(input: CreateNoteInput): Promise<ModelNote> {
     const payload: Record<string, any> = {};
     if (input.title) {
       payload.title = input.title;
@@ -716,11 +801,11 @@ export class HackmdModel {
 
       if (entity.parentFolderId !== effectiveParentFolderId) {
         entity.parentFolderId = effectiveParentFolderId;
-        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
+        this.emitEntityChanged(entity);
       }
 
       if (this.reconcileNotePlacement(teamPath, entity)) {
-        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
+        this.emitEntityChanged(entity);
       }
       return entity;
     };
@@ -733,10 +818,20 @@ export class HackmdModel {
       return this.withPendingOperation({ targetType: 'team', teamPath }, create);
     }
 
-    return this.withPendingOperation({ targetType: 'container', container: 'my-notes' }, create);
+    return this.withPendingOperation({ targetType: 'my-notes' }, create);
   }
 
-  async createFolder(input: CreateFolderInput): Promise<ModelFolder> {
+  async createFolder(container: ModelMyNotes | ModelTeam | ModelFolder, props: CreateFolderProps): Promise<ModelFolder> {
+    const teamPath = container.type === 'folder'
+      ? container.teamPath
+      : container.type === 'team'
+        ? container.path
+        : null;
+    const parentFolderId = container.type === 'folder' ? container.id : null;
+    return this.createFolderRaw({ teamPath, parentFolderId, name: props.name });
+  }
+
+  private async createFolderRaw(input: CreateFolderInput): Promise<ModelFolder> {
     const payload: Record<string, any> = {
       name: input.name,
     };
@@ -764,11 +859,11 @@ export class HackmdModel {
 
       if (entity.parentId !== effectiveParentFolderId) {
         entity.parentId = effectiveParentFolderId;
-        this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
+        this.emitEntityChanged(entity);
       }
 
       if (this.reconcileFolderPlacement(teamPath, entity)) {
-        this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
+        this.emitEntityChanged(entity);
       }
       return entity;
     };
@@ -781,7 +876,7 @@ export class HackmdModel {
       return this.withPendingOperation({ targetType: 'team', teamPath }, create);
     }
 
-    return this.withPendingOperation({ targetType: 'container', container: 'my-notes' }, create);
+    return this.withPendingOperation({ targetType: 'my-notes' }, create);
   }
 
   async loadNoteContent(noteId: string, teamPath?: string | null): Promise<ModelNote> {
@@ -819,7 +914,7 @@ export class HackmdModel {
         const requestedParentFolderId = input.parentFolderId;
         if (requestedParentFolderId !== undefined && entity.parentFolderId !== requestedParentFolderId) {
           entity.parentFolderId = requestedParentFolderId;
-          this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope, id: entity.id });
+          this.emitEntityChanged(entity);
         }
       }
       this.applyPredictedNotePlacement(scope, entity);
@@ -848,7 +943,7 @@ export class HackmdModel {
         const requestedParentFolderId = input.parentFolderId;
         if (requestedParentFolderId !== undefined && entity.parentId !== requestedParentFolderId) {
           entity.parentId = requestedParentFolderId;
-          this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope, id: entity.id });
+          this.emitEntityChanged(entity);
         }
       }
       this.applyPredictedFolderPlacement(scope, entity);
@@ -875,7 +970,7 @@ export class HackmdModel {
       }
 
       const loaded = await this.loadNoteContent(input.noteId, sourceScope);
-      const created = await this.createNote({
+      const created = await this.createNoteRaw({
         teamPath: targetScope,
         title: loaded.title,
         content: loaded.content || '',
@@ -927,13 +1022,13 @@ export class HackmdModel {
 
   private applyPredictedNotePlacement(scope: ModelScope, note: ModelNote): void {
     if (this.reconcileNotePlacement(scope, note)) {
-      this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope, id: note.id });
+      this.emitEntityChanged(note);
     }
   }
 
   private applyPredictedFolderPlacement(scope: ModelScope, folder: ModelFolder): void {
     if (this.reconcileFolderPlacement(scope, folder)) {
-      this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope, id: folder.id });
+      this.emitEntityChanged(folder);
     }
   }
 
@@ -969,7 +1064,7 @@ export class HackmdModel {
       replaceArrayContents(this.historyNotes, nextHistory);
     }
 
-    this.emitEntityChanged({ entityType: 'note', changeType: 'delete', scope, id: noteId });
+    this.emitEntityChanged(existing);
   }
 
   private applyPredictedFolderDelete(scope: ModelScope, folderId: string): void {
@@ -996,7 +1091,7 @@ export class HackmdModel {
     for (const note of folder.notes) {
       if ((note.parentFolderId || null) !== promotedParentId) {
         note.parentFolderId = promotedParentId;
-        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope, id: note.id });
+        this.emitEntityChanged(note);
       }
       this.applyPredictedNotePlacement(scope, note);
     }
@@ -1020,7 +1115,7 @@ export class HackmdModel {
       }
     }
 
-    this.emitEntityChanged({ entityType: 'folder', changeType: 'delete', scope, id: folderId });
+    this.emitEntityChanged(folder);
   }
 
   private hydrateUpdatedNotePayload(scope: ModelScope, noteId: string, updated: Partial<Note> | null | undefined): Note {
@@ -1065,12 +1160,11 @@ export class HackmdModel {
           id: team.id,
           path: team.path,
           name: team.name,
-          pendingOperation: this.isPendingByKey(this.pendingKeyForTeam(team.path)),
           rootFolders: [],
           rootNotes: [],
         };
         this.teams.set(team.id, modelTeam);
-        this.emitEntityChanged({ entityType: 'team', changeType: 'upsert', scope: modelTeam.path, id: modelTeam.id });
+        this.emitEntityChanged(modelTeam);
         changed = true;
       } else {
         const oldPath = modelTeam.path;
@@ -1081,7 +1175,7 @@ export class HackmdModel {
           this.teamsByPath.delete(oldPath);
         }
         if (teamMetaChanged) {
-          this.emitEntityChanged({ entityType: 'team', changeType: 'upsert', scope: modelTeam.path, id: modelTeam.id });
+          this.emitEntityChanged(modelTeam);
           changed = true;
         }
       }
@@ -1094,7 +1188,7 @@ export class HackmdModel {
       if (existing) {
         this.teams.delete(teamId);
         this.teamsByPath.delete(existing.path);
-        this.emitEntityChanged({ entityType: 'team', changeType: 'delete', scope: existing.path, id: existing.id });
+        this.emitEntityChanged(existing);
         changed = true;
       }
     }
@@ -1155,8 +1249,11 @@ export class HackmdModel {
 
     for (const folderId of [...folderMap.keys()]) {
       if (!desiredFolderIds.has(folderId)) {
+        const removed = folderMap.get(folderId);
         folderMap.delete(folderId);
-        this.emitEntityChanged({ entityType: 'folder', changeType: 'delete', scope: teamPath, id: folderId });
+        if (removed) {
+          this.emitEntityChanged(removed);
+        }
         changed = true;
       }
     }
@@ -1192,7 +1289,7 @@ export class HackmdModel {
       const nextParentFolderId = parentFolder?.id || resolveParentFolderId(note);
       if (note.parentFolderId !== nextParentFolderId) {
         note.parentFolderId = nextParentFolderId;
-        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: note.id });
+        this.emitEntityChanged(note);
         changed = true;
       }
 
@@ -1207,9 +1304,12 @@ export class HackmdModel {
 
     for (const noteId of [...noteMap.keys()]) {
       if (!desiredNoteIds.has(noteId)) {
+        const removed = noteMap.get(noteId);
         noteMap.delete(noteId);
         this.getContentLoadedSet(teamPath).delete(noteId);
-        this.emitEntityChanged({ entityType: 'note', changeType: 'delete', scope: teamPath, id: noteId });
+        if (removed) {
+          this.emitEntityChanged(removed);
+        }
         changed = true;
       }
     }
@@ -1259,7 +1359,6 @@ export class HackmdModel {
         type: 'folder',
         id: folder.id,
         name: folder.name !== undefined ? folder.name : 'Folder',
-        pendingOperation: this.isPendingByKey(this.pendingKeyForFolder(teamPath, folder.id)),
         path: folder.path,
         clientId: folder.clientId !== undefined ? folder.clientId : '',
         parentId: resolveParentFolderId(folder),
@@ -1268,7 +1367,7 @@ export class HackmdModel {
         notes: [],
       };
       map.set(entity.id, entity);
-      this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
+      this.emitEntityChanged(entity);
     } else {
       let changed = false;
 
@@ -1304,7 +1403,7 @@ export class HackmdModel {
       }
 
       if (changed) {
-        this.emitEntityChanged({ entityType: 'folder', changeType: 'upsert', scope: teamPath, id: entity.id });
+        this.emitEntityChanged(entity);
       }
     }
 
@@ -1369,7 +1468,6 @@ export class HackmdModel {
         type: 'note',
         id: note.id,
         title: note.title,
-        pendingOperation: this.isPendingByKey(this.pendingKeyForNote(teamPath, note.id)),
         shortId: note.shortId,
         teamPath,
         content: markContentLoaded ? note.content : undefined,
@@ -1387,7 +1485,7 @@ export class HackmdModel {
         lastChangedAt: note.lastChangedAt,
       };
       map.set(entity.id, entity);
-      this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
+      this.emitEntityChanged(entity);
     } else {
       let changed = false;
 
@@ -1467,7 +1565,7 @@ export class HackmdModel {
       }
 
       if (changed) {
-        this.emitEntityChanged({ entityType: 'note', changeType: 'upsert', scope: teamPath, id: entity.id });
+        this.emitEntityChanged(entity);
       }
     }
 
@@ -1523,8 +1621,10 @@ export class HackmdModel {
     return changed;
   }
 
-  private emitEntityChanged(event: ModelEntityChangedEvent): void {
+  private emitEntityChanged(entity: ModelEntity): void {
     this.entityChangeVersion += 1;
+
+    const event: ModelEntityChangedEvent = { entity };
     if (this.entityEventBatchDepth > 0) {
       this.batchedEntityEvents.push(event);
       return;
@@ -1532,159 +1632,47 @@ export class HackmdModel {
     this.didChangeEntity.emit(event);
   }
 
-  private pendingKeyForContainer(container: ModelPendingContainer): string {
-    return `container::${container}`;
-  }
-
-  private pendingKeyForTeam(teamPath: string): string {
-    return `team::${teamPath}`;
-  }
-
-  private pendingKeyForFolder(scope: ModelScope, folderId: string): string {
-    return `folder::${scopeKey(scope)}::${folderId}`;
-  }
-
-  private pendingKeyForNote(scope: ModelScope, noteId: string): string {
-    return `note::${scopeKey(scope)}::${noteId}`;
-  }
-
-  private isPendingByKey(key: string): boolean {
-    return (this.pendingCounts.get(key) || 0) > 0;
-  }
-
-  private setPendingForContainer(container: ModelPendingContainer, pending: boolean): void {
-    if (container === 'my-notes') {
-      if (this.myNotesPendingOperation === pending) {
-        return;
-      }
-      this.myNotesPendingOperation = pending;
-      this.didChangePending.emit({
-        targetType: 'container',
-        container,
-        pending,
-        scope: null,
-        id: null,
-      });
-      return;
-    }
-
-    if (container === 'recent-notes') {
-      if (this.recentNotesPendingOperation === pending) {
-        return;
-      }
-      this.recentNotesPendingOperation = pending;
-      this.didChangePending.emit({
-        targetType: 'container',
-        container,
-        pending,
-        scope: null,
-        id: null,
-      });
-      return;
-    }
-
-    if (this.teamNotesPendingOperation === pending) {
-      return;
-    }
-    this.teamNotesPendingOperation = pending;
-    this.didChangePending.emit({
-      targetType: 'container',
-      container,
-      pending,
-      scope: null,
-      id: null,
-    });
-  }
-
-  private setPendingForTeam(teamPath: string, pending: boolean): void {
-    const team = this.teamsByPath.get(teamPath);
-    if (team && team.pendingOperation !== pending) {
-      team.pendingOperation = pending;
-    }
-
-    this.didChangePending.emit({
-      targetType: 'team',
-      pending,
-      scope: teamPath,
-      id: team ? team.id : teamPath,
-    });
-  }
-
-  private setPendingForFolder(scope: ModelScope, folderId: string, pending: boolean): void {
-    const folder = this.getFolderById(folderId, scope);
-    if (folder && folder.pendingOperation !== pending) {
-      folder.pendingOperation = pending;
-    }
-
-    this.didChangePending.emit({
-      targetType: 'folder',
-      pending,
-      scope,
-      id: folderId,
-    });
-  }
-
-  private setPendingForNote(scope: ModelScope, noteId: string, pending: boolean): void {
-    const note = this.getNoteById(noteId, scope);
-    if (note && note.pendingOperation !== pending) {
-      note.pendingOperation = pending;
-    }
-
-    this.didChangePending.emit({
-      targetType: 'note',
-      pending,
-      scope,
-      id: noteId,
-    });
-  }
-
   private async withPendingOperation<T>(
     target:
-      | { targetType: 'container'; container: ModelPendingContainer }
+      | { targetType: 'my-notes' }
+      | { targetType: 'teams' }
+      | { targetType: 'recent-notes' }
       | { targetType: 'team'; teamPath: string }
       | { targetType: 'folder'; scope: ModelScope; id: string }
       | { targetType: 'note'; scope: ModelScope; id: string },
     action: () => Promise<T>
   ): Promise<T> {
-    const key = target.targetType === 'container'
-      ? this.pendingKeyForContainer(target.container)
-      : target.targetType === 'team'
-        ? this.pendingKeyForTeam(target.teamPath)
-        : target.targetType === 'folder'
-          ? this.pendingKeyForFolder(target.scope, target.id)
-          : this.pendingKeyForNote(target.scope, target.id);
+    const entity: ModelEntity | undefined = target.targetType === 'my-notes'
+      ? this.myNotesEntity
+      : target.targetType === 'teams'
+        ? this.teamsEntity
+        : target.targetType === 'recent-notes'
+          ? this.recentNotesEntity
+          : target.targetType === 'team'
+            ? this.teamsByPath.get(target.teamPath)
+            : target.targetType === 'folder'
+              ? this.getFolderById(target.id, target.scope)
+              : this.getNoteById(target.id, target.scope);
 
-    const prev = this.pendingCounts.get(key) || 0;
-    this.pendingCounts.set(key, prev + 1);
-    if (prev === 0) {
-      if (target.targetType === 'container') {
-        this.setPendingForContainer(target.container, true);
-      } else if (target.targetType === 'team') {
-        this.setPendingForTeam(target.teamPath, true);
-      } else if (target.targetType === 'folder') {
-        this.setPendingForFolder(target.scope, target.id, true);
-      } else {
-        this.setPendingForNote(target.scope, target.id, true);
+    const prev = entity ? (this.pendingCounts.get(entity) || 0) : 0;
+    if (entity) {
+      this.pendingCounts.set(entity, prev + 1);
+      if (prev === 0) {
+        this.didChangePending.emit({ entity, pending: true });
       }
     }
 
     try {
       return await action();
     } finally {
-      const next = (this.pendingCounts.get(key) || 1) - 1;
-      if (next <= 0) {
-        this.pendingCounts.delete(key);
-        if (target.targetType === 'container') {
-          this.setPendingForContainer(target.container, false);
-        } else if (target.targetType === 'team') {
-          this.setPendingForTeam(target.teamPath, false);
-        } else if (target.targetType === 'folder') {
-          this.setPendingForFolder(target.scope, target.id, false);
+      if (entity) {
+        const next = (this.pendingCounts.get(entity) || 1) - 1;
+        if (next <= 0) {
+          this.pendingCounts.delete(entity);
+          this.didChangePending.emit({ entity, pending: false });
         } else {
-          this.setPendingForNote(target.scope, target.id, false);
+          this.pendingCounts.set(entity, next);
         }
-      } else {
-        this.pendingCounts.set(key, next);
       }
     }
   }
@@ -1692,12 +1680,12 @@ export class HackmdModel {
   private async withScopePending<T>(scope: ModelScope, action: () => Promise<T>): Promise<T> {
     if (scope) {
       return this.withPendingOperation(
-        { targetType: 'container', container: 'team-notes' },
+        { targetType: 'teams' },
         async () => this.withPendingOperation({ targetType: 'team', teamPath: scope }, action)
       );
     }
 
-    return this.withPendingOperation({ targetType: 'container', container: 'my-notes' }, action);
+    return this.withPendingOperation({ targetType: 'my-notes' }, action);
   }
 
   private withEntityEventBatch<T>(fn: () => T): T {

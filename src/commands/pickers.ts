@@ -90,9 +90,9 @@ export async function pickScope(
   model: ReturnType<typeof getHackmdModel>,
   placeHolder: string
 ): Promise<ModelScope | undefined> {
-  const personalLoaded = model.getScopeSnapshotSync(null) !== null;
+  const personalLoaded = model.getScopeSnapshotSync(model.getMyNotesEntity()) !== null;
   const teamItems: ScopeQuickPickItem[] = model.getTeams().map((team) => {
-    const loaded = model.getScopeSnapshotSync(team.path) !== null;
+    const loaded = model.getScopeSnapshotSync(team) !== null;
     return {
       label: team.name,
       description: team.path,
@@ -142,7 +142,8 @@ export async function pickFolder(
   options: EntityPickerOptions = {}
 ): Promise<{ folderId: string | null; teamPath: ModelScope } | undefined> {
   const allowCustom = options.allowCustom ?? true;
-  const snapshot = model.getScopeSnapshotSync(teamPath);
+  const scopeEntity = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
   const folders = snapshot ? collectFolders(snapshot.rootFolders) : [];
 
   const scopeNotLoaded = snapshot === null;
@@ -231,7 +232,8 @@ export async function pickNote(
     }
   }
 
-  const snapshot = model.getScopeSnapshotSync(scope);
+  const scopeEntity = scope ? model.getTeamByPath(scope) : model.getMyNotesEntity();
+  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
   const notes = snapshot ? collectNotes(snapshot.rootFolders, snapshot.rootNotes) : [];
 
   const scopeNotLoaded = snapshot === null;
@@ -304,7 +306,8 @@ export async function pickEntity(
     return undefined;
   }
 
-  const snapshot = model.getScopeSnapshotSync(scope);
+  const scopeEntity = scope ? model.getTeamByPath(scope) : model.getMyNotesEntity();
+  const snapshot = scopeEntity ? model.getScopeSnapshotSync(scopeEntity) : null;
   if (!snapshot) {
     vscode.window.showWarningMessage(`Scope data is not loaded. ${REFRESH_HINT}`);
     return undefined;

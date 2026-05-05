@@ -56,7 +56,7 @@ function makeNote(overrides = {}) {
 class MockModel {
   constructor() {
     this.calls = {};
-    this.updateNotePropertiesResult = null; // null = resolve, Error instance = reject
+    this.updateNoteResult = null; // null = resolve, Error instance = reject
   }
 
   _record(method, args) {
@@ -64,10 +64,10 @@ class MockModel {
     this.calls[method].push(args);
   }
 
-  async updateNoteProperties(noteId, input, teamPath) {
-    this._record('updateNoteProperties', [noteId, input, teamPath]);
-    if (this.updateNotePropertiesResult instanceof Error) {
-      throw this.updateNotePropertiesResult;
+  async updateNote(note, input) {
+    this._record('updateNote', [note, input]);
+    if (this.updateNoteResult instanceof Error) {
+      throw this.updateNoteResult;
     }
   }
 }
@@ -160,7 +160,7 @@ test('openNote: different note + pending changes → Save → returns true', asy
   const result = await provider.openNote(note2);
 
   assert.equal(result, true);
-  assert.equal(callCount(model, 'updateNoteProperties'), 1);
+  assert.equal(callCount(model, 'updateNote'), 1);
   // After save+reset the new note should be current
   assert.equal(provider.hasPendingChanges(), false);
 });
@@ -180,7 +180,7 @@ test('openNote: different note + pending changes → Discard → returns true wi
   const result = await provider.openNote(note2);
 
   assert.equal(result, true);
-  assert.equal(callCount(model, 'updateNoteProperties'), 0);
+  assert.equal(callCount(model, 'updateNote'), 0);
   assert.equal(provider.hasPendingChanges(), false);
 });
 
@@ -207,7 +207,7 @@ test('openNote: Save fails (model error) → returns false', async () => {
   const model = new MockModel();
   const apiErr = new Error('Server error');
   apiErr.response = { status: 500 };
-  model.updateNotePropertiesResult = apiErr;
+  model.updateNoteResult = apiErr;
   stub.setModel(model);
 
   stub.window.showWarningMessage = async () => 'Save';
@@ -323,7 +323,7 @@ test('cancelEditing: pending changes → Save → saves and returns true', async
   const result = await provider.cancelEditing();
 
   assert.equal(result, true);
-  assert.equal(callCount(model, 'updateNoteProperties'), 1);
+  assert.equal(callCount(model, 'updateNote'), 1);
 });
 
 test('cancelEditing: pending changes → Discard → resets without saving', async () => {
@@ -340,7 +340,7 @@ test('cancelEditing: pending changes → Discard → resets without saving', asy
   const result = await provider.cancelEditing();
 
   assert.equal(result, true);
-  assert.equal(callCount(model, 'updateNoteProperties'), 0);
+  assert.equal(callCount(model, 'updateNote'), 0);
 });
 
 test('cancelEditing: pending changes → Cancel → returns false', async () => {
@@ -442,10 +442,10 @@ test('saveCurrentProperties: success — calls model with correct input and rese
   const result = await provider.saveCurrentProperties();
 
   assert.equal(result, true);
-  assert.equal(callCount(model, 'updateNoteProperties'), 1);
-  const [calledNoteId, calledInput, calledTeamPath] = lastCall(model, 'updateNoteProperties');
-  assert.equal(calledNoteId, 'n1');
-  assert.equal(calledTeamPath, null);
+  assert.equal(callCount(model, 'updateNote'), 1);
+  const [calledNote, calledInput] = lastCall(model, 'updateNote');
+  assert.equal(calledNote.id, 'n1');
+  assert.equal(calledNote.teamPath, null);
   assert.ok('readPermission' in calledInput);
   assert.ok('writePermission' in calledInput);
   assert.ok(!('permalink' in calledInput), 'permalink should not be in input when not pending');
@@ -471,7 +471,7 @@ test('saveCurrentProperties: includes permalink in input when it is pending', as
   const result = await provider.saveCurrentProperties();
 
   assert.equal(result, true);
-  const [, calledInput] = lastCall(model, 'updateNoteProperties');
+  const [, calledInput] = lastCall(model, 'updateNote');
   assert.ok('permalink' in calledInput, 'permalink should be in input when it is pending');
   assert.equal(calledInput.permalink, 'valid-link');
 });
@@ -485,7 +485,7 @@ test('saveCurrentProperties: error 403 shows permission error', async () => {
   const model = new MockModel();
   const err = new Error('Forbidden');
   err.response = { status: 403 };
-  model.updateNotePropertiesResult = err;
+  model.updateNoteResult = err;
   stub.setModel(model);
 
   let shownError;
@@ -506,7 +506,7 @@ test('saveCurrentProperties: error 409 shows permalink conflict error', async ()
   const model = new MockModel();
   const err = new Error('Conflict');
   err.response = { status: 409 };
-  model.updateNotePropertiesResult = err;
+  model.updateNoteResult = err;
   stub.setModel(model);
 
   let shownError;
@@ -527,7 +527,7 @@ test('saveCurrentProperties: error 400 shows invalid permalink error', async () 
   const model = new MockModel();
   const err = new Error('Bad Request');
   err.response = { status: 400 };
-  model.updateNotePropertiesResult = err;
+  model.updateNoteResult = err;
   stub.setModel(model);
 
   let shownError;
@@ -547,7 +547,7 @@ test('saveCurrentProperties: generic error shows message with error text', async
 
   const model = new MockModel();
   const err = new Error('Network timeout');
-  model.updateNotePropertiesResult = err;
+  model.updateNoteResult = err;
   stub.setModel(model);
 
   let shownError;
@@ -568,8 +568,8 @@ test('saveCurrentProperties: _isSaving guard prevents concurrent saves', async (
   const model = new MockModel();
   // Slow save — we'll interleave a second call
   let resolveSave;
-  model.updateNoteProperties = async (...args) => {
-    model._record('updateNoteProperties', args);
+  model.updateNote = async (...args) => {
+    model._record('updateNote', args);
     await new Promise((res) => { resolveSave = res; });
   };
   stub.setModel(model);
@@ -582,7 +582,7 @@ test('saveCurrentProperties: _isSaving guard prevents concurrent saves', async (
   await first;
   const secondResult = await second;
 
-  assert.equal(callCount(model, 'updateNoteProperties'), 1, 'model should be called only once');
+  assert.equal(callCount(model, 'updateNote'), 1, 'model should be called only once');
   assert.equal(secondResult, false);
 });
 

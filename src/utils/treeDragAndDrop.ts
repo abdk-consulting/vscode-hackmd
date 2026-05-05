@@ -19,7 +19,8 @@ function isSameNoteScope(left: Note, right: Note): boolean {
 
 async function closeTabsForNote(note: Note): Promise<boolean> {
   const model = getModel();
-  const cached = model?.getNoteById(note.id, note.teamPath ?? null);
+  const noteScope = note.teamPath ? model?.getTeamByPath(note.teamPath) : model?.getMyNotesEntity();
+  const cached = noteScope ? model!.getNoteSync(noteScope, note.id) : null;
   const target = cached || (note as any);
   const tabsToClose: vscode.Tab[] = [];
 
@@ -294,7 +295,8 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
       const uriList = folders
         .map((folder) => {
-          const cachedFolder = model.getFolderById(folder.id, folder.teamPath) || {
+          const folderScope = folder.teamPath ? model.getTeamByPath(folder.teamPath) : model.getMyNotesEntity();
+          const cachedFolder = (folderScope ? model.getFolderSync(folderScope, folder.id) : null) || {
             type: 'folder',
             id: folder.id,
             name: folder.name || 'Folder',
@@ -302,7 +304,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
             children: [],
             notes: [],
           };
-          return model.toFolderUri(cachedFolder as any).toString();
+          return model.toUri(cachedFolder as any).toString();
         })
         .join('\r\n');
 
@@ -317,7 +319,8 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
 
     const uriList = notes
       .map((note) => {
-        const cachedNote = model.getNoteById(note.id, note.teamPath) || {
+        const noteScope = note.teamPath ? model.getTeamByPath(note.teamPath) : model.getMyNotesEntity();
+        const cachedNote = (noteScope ? model.getNoteSync(noteScope, note.id) : null) || {
           type: 'note',
           id: note.id,
           title: note.title || note.shortId || 'Untitled',
@@ -325,7 +328,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
           teamPath: note.teamPath ?? null,
           folderPaths: (note as any).folderPaths || [],
         };
-        return model.toNoteUri(cachedNote as any).toString();
+        return model.toUri(cachedNote as any).toString();
       })
       .join('\r\n');
 

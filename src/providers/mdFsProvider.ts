@@ -88,7 +88,8 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     }
 
     const model = getModel();
-    const existing = await model.getNote(oldNoteId, oldTeamPath);
+    const scope = oldTeamPath ? model.getTeamByPath(oldTeamPath) : model.getMyNotesEntity();
+    const existing = scope ? await model.getNote(scope, oldNoteId) : null;
     if (!existing) {
       throw vscode.FileSystemError.FileNotFound();
     }
@@ -113,7 +114,12 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const model = getModel();
-      const content = await model.getNoteContent(noteId, teamPath);
+      const scope = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+      const note = scope ? await model.getNote(scope, noteId) : null;
+      if (!note) {
+        throw vscode.FileSystemError.FileNotFound();
+      }
+      const content = await model.getNoteContent(note);
 
       return Buffer.from(content || '');
     } catch (e) {
@@ -141,8 +147,15 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
     try {
       const contentString = Buffer.from(content).toString();
       const model = getModel();
-
-      await model.saveNoteContent(noteId, contentString, teamPath);
+      const scopeEntity = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+      if (!scopeEntity) {
+        throw vscode.FileSystemError.FileNotFound();
+      }
+      const note = model.getNoteSync(scopeEntity, noteId);
+      if (!note) {
+        throw vscode.FileSystemError.FileNotFound();
+      }
+      await model.updateNote(note, { content: contentString });
     } catch (e) {
       console.error('Error saving note:', e);
 
@@ -164,7 +177,8 @@ export class HackMDFsProvider implements vscode.FileSystemProvider {
 
     try {
       const model = getModel();
-      const note = await model.getNote(noteId, teamPath);
+      const scope = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+      const note = scope ? await model.getNote(scope, noteId) : null;
       if (!note) {
         throw vscode.FileSystemError.FileNotFound();
       }

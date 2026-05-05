@@ -13,12 +13,11 @@ class MockModel {
     this.noteByKey = new Map();
     this.entityByUri = new Map();
     this.calls = {
-      toNoteUri: [],
-      toFolderUri: [],
+      toUri: [],
       getEntityByUri: [],
       getEntityByUriSync: [],
-      getNoteById: [],
-      getFolderById: [],
+      getNoteSync: [],
+      getFolderSync: [],
     };
   }
 
@@ -38,24 +37,32 @@ class MockModel {
     this.entityByUri.set(uriText, entity);
   }
 
-  getNoteById(id, teamPath) {
-    this.calls.getNoteById.push([id, teamPath ?? null]);
-    return this.noteByKey.get(this.key(id, teamPath ?? null));
+  getMyNotesEntity() {
+    return { type: 'my-notes' };
   }
 
-  getFolderById(id, teamPath) {
-    this.calls.getFolderById.push([id, teamPath ?? null]);
-    return this.folderByKey.get(this.key(id, teamPath ?? null));
+  getTeamByPath(teamPath) {
+    return { type: 'team', path: teamPath };
   }
 
-  toNoteUri(note) {
-    this.calls.toNoteUri.push([note]);
-    return stub.makeUri('hackmd', `/notes/${note.id}`, `noteId=${note.id}${note.teamPath ? `&teamPath=${note.teamPath}` : ''}`);
+  getNoteSync(scope, id) {
+    const teamPath = scope.type === 'team' ? scope.path : null;
+    this.calls.getNoteSync.push([id, teamPath]);
+    return this.noteByKey.get(this.key(id, teamPath)) || null;
   }
 
-  toFolderUri(folder) {
-    this.calls.toFolderUri.push([folder]);
-    return stub.makeUri('hackmd', `/folders/${folder.id}`, `folderId=${folder.id}${folder.teamPath ? `&teamPath=${folder.teamPath}` : ''}`);
+  getFolderSync(scope, id) {
+    const teamPath = scope.type === 'team' ? scope.path : null;
+    this.calls.getFolderSync.push([id, teamPath]);
+    return this.folderByKey.get(this.key(id, teamPath)) || null;
+  }
+
+  toUri(entity) {
+    this.calls.toUri.push([entity]);
+    if (entity.type === 'note') {
+      return stub.makeUri('hackmd', `/notes/${entity.id}`, `noteId=${entity.id}${entity.teamPath ? `&teamPath=${entity.teamPath}` : ''}`);
+    }
+    return stub.makeUri('hackmd', `/folders/${entity.id}`, `folderId=${entity.id}${entity.teamPath ? `&teamPath=${entity.teamPath}` : ''}`);
   }
 
   async getEntityByUri(uri) {
@@ -98,7 +105,7 @@ test('handleDrag serializes notes with model note URIs', async () => {
 
   const raw = await dataTransfer.get('text/uri-list').asString();
   assert.match(raw, /hackmd:\/notes\/n1\?noteId=n1/);
-  assert.equal(model.calls.toNoteUri.length, 1);
+  assert.equal(model.calls.toUri.length, 1);
 });
 
 test('handleDrag ignores folders from mixed scopes', async () => {
@@ -114,7 +121,7 @@ test('handleDrag ignores folders from mixed scopes', async () => {
   ], dataTransfer);
 
   assert.equal(dataTransfer.get('text/uri-list'), undefined);
-  assert.equal(model.calls.toFolderUri.length, 0);
+  assert.equal(model.calls.toUri.length, 0);
 });
 
 test('handleDrop moves notes into a folder target via unified move command', async () => {

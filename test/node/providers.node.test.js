@@ -37,9 +37,7 @@ function createMockModel(overrides = {}) {
     notesByScopeAndId: new Map(),
     foldersByScopeAndId: new Map(),
     calls: {
-      refreshScope: 0,
-      refreshTeams: 0,
-      refreshHistory: 0,
+      refresh: 0,
     },
     pendingByTarget: new Map(),
   };
@@ -66,7 +64,6 @@ function createMockModel(overrides = {}) {
     if (!snapshot) {
       return snapshot;
     }
-    snapshot.scope = scope ?? null;
     snapshot.rootFolders = snapshot.rootFolders || [];
     snapshot.rootNotes = snapshot.rootNotes || [];
     for (const folder of snapshot.rootFolders) {
@@ -185,14 +182,8 @@ function createMockModel(overrides = {}) {
     onDidChangeEntity: (listener) => entityBus.on(listener),
     onDidChangePending: (listener) => pendingBus.on(listener),
 
-    refreshScope: async (_args) => {
-      state.calls.refreshScope += 1;
-    },
-    refreshTeams: async () => {
-      state.calls.refreshTeams += 1;
-    },
-    refreshHistory: async () => {
-      state.calls.refreshHistory += 1;
+    refresh: async (_entity) => {
+      state.calls.refresh += 1;
     },
 
     getScopeSnapshotSync: (scope) => {
@@ -200,6 +191,8 @@ function createMockModel(overrides = {}) {
       return normalizeSnapshot(scopeKey ?? null, state.snapshots.get(scopeKey ?? null) || null);
     },
     getMyNotesEntity: () => ({ type: 'my-notes' }),
+    getTeamsEntity: () => ({ type: 'teams' }),
+    getRecentNotesEntity: () => ({ type: 'recent-notes' }),
     getTeams: () => state.teams.map((team) => ({ type: 'team', ...team })),
     getTeamByPath: (teamPath) => {
       const team = state.teamByPath.get(teamPath);
@@ -217,17 +210,21 @@ function createMockModel(overrides = {}) {
       const note = state.notesByScopeAndId.get(key(scope ?? null, noteId));
       return note ? { type: 'note', ...note } : note;
     },
-    getFolderById: (folderId, scope) => {
-      const folder = state.foldersByScopeAndId.get(key(scope ?? null, folderId));
+    getFolderSync: (scope, folderId) => {
+      const teamPath = scope?.type === 'team' ? scope.path : null;
+      const folder = state.foldersByScopeAndId.get(key(teamPath, folderId));
       return folder ? { type: 'folder', ...folder } : folder;
     },
     getHistoryNotes: () => state.historyNotes.map((note) => ({ type: 'note', ...note })),
-    isMyNotesPendingOperation: () => !!state.myNotesPendingOperation,
-    isTeamNotesPendingOperation: () => !!state.teamNotesPendingOperation,
-    isRecentNotesPendingOperation: () => !!state.recentNotesPendingOperation,
-    isTeamPendingOperation: (teamPath) => (state.pendingByTarget.get(`team:${teamPath}`) || 0) > 0,
-    isFolderPendingOperation: (folderId, scope) => (state.pendingByTarget.get(`folder:${scope ?? '__personal__'}:${folderId}`) || 0) > 0,
-    isNotePendingOperation: (noteId, scope) => (state.pendingByTarget.get(`note:${scope ?? '__personal__'}:${noteId}`) || 0) > 0,
+    isPending: (entity) => {
+      if (entity.type === 'my-notes') return !!state.myNotesPendingOperation;
+      if (entity.type === 'teams') return !!state.teamNotesPendingOperation;
+      if (entity.type === 'recent-notes') return !!state.recentNotesPendingOperation;
+      if (entity.type === 'team') return (state.pendingByTarget.get(`team:${entity.path}`) || 0) > 0;
+      if (entity.type === 'folder') return (state.pendingByTarget.get(`folder:${entity.teamPath ?? '__personal__'}:${entity.id}`) || 0) > 0;
+      if (entity.type === 'note') return (state.pendingByTarget.get(`note:${entity.teamPath ?? '__personal__'}:${entity.id}`) || 0) > 0;
+      return false;
+    },
 
     __emitEntity: (payload) => entityBus.emit(normalizeEntityEventPayload(payload)),
     __emitPending: (payload) => {
@@ -346,7 +343,7 @@ test('MyNotesProvider sorts folders before notes and uses deterministic folder/n
     'note:n1',
     'note:n2',
   ]);
-  assert.equal(model.__state.calls.refreshScope, 1);
+  assert.equal(model.__state.calls.refresh, 1);
 });
 
 test('MyNotesProvider fires parent refresh when note upsert changes sibling sort order', async () => {
@@ -847,8 +844,8 @@ test('HistoryProvider note tree items bind single-click open with preserveFocus'
 test('HistoryProvider emits pending-state changes around refresh lifecycle', async () => {
   let resolveRefresh;
   const model = createMockModel({
-    refreshHistory: async () => {
-      model.__state.calls.refreshHistory += 1;
+    refresh: async (entity) => {
+      model.__state.calls.refresh += 1;
       model.__emitPending({ targetType: 'container', container: 'recent-notes', pending: true });
       await new Promise((resolve) => {
         resolveRefresh = resolve;

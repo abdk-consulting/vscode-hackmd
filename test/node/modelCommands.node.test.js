@@ -187,8 +187,8 @@ class MockHackmdModel {
     return null;
   }
 
-  getNoteSync(noteId, teamPath) {
-    const snap = this.getScopeSnapshotSync(teamPath);
+  getNoteSync(scope, noteId) {
+    const snap = this.getScopeSnapshotSync(scope);
     if (!snap) return undefined;
     const all = [
       ...snap.rootNotes,
@@ -201,12 +201,19 @@ class MockHackmdModel {
     return { type: 'my-notes' };
   }
 
+  getTeamsEntity() {
+    return { type: 'teams' };
+  }
+
+  getRecentNotesEntity() {
+    return { type: 'recent-notes' };
+  }
+
   getTeamByPath(teamPath) {
     return this._teams.find((t) => t.path === teamPath) ?? null;
   }
 
-  getFolderById(folderId, teamPath) {
-    const scope = teamPath ? this.getTeamByPath(teamPath) : this.getMyNotesEntity();
+  getFolderSync(scope, folderId) {
     if (!scope) return undefined;
     const snap = this.getScopeSnapshotSync(scope);
     if (!snap) return undefined;
@@ -219,34 +226,22 @@ class MockHackmdModel {
 
   // --- async operations (all return resolved promises with mock data) ---
 
-  async refreshAll() {
-    this._record('refreshAll', []);
+  async refresh(entity) {
+    this._record('refresh', [entity]);
     return undefined;
   }
-  async refreshTeams() {
-    this._record('refreshTeams', []);
-    return this._teams;
-  }
-  async refreshHistory() {
-    this._record('refreshHistory', []);
-    return [];
-  }
-  async refreshScope({ teamPath }) {
-    this._record('refreshScope', [teamPath]);
-    return undefined;
-  }
-  async getScopeSnapshot(teamPath) {
-    this._record('getScopeSnapshot', [teamPath]);
-    const scope = teamPath ? this.getTeamByPath(teamPath) : this.getMyNotesEntity();
+  async getScopeSnapshot(scope) {
+    this._record('getScopeSnapshot', [scope]);
     return scope ? this.getScopeSnapshotSync(scope) : null;
   }
-  async getNote(noteId, teamPath) {
-    this._record('getNote', [noteId, teamPath]);
+  async getNote(scope, noteId) {
+    const teamPath = scope?.type === 'team' ? scope.path : null;
+    this._record('getNote', [scope, noteId]);
     return { id: noteId, title: 'Mock Note', teamPath };
   }
-  async getNoteContent(noteId, teamPath) {
-    this._record('getNoteContent', [noteId, teamPath]);
-    return { id: noteId, content: '# mock content' };
+  async getNoteContent(note) {
+    this._record('getNoteContent', [note]);
+    return { id: note.id, content: '# mock content' };
   }
   async getEntityByUri(uri) {
     this._record('getEntityByUri', [uri]);
@@ -273,44 +268,32 @@ class MockHackmdModel {
     const parentFolderId = container.type === 'folder' ? container.id : null;
     return { id: 'newf1', name: props.name, teamPath, parentFolderId };
   }
-  async loadNoteContent(noteId, teamPath) {
-    this._record('loadNoteContent', [noteId, teamPath]);
-    return { id: noteId, content: '# loaded' };
-  }
-  async saveNoteContent(noteId, content, teamPath) {
-    this._record('saveNoteContent', [noteId, content, teamPath]);
-    return { id: noteId };
-  }
-  async updateNoteProperties(noteId, update, teamPath) {
-    this._record('updateNoteProperties', [noteId, update, teamPath]);
-    return { id: noteId, ...update };
+  async updateNote(note, update) {
+    this._record('updateNote', [note, update]);
+    return { id: note.id, ...update };
   }
   async renameNote(noteId, newTitle, teamPath) {
     this._record('renameNote', [noteId, newTitle, teamPath]);
     return { id: noteId, title: newTitle };
   }
-  async renameFolder(folderId, newName, teamPath) {
-    this._record('renameFolder', [folderId, newName, teamPath]);
-    return { id: folderId, name: newName };
+  async updateFolder(folder, update) {
+    this._record('updateFolder', [folder, update]);
+    return { id: folder.id, ...update };
   }
-  async updateFolder(folderId, update, teamPath) {
-    this._record('updateFolder', [folderId, update, teamPath]);
-    return { id: folderId, ...update };
+  async moveNote(note, destination) {
+    this._record('moveNote', [note, destination]);
+    return { id: note.id };
   }
-  async moveNote(input) {
-    this._record('moveNote', [input]);
-    return { id: input.noteId };
+  async moveFolder(folder, destination) {
+    this._record('moveFolder', [folder, destination]);
+    return { id: folder.id };
   }
-  async moveFolder(input) {
-    this._record('moveFolder', [input]);
-    return { id: input.folderId };
-  }
-  async deleteNote(noteId, teamPath) {
-    this._record('deleteNote', [noteId, teamPath]);
+  async deleteNote(note) {
+    this._record('deleteNote', [note]);
     return undefined;
   }
-  async deleteFolder(folderId, teamPath) {
-    this._record('deleteFolder', [folderId, teamPath]);
+  async deleteFolder(folder) {
+    this._record('deleteFolder', [folder]);
     return undefined;
   }
 }
@@ -349,19 +332,19 @@ test('refreshPersonalScope — calls model.refreshScope(personal) and returns tr
   const model = setupModel();
   const result = await invoke('hackmd.model.refreshMyNotes');
   assert.equal(result, true);
-  assert.deepEqual(model.calls.refreshScope[0], [null]);
+  assert.equal(model.calls.refresh[0][0].type, 'my-notes');
 });
 
 test('refreshTeams — calls model.refreshTeams()', async () => {
   const model = setupModel();
   await invoke('hackmd.model.refreshTeams');
-  assert.equal(model.calls.refreshTeams.length, 1);
+  assert.equal(model.calls.refresh[0][0].type, 'teams');
 });
 
 test('refreshHistory — calls model.refreshHistory()', async () => {
   const model = setupModel();
   await invoke('hackmd.model.refreshRecentNotes');
-  assert.equal(model.calls.refreshHistory.length, 1);
+  assert.equal(model.calls.refresh[0][0].type, 'recent-notes');
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -371,21 +354,21 @@ test('refreshScope — with explicit null teamPath', async () => {
   const model = setupModel();
   const result = await invoke('hackmd.model.refreshTeam', { teamPath: null });
   assert.equal(result, true);
-  assert.deepEqual(model.calls.refreshScope[0], [null]);
+  assert.equal(model.calls.refresh[0][0].type, 'my-notes');
 });
 
 test('refreshScope — with explicit team path', async () => {
   const model = setupModel();
   const result = await invoke('hackmd.model.refreshTeam', { teamPath: 'acme' });
   assert.equal(result, true);
-  assert.deepEqual(model.calls.refreshScope[0], ['acme']);
+  assert.equal(model.calls.refresh[0][0].path, 'acme');
 });
 
 test('refreshScope — with tree team node argument', async () => {
   const model = setupModel();
   const result = await invoke('hackmd.model.refreshTeam', { type: 'team', team: { path: 'acme' } });
   assert.equal(result, true);
-  assert.deepEqual(model.calls.refreshScope[0], ['acme']);
+  assert.equal(model.calls.refresh[0][0].path, 'acme');
 });
 
 test('refreshScope — no args, picks personal scope via picker', async () => {
@@ -393,7 +376,7 @@ test('refreshScope — no args, picks personal scope via picker', async () => {
   new Interactions().qp('My Notes').install();
   const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, true);
-  assert.deepEqual(model.calls.refreshScope[0], [null]);
+  assert.equal(model.calls.refresh[0][0].type, 'my-notes');
 });
 
 test('refreshScope — picker cancelled returns undefined', async () => {
@@ -807,7 +790,8 @@ test('rename (folder) — with explicit args', async () => {
     .ib('Archives')  // new name
     .install();
   await invoke('hackmd.model.rename', { type: 'folder', id: 'pf1', teamPath: null, name: 'Work' });
-  assert.deepEqual(model.calls.renameFolder[0], ['pf1', 'Archives', null]);
+  assert.equal(model.calls.updateFolder[0][0].id, 'pf1');
+  assert.equal(model.calls.updateFolder[0][1].name, 'Archives');
 });
 
 test('rename (folder) — fully interactive (single picker → name)', async () => {
@@ -817,8 +801,8 @@ test('rename (folder) — fully interactive (single picker → name)', async () 
     .ib('Old Work')
     .install();
   await invoke('hackmd.model.rename');
-  assert.equal(model.calls.renameFolder[0][0], 'pf1');
-  assert.equal(model.calls.renameFolder[0][1], 'Old Work');
+  assert.equal(model.calls.updateFolder[0][0].id, 'pf1');
+  assert.equal(model.calls.updateFolder[0][1].name, 'Old Work');
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -830,10 +814,8 @@ test('move — active item only: asks destination and moves the item', async () 
 
   await invoke('hackmd.model.move', { type: 'note', note: { id: 'pn1', teamPath: null } });
 
-  assert.equal(model.calls.moveNote[0][0].noteId, 'pn1');
-  assert.equal(model.calls.moveNote[0][0].sourceTeamPath, null);
-  assert.equal(model.calls.moveNote[0][0].targetTeamPath, null);
-  assert.equal(model.calls.moveNote[0][0].targetParentFolderId, 'pf3');
+  assert.equal(model.calls.moveNote[0][0].id, 'pn1');
+  assert.equal(model.calls.moveNote[0][1].id, 'pf3');
 });
 
 test('move — selected items take precedence over active item', async () => {
@@ -846,7 +828,7 @@ test('move — selected items take precedence over active item', async () => {
   await invoke('hackmd.model.move', activeItem, selectedItems);
 
   assert.equal(model.calls.moveNote.length, 1);
-  assert.equal(model.calls.moveNote[0][0].noteId, 'pn2');
+  assert.equal(model.calls.moveNote[0][0].id, 'pn2');
 });
 
 test('move — command palette flow picks entity then destination', async () => {
@@ -859,7 +841,7 @@ test('move — command palette flow picks entity then destination', async () => 
 
   await invoke('hackmd.model.move');
 
-  assert.equal(model.calls.moveNote[0][0].noteId, 'pn1');
+  assert.equal(model.calls.moveNote[0][0].id, 'pn1');
 });
 
 test('move — folder candidate removes descendant candidates before moving', async () => {
@@ -873,7 +855,7 @@ test('move — folder candidate removes descendant candidates before moving', as
   await invoke('hackmd.model.move', folder, [folder, descendantFolder, descendantNote]);
 
   assert.equal(model.calls.moveFolder.length, 1);
-  assert.equal(model.calls.moveFolder[0][0].folderId, 'pf1');
+  assert.equal(model.calls.moveFolder[0][0].id, 'pf1');
   assert.equal(model.calls.moveNote ? model.calls.moveNote.length : 0, 0);
 });
 
@@ -886,8 +868,8 @@ test('move — provided target folder skips destination picker', async () => {
     { teamPath: null, folderId: 'pf1' }
   );
 
-  assert.equal(model.calls.moveNote[0][0].noteId, 'pn2');
-  assert.equal(model.calls.moveNote[0][0].targetParentFolderId, 'pf1');
+  assert.equal(model.calls.moveNote[0][0].id, 'pn2');
+  assert.equal(model.calls.moveNote[0][1].id, 'pf1');
 });
 
 test('move — invalid destination for all items shows error', async () => {
@@ -950,7 +932,7 @@ test('delete — confirmation accepted deletes note', async () => {
   new Interactions().wm('Delete').install();
   const result = await invoke('hackmd.model.delete', { type: 'note', note: { id: 'pn1', teamPath: null } });
   assert.equal(result, true);
-  assert.deepEqual(model.calls.deleteNote[0], ['pn1', null]);
+  assert.equal(model.calls.deleteNote[0][0].id, 'pn1');
 });
 
 test('delete — confirmation rejected returns undefined', async () => {
@@ -969,7 +951,7 @@ test('delete — fully interactive, then confirms', async () => {
     .install();
   const result = await invoke('hackmd.model.delete');
   assert.equal(result, true);
-  assert.equal(model.calls.deleteNote[0][0], 'pn1');
+  assert.equal(model.calls.deleteNote[0][0].id, 'pn1');
 });
 
 test('delete — fully interactive, note picker cancelled', async () => {
@@ -987,7 +969,7 @@ test('delete — confirmation accepted deletes folder', async () => {
   new Interactions().wm('Delete').install();
   const result = await invoke('hackmd.model.delete', { type: 'folder', id: 'pf1', teamPath: null });
   assert.equal(result, true);
-  assert.deepEqual(model.calls.deleteFolder[0], ['pf1', null]);
+  assert.equal(model.calls.deleteFolder[0][0].id, 'pf1');
 });
 
 test('delete — folder confirmation rejected returns undefined', async () => {
@@ -1002,15 +984,15 @@ test('delete — multi-item delete starts note and folder deletions in parallel'
   const started = [];
   const resolvers = [];
 
-  model.deleteNote = async (noteId, teamPath) => {
-    started.push(`note:${noteId}:${teamPath ?? 'null'}`);
+  model.deleteNote = async (note) => {
+    started.push(`note:${note.id}:${note.teamPath ?? 'null'}`);
     return new Promise((resolve) => {
       resolvers.push(() => resolve(undefined));
     });
   };
 
-  model.deleteFolder = async (folderId, teamPath) => {
-    started.push(`folder:${folderId}:${teamPath ?? 'null'}`);
+  model.deleteFolder = async (folder) => {
+    started.push(`folder:${folder.id}:${folder.teamPath ?? 'null'}`);
     return new Promise((resolve) => {
       resolvers.push(() => resolve(undefined));
     });
@@ -1041,7 +1023,7 @@ test('pickScope — custom path input used as team path', async () => {
     .install();
   const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, true);
-  assert.equal(model.calls.refreshScope[0][0], 'custom-team');
+  assert.equal(model.calls.refresh[0][0].path, 'custom-team');
 });
 
 test('pickScope — custom path empty string treated as personal (null)', async () => {
@@ -1052,7 +1034,7 @@ test('pickScope — custom path empty string treated as personal (null)', async 
     .install();
   const result = await invoke('hackmd.model.refreshTeam');
   assert.equal(result, true);
-  assert.equal(model.calls.refreshScope[0][0], null);
+  assert.equal(model.calls.refresh[0][0].type, 'my-notes');
 });
 
 test('rename picker excludes custom ID entries', async () => {

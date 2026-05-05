@@ -40,27 +40,44 @@ class MockModel {
     this.contentByKey.set(this._k(noteId, teamPath), content);
   }
 
-  async getNote(noteId, teamPath) {
-    this._record('getNote', [noteId, teamPath]);
+  getMyNotesEntity() {
+    return { type: 'my-notes' };
+  }
+
+  getTeamByPath(teamPath) {
+    return teamPath ? { type: 'team', path: teamPath } : null;
+  }
+
+  async getNote(scope, noteId) {
+    const teamPath = scope?.type === 'team' ? scope.path : null;
+    this._record('getNote', [scope, noteId]);
     return this.noteByKey.get(this._k(noteId, teamPath || null)) || null;
   }
 
-  async getNoteContent(noteId, teamPath) {
-    this._record('getNoteContent', [noteId, teamPath]);
-    const key = this._k(noteId, teamPath || null);
+  async getNoteContent(note) {
+    this._record('getNoteContent', [note]);
+    const key = this._k(note.id, note.teamPath ?? null);
     if (!this.contentByKey.has(key)) {
       throw new Error('not found');
     }
     return this.contentByKey.get(key);
   }
 
-  async saveNoteContent(noteId, content, teamPath) {
-    this._record('saveNoteContent', [noteId, content, teamPath]);
+  getNoteSync(scope, noteId) {
+    const teamPath = scope?.type === 'team' ? scope.path : null;
+    return this.noteByKey.get(this._k(noteId, teamPath)) || null;
+  }
+
+  async updateNote(note, input) {
+    this._record('updateNote', [note, input]);
     if (this.saveShouldThrow) {
       throw this.saveShouldThrow;
     }
-    this.setContent(noteId, teamPath || null, content);
-    return { id: noteId, content, teamPath: teamPath || null };
+    const content = input.content;
+    if (content !== undefined) {
+      this.setContent(note.id, note.teamPath || null, content);
+    }
+    return { ...note, ...input };
   }
 }
 
@@ -184,6 +201,7 @@ test('rename emits Deleted and Created events for same note identity', async () 
 
 test('readFile uses model.getNoteContent with teamPath and returns bytes', async () => {
   const model = new MockModel();
+  model.setNote({ id: 'n1', type: 'note', title: 'Note1' }, 'acme');
   model.setContent('n1', 'acme', '# hello');
   stub.setModel(model);
 
@@ -191,7 +209,8 @@ test('readFile uses model.getNoteContent with teamPath and returns bytes', async
   const bytes = await provider.readFile(uriFor('n1', 'acme'));
 
   assert.equal(Buffer.from(bytes).toString('utf8'), '# hello');
-  assert.deepEqual(model.calls.getNoteContent[0], ['n1', 'acme']);
+  assert.equal(model.calls.getNoteContent[0][0].id, 'n1');
+  assert.equal(model.calls.getNoteContent[0][0].teamPath, 'acme');
 });
 
 test('readFile throws FileNotFound when model read fails', async () => {
@@ -233,8 +252,9 @@ test('writeFile throws FileNotFound when URI misses noteId', async () => {
   );
 });
 
-test('writeFile (personal) calls model.saveNoteContent', async () => {
+test('writeFile (personal) calls model.updateNote with content', async () => {
   const model = new MockModel();
+  model.setNote({ id: 'n1' }, null);
   stub.setModel(model);
 
   const provider = new HackMDFsProvider();
@@ -242,11 +262,15 @@ test('writeFile (personal) calls model.saveNoteContent', async () => {
 
   await provider.writeFile(uri, Buffer.from('# save'), { create: false, overwrite: true });
 
-  assert.deepEqual(model.calls.saveNoteContent[0], ['n1', '# save', null]);
+  const [calledNote, calledInput] = model.calls.updateNote[0];
+  assert.equal(calledNote.id, 'n1');
+  assert.equal(calledNote.teamPath, null);
+  assert.deepEqual(calledInput, { content: '# save' });
 });
 
-test('writeFile (team) calls model.saveNoteContent with teamPath', async () => {
+test('writeFile (team) calls model.updateNote with content and teamPath', async () => {
   const model = new MockModel();
+  model.setNote({ id: 'n1' }, 'acme');
   stub.setModel(model);
 
   const provider = new HackMDFsProvider();
@@ -254,11 +278,15 @@ test('writeFile (team) calls model.saveNoteContent with teamPath', async () => {
 
   await provider.writeFile(uri, Buffer.from('# team save'), { create: false, overwrite: true });
 
-  assert.deepEqual(model.calls.saveNoteContent[0], ['n1', '# team save', 'acme']);
+  const [calledNote, calledInput] = model.calls.updateNote[0];
+  assert.equal(calledNote.id, 'n1');
+  assert.equal(calledNote.teamPath, 'acme');
+  assert.deepEqual(calledInput, { content: '# team save' });
 });
 
 test('writeFile throws Unavailable when model save fails', async () => {
   const model = new MockModel();
+  model.setNote({ id: 'n1' }, null);
   model.saveShouldThrow = new Error('network down');
   stub.setModel(model);
 

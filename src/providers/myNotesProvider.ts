@@ -73,7 +73,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
-      this.myNotesPendingOperation = !!this.model.isMyNotesPendingOperation();
+      this.myNotesPendingOperation = !!this.model.isPending(this.model.getMyNotesEntity());
       this.model.onDidChangeEntity((event) => {
         if (!this.loaded) {
           return;
@@ -128,7 +128,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
 
     this.loadingPromise = (async () => {
       try {
-        await this.model!.refreshScope({ teamPath: null });
+        await this.model!.refresh(this.model!.getMyNotesEntity());
         this.currentSnapshot = this.model!.getScopeSnapshotSync(this.model!.getMyNotesEntity());
         this.rebuildIndexes(this.currentSnapshot);
         this.loaded = true;
@@ -231,7 +231,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       return;
     }
 
-    const folder = this.folderById.get(folderId) || this.model?.getFolderById(folderId, null);
+    const folder = this.folderById.get(folderId) || this.model?.getFolderSync(this.model.getMyNotesEntity(), folderId);
     this._onDidChangeTreeData.fire(folder || undefined);
   }
 
@@ -261,11 +261,11 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     if (entityType === 'note') {
-      const currentParent = this.model.getNoteById(entityId, null)?.parentFolderId || null;
+      const currentParent = this.model.getNoteSync(this.model.getMyNotesEntity(), entityId)?.parentFolderId || null;
       parentCandidates.add(currentParent);
     }
     if (entityType === 'folder') {
-      const currentParent = this.model.getFolderById(entityId, null)?.parentId || null;
+      const currentParent = this.model.getFolderSync(this.model.getMyNotesEntity(), entityId)?.parentId || null;
       parentCandidates.add(currentParent);
     }
 
@@ -286,7 +286,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     }
 
     if (entityType === 'note' && !parentOrderChanged) {
-      const note = this.noteById.get(entityId) || this.model?.getNoteById(entityId, null);
+      const note = this.noteById.get(entityId) || this.model?.getNoteSync(this.model.getMyNotesEntity(), entityId);
       this._onDidChangeTreeData.fire(note || undefined);
     }
   }
@@ -296,7 +296,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
       return;
     }
 
-    const note = this.noteById.get(noteId) || this.model?.getNoteById(noteId, null);
+    const note = this.noteById.get(noteId) || this.model?.getNoteSync(this.model.getMyNotesEntity(), noteId);
     this._onDidChangeTreeData.fire(note || undefined);
   }
 
@@ -310,7 +310,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   findNoteInCache(noteId: string): ModelNote | undefined {
-    return this.noteById.get(noteId) || this.model?.getNoteSync(noteId, null) || undefined;
+    return this.noteById.get(noteId) || this.model?.getNoteSync(this.model.getMyNotesEntity(), noteId) || undefined;
   }
 
   getMoveFolderTargetsFromCache(): Array<{ label: string; folderId: string; folderPaths: any[] }> {
@@ -429,7 +429,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     item.label = folder.name;
     item.id = `folder-${folder.id}`;
 
-    const isPending = !!this.model?.isFolderPendingOperation(folder.id, null);
+    const isPending = !!this.model?.isPending(folder);
     const hasClientId = !!folder.clientId;
 
     item.contextValue = hasClientId
@@ -455,7 +455,7 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
     item.label = label;
     item.id = `note-${note.id}`;
 
-    const isPending = !!this.model?.isNotePendingOperation(note.id, null);
+    const isPending = !!this.model?.isPending(note);
 
     if (!isPending) {
       item.command = {

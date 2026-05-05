@@ -44,7 +44,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
   constructor(private extensionPath: string) {
     try {
       this.model = getHackmdModel();
-      this.historyPendingOperation = !!this.model.isRecentNotesPendingOperation();
+      this.historyPendingOperation = !!this.model.isPending(this.model.getRecentNotesEntity());
       this.model.onDidChangeEntity((event) => {
         if (!this.loaded) {
           return;
@@ -92,7 +92,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
 
     this.loadingPromise = (async () => {
       try {
-        await this.model!.refreshHistory();
+        await this.model!.refresh(this.model!.getRecentNotesEntity());
         this.loaded = true;
         this.lastOrderSignature = this.computeOrderSignature();
         this.lastError = null;
@@ -206,7 +206,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
     item.label = label;
     item.id = `note-${note.id}`;
 
-    const isPending = !!this.model?.isNotePendingOperation(note.id, note.teamPath);
+    const isPending = !!this.model?.isPending(note);
 
     if (!isPending) {
       item.command = {

@@ -204,20 +204,20 @@ class MockUiModel {
     return null;
   }
 
-  toNoteUri(note) {
-    this._record('toNoteUri', [note.id, note.teamPath]);
+  toUri(note) {
+    this._record('toUri', [note.id, note.teamPath]);
     return stub.makeUri('hackmd', `/note/${note.id}`, `noteId=${note.id}${note.teamPath ? `&teamPath=${note.teamPath}` : ''}`);
   }
 
-  async getNote(noteId, teamPath) {
-    this._record('getNote', [noteId, teamPath]);
+  async getNote(scope, noteId) {
+    const teamPath = scope?.type === 'team' ? scope.path : null;
+    this._record('getNote', [scope, noteId]);
     return this.fetchedNotes.get(this._k(teamPath ?? null, noteId)) || { id: noteId, teamPath: teamPath ?? null };
   }
 
-  getFolderById(folderId, teamPath) {
-    this._record('getFolderById', [folderId, teamPath]);
-    const scopeEntity = teamPath ? this.getTeamByPath(teamPath) : this.getMyNotesEntity();
-    const snapshot = scopeEntity ? this.getScopeSnapshotSync(scopeEntity) : null;
+  getFolderSync(scope, folderId) {
+    this._record('getFolderSync', [scope, folderId]);
+    const snapshot = scope ? this.getScopeSnapshotSync(scope) : null;
     if (!snapshot) {
       return undefined;
     }
@@ -239,8 +239,9 @@ class MockUiModel {
     return this.teams.find((team) => team.path === teamPath);
   }
 
-  async refreshScope({ teamPath }) {
-    this._record('refreshScope', [teamPath]);
+  async refresh(entity) {
+    this._record('refresh', [entity]);
+    const teamPath = entity.type === 'team' ? entity.path : entity.type === 'my-notes' ? null : undefined;
     if (teamPath === 'acme' && this.acmeSnapshot === null) {
       this.acmeSnapshot = {
         scope: 'acme',
@@ -263,14 +264,15 @@ class MockUiModel {
     return undefined;
   }
 
-  getNoteSync(noteId, teamPath) {
-    this._record('getNoteSync', [noteId, teamPath]);
+  getNoteSync(scope, noteId) {
+    const teamPath = scope?.type === 'team' ? scope.path : null;
+    this._record('getNoteSync', [scope, noteId]);
     return this.syncNotes.get(this._k(teamPath ?? null, noteId)) || null;
   }
 
-  async getNoteContent(noteId, teamPath) {
-    this._record('getNoteContent', [noteId, teamPath]);
-    return this.noteContentByKey.get(this._k(teamPath ?? null, noteId)) || '';
+  async getNoteContent(note) {
+    this._record('getNoteContent', [note]);
+    return this.noteContentByKey.get(this._k(note.teamPath ?? null, note.id)) || '';
   }
 
   async createNote(container, props) {
@@ -320,7 +322,7 @@ test('edit: uninitialized model shows connection error', async () => {
   assert.equal(err, 'HackMD is not connected. Please configure your API key first.');
 });
 
-test('edit: programmatic note uses model.toNoteUri and opens editor', async () => {
+test('edit: programmatic note uses model.toUri and opens editor', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
@@ -332,7 +334,7 @@ test('edit: programmatic note uses model.toNoteUri and opens editor', async () =
 
   await invoke('hackmd.ui.edit', { type: 'note', note: { id: 'n1', teamPath: null } });
 
-  assert.equal(callCount(model, 'toNoteUri'), 1);
+  assert.equal(callCount(model, 'toUri'), 1);
   assert.equal(stub.workspaceState.openTextDocumentCalls.length, 1);
   assert.equal(shown.opts.preview, false);
   assert.equal(shown.opts.viewColumn, 1);
@@ -344,7 +346,7 @@ test('edit: falls back to a hackmd URI when note is not in sync cache', async ()
 
   await invoke('hackmd.ui.edit', { type: 'note', note: { id: 'unknown', teamPath: null } });
 
-  assert.equal(callCount(model, 'toNoteUri'), 0);
+  assert.equal(callCount(model, 'toUri'), 0);
   const opened = stub.workspaceState.openTextDocumentCalls[0];
   assert.equal(opened.scheme, 'hackmd');
   assert.ok(String(opened.query).includes('noteId=unknown'));
@@ -357,7 +359,7 @@ test('preview: executes markdown.showPreview with resolved URI', async () => {
   await invoke('hackmd.ui.preview', { type: 'note', note: { id: 'n1', teamPath: null } });
 
   assert.equal(stub.commandsState.executeCalls[0][0], 'markdown.showPreview');
-  assert.equal(callCount(model, 'toNoteUri'), 1);
+  assert.equal(callCount(model, 'toUri'), 1);
 });
 
 test('sideBySide: opens editor and then markdown.showPreviewToSide', async () => {
@@ -826,13 +828,13 @@ test('export: multi-note export starts note content reads in parallel', async ()
 
   const started = [];
   const resolvers = new Map();
-  model.getNoteContent = async (noteId, teamPath) => {
-    model._record('getNoteContent', [noteId, teamPath]);
-    started.push(noteId);
+  model.getNoteContent = async (note) => {
+    model._record('getNoteContent', [note]);
+    started.push(note.id);
     await new Promise((resolve) => {
-      resolvers.set(noteId, resolve);
+      resolvers.set(note.id, resolve);
     });
-    return `# ${noteId}`;
+    return `# ${note.id}`;
   };
 
   const dir = stub.makeUri('file', '/tmp/export-dir');
@@ -1107,5 +1109,7 @@ test('properties: team note uses teamPath from args', async () => {
   assert.ok(openNoteArg);
   assert.equal(openNoteArg.id, 'tn1');
   assert.equal(openNoteArg.teamPath, 'acme');
-  assert.deepEqual(model.calls.getNoteSync[0], ['tn1', 'acme']);
+  assert.equal(model.calls.getNoteSync[0][0].type, 'team');
+  assert.equal(model.calls.getNoteSync[0][0].path, 'acme');
+  assert.equal(model.calls.getNoteSync[0][1], 'tn1');
 });

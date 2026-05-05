@@ -338,11 +338,10 @@ test('scope snapshot sync/async loading without model-level team sorting', async
 
   assert.equal(model.getScopeSnapshotSync(model.getMyNotesEntity()), null);
 
-  const personal = await model.getScopeSnapshot(null);
-  assert.equal(personal.scope, null);
+  const personal = await model.getScopeSnapshot(model.getMyNotesEntity());
   assert.equal(personal.rootFolders[0].name, 'Foo');
 
-  await model.refreshTeams();
+  await model.refresh(model.getTeamsEntity());
   const teamNames = model.getTeams().map((t) => t.name);
   assert.deepEqual(teamNames, ['Bar', 'Foo']);
 });
@@ -353,9 +352,9 @@ test('dedupes concurrent refreshScope requests by scope', async () => {
   api.setDelay('getFolders', 40);
 
   await Promise.all([
-    model.refreshScope({ teamPath: null }),
-    model.refreshScope({ teamPath: null }),
-    model.getScopeSnapshot(null),
+    model.refresh(model.getMyNotesEntity()),
+    model.refresh(model.getMyNotesEntity()),
+    model.getScopeSnapshot(model.getMyNotesEntity()),
   ]);
 
   assert.equal(api.calls.getNoteList, 1);
@@ -366,28 +365,29 @@ test('dedupes concurrent getNote calls and supports sync lookup', async () => {
   const { api, model } = createModelAndApi();
   api.setDelay('getNote', 40);
 
-  assert.equal(model.getNoteSync('pn1', null), null);
+  assert.equal(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), null);
 
   const [n1, n2] = await Promise.all([
-    model.getNote('pn1', null),
-    model.getNote('pn1', null),
+    model.getNote(model.getMyNotesEntity(), 'pn1'),
+    model.getNote(model.getMyNotesEntity(), 'pn1'),
   ]);
 
   assert.ok(n1);
   assert.strictEqual(n1, n2);
   assert.equal(api.calls.getNote, 1);
-  assert.strictEqual(model.getNoteSync('pn1', null), n1);
+  assert.strictEqual(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), n1);
 });
 
 test('supports note content sync/async getters with lazy loading', async () => {
   const { model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
-  assert.equal(model.getNoteContentSync('pn1', null), null);
+  await model.refresh(model.getMyNotesEntity());
+  const pn1 = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
+  assert.equal(model.getNoteContentSync(pn1), null);
 
-  const content = await model.getNoteContent('pn1', null);
+  const content = await model.getNoteContent(pn1);
   assert.equal(content, '# personal content 1');
-  assert.equal(model.getNoteContentSync('pn1', null), '# personal content 1');
+  assert.equal(model.getNoteContentSync(pn1), '# personal content 1');
 });
 
 test('refreshScope(personal) toggles My Notes pending flag and emits pending events', async () => {
@@ -398,12 +398,12 @@ test('refreshScope(personal) toggles My Notes pending flag and emits pending eve
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.refreshScope({ teamPath: null });
+  const inflight = model.refresh(model.getMyNotesEntity());
   await new Promise((resolve) => setTimeout(resolve, 1));
-  assert.equal(model.isMyNotesPendingOperation(), true);
+  assert.equal(model.isPending(model.getMyNotesEntity()), true);
 
   await inflight;
-  assert.equal(model.isMyNotesPendingOperation(), false);
+  assert.equal(model.isPending(model.getMyNotesEntity()), false);
 
   const myNotesEvents = pendingEvents.filter((e) => e.entity.type === 'my-notes');
   assert.equal(myNotesEvents.length, 2);
@@ -414,23 +414,23 @@ test('refreshScope(personal) toggles My Notes pending flag and emits pending eve
 
 test('refreshScope(team) toggles Team Notes container and team pending flags', async () => {
   const { api, model } = createModelAndApi();
-  await model.refreshTeams();
+  await model.refresh(model.getTeamsEntity());
   api.setDelay('getTeamNotes', 30);
   api.setDelay('getTeamFolders', 30);
 
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.refreshScope({ teamPath: 'foo-team' });
+  const inflight = model.refresh(model.getTeamByPath('foo-team'));
   await new Promise((resolve) => setTimeout(resolve, 1));
 
-  assert.equal(model.isTeamNotesPendingOperation(), true);
-  assert.equal(model.isTeamPendingOperation('foo-team'), true);
+  assert.equal(model.isPending(model.getTeamsEntity()), true);
+  assert.equal(model.isPending(model.getTeamByPath('foo-team')), true);
 
   await inflight;
 
-  assert.equal(model.isTeamNotesPendingOperation(), false);
-  assert.equal(model.isTeamPendingOperation('foo-team'), false);
+  assert.equal(model.isPending(model.getTeamsEntity()), false);
+  assert.equal(model.isPending(model.getTeamByPath('foo-team')), false);
 
   const teamContainerEvents = pendingEvents.filter((e) => e.entity.type === 'teams');
   const teamEvents = pendingEvents.filter((e) => e.entity.type === 'team' && e.entity.path === 'foo-team');
@@ -443,23 +443,23 @@ test('refreshScope(team) toggles Team Notes container and team pending flags', a
   d.dispose();
 });
 
-test('loadNoteContent toggles per-note pending flag and emits pending events', async () => {
+test('getNoteContent toggles per-note pending flag and emits pending events', async () => {
   const { api, model } = createModelAndApi();
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   api.setDelay('getNote', 30);
 
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.getNoteContent('pn1', null);
+  const inflight = model.getNoteContent(model.getNoteSync(model.getMyNotesEntity(), 'pn1'));
   await new Promise((resolve) => setTimeout(resolve, 1));
 
-  assert.equal(model.isNotePendingOperation('pn1', null), true);
+  assert.equal(model.isPending(model.getNoteSync(model.getMyNotesEntity(), 'pn1')), true);
 
   await inflight;
 
-  assert.equal(model.isNotePendingOperation('pn1', null), false);
-  const note = model.getNoteById('pn1', null);
+  assert.equal(model.isPending(model.getNoteSync(model.getMyNotesEntity(), 'pn1')), false);
+  const note = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
   assert.ok(note);
 
   const noteEvents = pendingEvents.filter((e) => e.entity.type === 'note' && e.entity.id === 'pn1');
@@ -473,13 +473,14 @@ test('scope list content does not mark note content as loaded', async () => {
   const { api, model } = createModelAndApi();
   api.personalNotes[0].content = '';
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
   // Even if list payload includes an empty content string, content is not
   // considered loaded until a full note fetch happens.
-  assert.equal(model.getNoteContentSync('pn1', null), null);
+  const pn1 = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
+  assert.equal(model.getNoteContentSync(pn1), null);
 
-  const content = await model.getNoteContent('pn1', null);
+  const content = await model.getNoteContent(pn1);
   assert.equal(content, '# personal content 1');
   assert.equal(api.calls.getNote, 1);
 });
@@ -488,18 +489,18 @@ test('scope refresh evicts cached content when lastChangedAt changes', async () 
   const { api, model } = createModelAndApi();
   api.personalNotes[0].lastChangedAt = '2024-01-01T00:00:00.000Z';
 
-  await model.refreshScope({ teamPath: null });
-  await model.getNoteContent('pn1', null);
-  assert.equal(model.getNoteContentSync('pn1', null), '# personal content 1');
+  await model.refresh(model.getMyNotesEntity());
+  await model.getNoteContent(model.getNoteSync(model.getMyNotesEntity(), 'pn1'));
+  assert.equal(model.getNoteContentSync(model.getNoteSync(model.getMyNotesEntity(), 'pn1')), '# personal content 1');
   assert.equal(api.calls.getNote, 1);
 
   // Simulate an out-of-band server update reflected by scope refresh metadata.
   api.personalNotes[0].lastChangedAt = '2024-01-03T00:00:00.000Z';
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
-  assert.equal(model.getNoteContentSync('pn1', null), null);
+  assert.equal(model.getNoteContentSync(model.getNoteSync(model.getMyNotesEntity(), 'pn1')), null);
 
-  const content = await model.getNoteContent('pn1', null);
+  const content = await model.getNoteContent(model.getNoteSync(model.getMyNotesEntity(), 'pn1'));
   assert.equal(content, '# personal content 1');
   assert.equal(api.calls.getNote, 2);
 });
@@ -507,19 +508,19 @@ test('scope refresh evicts cached content when lastChangedAt changes', async () 
 test('note/folder/team URI conversion and sync lookup', async () => {
   const { model } = createModelAndApi();
 
-  await model.refreshTeams();
-  await model.refreshScope({ teamPath: 'foo-team' });
+  await model.refresh(model.getTeamsEntity());
+  await model.refresh(model.getTeamByPath('foo-team'));
 
   const team = model.getTeamByPath('foo-team');
-  const teamUri = model.toTeamUri(team);
+  const teamUri = model.toUri(team);
   assert.strictEqual(model.getEntityByUriSync(teamUri), team);
 
   const folder = team.rootFolders.find((f) => f.name === 'Foo');
-  const folderUri = model.toFolderUri(folder);
+  const folderUri = model.toUri(folder);
   assert.strictEqual(model.getEntityByUriSync(folderUri), folder);
 
   const note = team.rootNotes.find((n) => n.id === 'tn2');
-  const noteUri = model.toNoteUri(note);
+  const noteUri = model.toUri(note);
   assert.strictEqual(model.getEntityByUriSync(noteUri), note);
 });
 
@@ -547,10 +548,10 @@ test('refresh with unchanged personal scope emits no entity events', async () =>
   const entityEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   entityEvents.length = 0;
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
   assert.equal(entityEvents.length, 0);
   d1.dispose();
@@ -561,10 +562,10 @@ test('refreshHistory with unchanged data emits no entity events', async () => {
   const entityEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
 
-  await model.refreshHistory();
+  await model.refresh(model.getRecentNotesEntity());
   entityEvents.length = 0;
 
-  await model.refreshHistory();
+  await model.refresh(model.getRecentNotesEntity());
 
   assert.equal(entityEvents.length, 0);
   d1.dispose();
@@ -575,7 +576,7 @@ test('refreshTeams keeps existing order on reorder-only backend changes and emit
   const entityEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
 
-  await model.refreshTeams();
+  await model.refresh(model.getTeamsEntity());
   const initialOrder = model.getTeams().map((t) => t.path);
   assert.deepEqual(initialOrder, ['bar-team', 'foo-team']);
 
@@ -585,7 +586,7 @@ test('refreshTeams keeps existing order on reorder-only backend changes and emit
     { id: 't2', path: 'bar-team', name: 'Bar' },
   ];
 
-  await model.refreshTeams();
+  await model.refresh(model.getTeamsEntity());
 
   const finalOrder = model.getTeams().map((t) => t.path);
   assert.deepEqual(finalOrder, ['bar-team', 'foo-team']);
@@ -602,14 +603,14 @@ test('refreshScope keeps existing root note order on reorder-only backend change
   const entityEvents = [];
   const d1 = model.onDidChangeEntity((event) => entityEvents.push(event));
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   const initialRootOrder = model.getScopeSnapshotSync(model.getMyNotesEntity()).rootNotes.map((n) => n.id);
   assert.deepEqual(initialRootOrder, ['pn1', 'pn2']);
 
   entityEvents.length = 0;
   api.personalNotes = [api.personalNotes[1], api.personalNotes[0]];
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
   const finalRootOrder = model.getScopeSnapshotSync(model.getMyNotesEntity()).rootNotes.map((n) => n.id);
   assert.deepEqual(finalRootOrder, ['pn1', 'pn2']);
@@ -620,7 +621,7 @@ test('refreshScope keeps existing root note order on reorder-only backend change
 test('create, update, move, and delete note workflow', async () => {
   const { model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
   const created = await model.createNote(model.getMyNotesEntity(), { title: 'New Note', content: '# hello' });
   assert.ok(created.id);
@@ -628,18 +629,23 @@ test('create, update, move, and delete note workflow', async () => {
   const renamed = await model.renameNote(created.id, 'Renamed Note');
   assert.equal(renamed.title, 'Renamed Note');
 
-  const moved = await model.moveNote({ noteId: created.id, sourceTeamPath: null, targetTeamPath: 'foo-team' });
-  assert.equal(moved.teamPath, 'foo-team');
+  const moved = await model.moveNote(created, model.getFolderSync(model.getMyNotesEntity(), 'pf1'));
+  assert.equal(moved.id, created.id);
 
-  await model.deleteNote(moved.id, 'foo-team');
-  const deleted = await model.getNote(moved.id, 'foo-team');
+  await assert.rejects(
+    () => model.moveNote(created, { type: 'my-notes', id: '', rootFolders: [], rootNotes: [] }),
+    /Moving notes to non-folder destinations is not supported/
+  );
+
+  await model.deleteNote(created);
+  const deleted = await model.getNote(model.getMyNotesEntity(), created.id);
   assert.equal(deleted, null);
 });
 
 test('createNote skips scope refresh when scope is already loaded', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   const getNoteListBefore = api.calls.getNoteList || 0;
   const getFoldersBefore = api.calls.getFolders || 0;
 
@@ -653,7 +659,7 @@ test('createNote skips scope refresh when scope is already loaded', async () => 
 test('createFolder skips scope refresh when scope is already loaded', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   const getNoteListBefore = api.calls.getNoteList || 0;
   const getFoldersBefore = api.calls.getFolders || 0;
 
@@ -667,24 +673,24 @@ test('createFolder skips scope refresh when scope is already loaded', async () =
 test('createFolder under personal parent sets pending on parent folder and updates local placement', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   api.setDelay('createFolder', 30);
 
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.createFolder(model.getFolderById('pf1', null), { name: 'Nested Child' });
+  const inflight = model.createFolder(model.getFolderSync(model.getMyNotesEntity(), 'pf1'), { name: 'Nested Child' });
   await new Promise((resolve) => setTimeout(resolve, 1));
 
-  assert.equal(model.isFolderPendingOperation('pf1', null), true);
-  assert.equal(model.isMyNotesPendingOperation(), false);
+  assert.equal(model.isPending(model.getFolderSync(model.getMyNotesEntity(), 'pf1')), true);
+  assert.equal(model.isPending(model.getMyNotesEntity()), false);
 
   const created = await inflight;
 
-  assert.equal(model.isFolderPendingOperation('pf1', null), false);
+  assert.equal(model.isPending(model.getFolderSync(model.getMyNotesEntity(), 'pf1')), false);
   assert.equal(created.parentId, 'pf1');
 
-  const parent = model.getFolderById('pf1', null);
+  const parent = model.getFolderSync(model.getMyNotesEntity(), 'pf1');
   assert.ok(parent);
   assert.ok(parent.children.some((child) => child.id === created.id));
 
@@ -702,24 +708,24 @@ test('createFolder under personal parent sets pending on parent folder and updat
 test('createNote under personal parent sets pending on parent folder and updates local placement', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   api.setDelay('createNote', 30);
 
   const pendingEvents = [];
   const d = model.onDidChangePending((event) => pendingEvents.push(event));
 
-  const inflight = model.createNote(model.getFolderById('pf1', null), { title: 'Nested Note' });
+  const inflight = model.createNote(model.getFolderSync(model.getMyNotesEntity(), 'pf1'), { title: 'Nested Note' });
   await new Promise((resolve) => setTimeout(resolve, 1));
 
-  assert.equal(model.isFolderPendingOperation('pf1', null), true);
-  assert.equal(model.isMyNotesPendingOperation(), false);
+  assert.equal(model.isPending(model.getFolderSync(model.getMyNotesEntity(), 'pf1')), true);
+  assert.equal(model.isPending(model.getMyNotesEntity()), false);
 
   const created = await inflight;
 
-  assert.equal(model.isFolderPendingOperation('pf1', null), false);
+  assert.equal(model.isPending(model.getFolderSync(model.getMyNotesEntity(), 'pf1')), false);
   assert.equal(created.parentFolderId, 'pf1');
 
-  const parent = model.getFolderById('pf1', null);
+  const parent = model.getFolderSync(model.getMyNotesEntity(), 'pf1');
   assert.ok(parent);
   assert.ok(parent.notes.some((note) => note.id === created.id));
 
@@ -755,8 +761,8 @@ test('createNote refreshes unloaded scope in parallel with create call', async (
 test('createNote skips team scope refresh when scope is already loaded', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshTeams();
-  await model.refreshScope({ teamPath: 'foo-team' });
+  await model.refresh(model.getTeamsEntity());
+  await model.refresh(model.getTeamByPath('foo-team'));
   const getTeamNotesBefore = api.calls.getTeamNotes || 0;
   const getTeamFoldersBefore = api.calls.getTeamFolders || 0;
 
@@ -770,30 +776,26 @@ test('createNote skips team scope refresh when scope is already loaded', async (
 test('save/update/move/delete note in loaded personal scope do not refresh scope', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   const getNoteListBefore = api.calls.getNoteList || 0;
   const getFoldersBefore = api.calls.getFolders || 0;
 
-  await model.saveNoteContent('pn1', '# changed content', null);
-  await model.updateNoteProperties('pn1', { title: 'Changed Title' }, null);
-  await model.moveNote({
-    noteId: 'pn1',
-    sourceTeamPath: null,
-    targetTeamPath: null,
-    targetParentFolderId: null,
-  });
+  await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), { content: '# changed content' });
+  await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), { title: 'Changed Title' });
+  // pn1 is already in pf1, so moveNote is a no-op (no API call)
+  await model.moveNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), model.getFolderSync(model.getMyNotesEntity(), 'pf1'));
 
   const created = await model.createNote(model.getMyNotesEntity(), { title: 'Delete me' });
-  await model.deleteNote(created.id, null);
+  await model.deleteNote(created);
 
   assert.equal(api.calls.getNoteList || 0, getNoteListBefore);
   assert.equal(api.calls.getFolders || 0, getFoldersBefore);
 });
 
-test('saveNoteContent with partial PATCH response updates existing note identity', async () => {
+test('updateNote with content marks content as loaded and preserves note identity on partial PATCH response', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
   const originalUpdateNote = api.updateNote.bind(api);
   api.updateNote = async (noteId, payload) => {
@@ -803,20 +805,20 @@ test('saveNoteContent with partial PATCH response updates existing note identity
   };
 
   const beforeIds = model.getScopeSnapshotSync(model.getMyNotesEntity()).rootNotes.map((n) => n.id).sort();
-  const updated = await model.saveNoteContent('pn2', '# partial response content', null);
+  const updated = await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn2'), { content: '# partial response content' });
   const afterSnapshot = model.getScopeSnapshotSync(model.getMyNotesEntity());
   const afterIds = afterSnapshot.rootNotes.map((n) => n.id).sort();
 
   assert.equal(updated.id, 'pn2');
   assert.deepEqual(afterIds, beforeIds);
-  assert.equal(model.getNoteById('pn2', null)?.content, '# partial response content');
+  assert.equal(model.getNoteSync(model.getMyNotesEntity(), 'pn2')?.content, '# partial response content');
 });
 
-test('updateNoteProperties preserves existing fields when partial response has undefined fields', async () => {
+test('updateNote preserves existing fields when partial response has undefined fields', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
-  const before = model.getNoteById('pn1', null);
+  await model.refresh(model.getMyNotesEntity());
+  const before = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
   assert.ok(before);
 
   const originalUpdateNote = api.updateNote.bind(api);
@@ -832,7 +834,7 @@ test('updateNoteProperties preserves existing fields when partial response has u
     });
   };
 
-  const updated = await model.updateNoteProperties('pn1', { writePermission: 'owner' }, null);
+  const updated = await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), { writePermission: 'owner' });
 
   assert.equal(updated.id, 'pn1');
   assert.equal(updated.title, before.title);
@@ -840,10 +842,10 @@ test('updateNoteProperties preserves existing fields when partial response has u
   assert.equal(updated.writePermission, 'owner');
 });
 
-test('updateNoteProperties applies explicit null/empty values from partial response', async () => {
+test('updateNote applies explicit null/empty values from partial response', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
 
   const originalUpdateNote = api.updateNote.bind(api);
   api.updateNote = async (noteId, payload) => {
@@ -856,8 +858,8 @@ test('updateNoteProperties applies explicit null/empty values from partial respo
     });
   };
 
-  const before = model.getNoteById('pn1', null);
-  const updated = await model.updateNoteProperties('pn1', { title: 'ignored-by-response' }, null);
+  const before = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
+  const updated = await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), { title: 'ignored-by-response' });
 
   assert.equal(updated.id, 'pn1');
   assert.equal(updated.title, '');
@@ -865,28 +867,33 @@ test('updateNoteProperties applies explicit null/empty values from partial respo
   assert.equal(updated.writePermission, before?.writePermission);
 });
 
-test('updateNoteProperties treats parentFolderId undefined as unspecified (no change)', async () => {
+test('moveNote silently does nothing if note is already in destination folder', async () => {
   const { model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
-  const before = model.getNoteById('pn1', null);
+  await model.refresh(model.getMyNotesEntity());
+  const before = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
   assert.equal(before?.parentFolderId, 'pf1');
 
-  const updated = await model.updateNoteProperties('pn1', { parentFolderId: undefined }, null);
+  const dest = model.getFolderSync(model.getMyNotesEntity(), 'pf1');
+  const result = await model.moveNote(before, dest);
 
-  assert.equal(updated.parentFolderId, 'pf1');
+  assert.equal(result.parentFolderId, 'pf1');
 });
 
-test('updateNoteProperties treats parentFolderId null as explicit clear', async () => {
+test('moveNote moves note to a different folder and updates placement', async () => {
   const { model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
-  const before = model.getNoteById('pn1', null);
-  assert.equal(before?.parentFolderId, 'pf1');
+  await model.refresh(model.getMyNotesEntity());
 
-  const updated = await model.updateNoteProperties('pn1', { parentFolderId: null }, null);
+  // Create a second folder for pn1 to be moved into
+  const destFolder = await model.createFolder(model.getMyNotesEntity(), { name: 'Dest Folder' });
+  const note = model.getNoteSync(model.getMyNotesEntity(), 'pn1');
+  assert.ok(note);
+  assert.equal(note.parentFolderId, 'pf1');
 
-  assert.equal(updated.parentFolderId, null);
+  const updated = await model.moveNote(note, destFolder);
+
+  assert.equal(updated.parentFolderId, destFolder.id);
 });
 
 test('createFolder refreshes unloaded scope in parallel with create call', async () => {
@@ -911,7 +918,7 @@ test('createFolder refreshes unloaded team scope in parallel with create call', 
   const { api, model } = createModelAndApi();
   const delayMs = 120;
 
-  await model.refreshTeams();
+  await model.refresh(model.getTeamsEntity());
   api.setDelay('createTeamFolder', delayMs);
   api.setDelay('getTeamNotes', delayMs);
   api.setDelay('getTeamFolders', delayMs);
@@ -929,11 +936,11 @@ test('createFolder refreshes unloaded team scope in parallel with create call', 
 test('createNote marks created content as loaded for instant reads', async () => {
   const { api, model } = createModelAndApi();
 
-  await model.refreshScope({ teamPath: null });
+  await model.refresh(model.getMyNotesEntity());
   const created = await model.createNote(model.getMyNotesEntity(), { title: 'Instant Read' });
   const getNoteCallsBeforeRead = api.calls.getNote || 0;
 
-  const content = await model.getNoteContent(created.id, null);
+  const content = await model.getNoteContent(created);
 
   assert.equal(content, '');
   assert.equal(api.calls.getNote || 0, getNoteCallsBeforeRead);
@@ -947,6 +954,6 @@ test('model index requires explicit initialization with injected API', async () 
   const model = initializeHackmdModel(api);
   assert.strictEqual(getHackmdModel(), model);
 
-  await model.refreshTeams();
+  await model.refresh(model.getTeamsEntity());
   assert.deepEqual(model.getTeams().map((t) => t.name), ['Bar', 'Foo']);
 });

@@ -107,7 +107,7 @@ async function exportFolderRecursive(
   const noteJobs = folder.notes.map((note) => {
     const fileName = getUniqueMarkdownFileName(note.title || note.shortId || 'Untitled', usedNames);
     return (async () => {
-      const content = await model.getNoteContent(note.id, folder.teamPath);
+      const content = await model.getNoteContent(note);
       await vscode.workspace.fs.writeFile(
         vscode.Uri.joinPath(dirUri, fileName),
         Buffer.from(content ?? '', 'utf8')
@@ -374,7 +374,8 @@ async function revealLoadedTarget(model: ReturnType<typeof getHackmdModel>, targ
   }
 
   if (target.targetType === 'folder') {
-    const folder = model.getFolderById(target.folderId, target.teamPath);
+    const folderScope = target.teamPath ? model.getTeamByPath(target.teamPath) : model.getMyNotesEntity();
+    const folder = folderScope ? model.getFolderSync(folderScope, target.folderId) : undefined;
     if (!folder) {
       vscode.window.showErrorMessage(`Folder "${target.folderId}" was not found among loaded items.`);
       return;
@@ -390,8 +391,12 @@ async function revealLoadedTarget(model: ReturnType<typeof getHackmdModel>, targ
   }
 
   const note = target.teamPath
-    ? (getTeamNotesProvider()?.findNoteInCache(target.noteId, target.teamPath) || model.getNoteSync(target.noteId, target.teamPath))
-    : (getMyNotesProvider()?.findNoteInCache(target.noteId) || model.getNoteSync(target.noteId, null));
+    ? (() => {
+      const team = model.getTeamByPath(target.teamPath!);
+      return getTeamNotesProvider()?.findNoteInCache(target.noteId, target.teamPath)
+        || (team ? model.getNoteSync(team, target.noteId) : null);
+    })()
+    : (getMyNotesProvider()?.findNoteInCache(target.noteId) || model.getNoteSync(model.getMyNotesEntity(), target.noteId));
 
   if (!note) {
     vscode.window.showErrorMessage(`Note "${target.noteId}" was not found among loaded items.`);
@@ -456,7 +461,7 @@ async function resolveNoteUri(
     }
   }
 
-  return note ? model.toNoteUri(note) : buildFallbackNoteUri(noteId!, teamPath ?? null);
+  return note ? model.toUri(note) : buildFallbackNoteUri(noteId!, teamPath ?? null);
 }
 
 // ---------------------------------------------------------------------------
@@ -623,7 +628,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
     // Fall back to a full fetch when the link is not cached.
     if (!publishLink) {
-      const fetched = await model.getNote(noteId!, teamPath ?? null);
+      const scope = (teamPath ?? null) ? model.getTeamByPath(teamPath!) : model.getMyNotesEntity();
+      const fetched = scope ? await model.getNote(scope, noteId!) : null;
       publishLink = fetched?.publishLink ?? undefined;
     }
 
@@ -691,9 +697,10 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         cancellable: false,
       },
       async () => Promise.all(files.map((file) => {
+        const scopeEntity: ModelMyNotes | ModelTeam = resolvedTeamPath ? model.getTeamByPath(resolvedTeamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity();
         const container: ModelMyNotes | ModelTeam | ModelFolder = resolvedFolderId
-          ? (model.getFolderById(resolvedFolderId, resolvedTeamPath ?? null) ?? (resolvedTeamPath ? model.getTeamByPath(resolvedTeamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
-          : (resolvedTeamPath ? model.getTeamByPath(resolvedTeamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+          ? (model.getFolderSync(scopeEntity, resolvedFolderId) ?? scopeEntity)
+          : scopeEntity;
         return model.createNote(container, { title: file.title, content: file.content });
       }))
     );
@@ -740,7 +747,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         // Team node: export all root notes + folders for that team
         if (n?.team?.path || (n?.type === 'team' && typeof n.path === 'string')) {
           const teamPath: string = n?.team?.path || n.path;
-          const snapshot = await model.getScopeSnapshot(teamPath) as any;
+          const teamEntity = model.getTeamByPath(teamPath);
+          const snapshot = teamEntity ? await model.getScopeSnapshot(teamEntity) as any : null;
           const rootNotes: any[] = snapshot?.rootNotes ?? [];
           const rootFolders: any[] = snapshot?.rootFolders ?? [];
           for (const rn of rootNotes) { noteTargets.push({ type: 'note', noteId: rn.id, teamPath }); }
@@ -813,7 +821,9 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     try {
       if (targetFileUri) {
         const nt = noteTargets[0];
-        const content = await model.getNoteContent(nt.noteId, nt.teamPath);
+        const ntScope = nt.teamPath ? model.getTeamByPath(nt.teamPath) : model.getMyNotesEntity();
+        const ntNote = ntScope ? await model.getNote(ntScope, nt.noteId) : null;
+        const content = ntNote ? await model.getNoteContent(ntNote) : null;
         await vscode.workspace.fs.writeFile(targetFileUri, Buffer.from(content ?? '', 'utf8'));
       } else if (exportDirUri) {
         const usedNames = await getUsedNamesForDirectory(exportDirUri);
@@ -827,7 +837,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
           const baseName = cached?.title || cached?.shortId || nt.noteId;
           const fileName = getUniqueMarkdownFileName(baseName, usedNames);
           return (async () => {
-            const content = await model.getNoteContent(nt.noteId, nt.teamPath);
+            const ntNote = ntScopeEntity ? await model.getNote(ntScopeEntity, nt.noteId) : null;
+            const content = ntNote ? await model.getNoteContent(ntNote) : null;
             await vscode.workspace.fs.writeFile(
               vscode.Uri.joinPath(exportDirUri, fileName),
               Buffer.from(content ?? '', 'utf8')
@@ -890,7 +901,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       teamPath = picked.teamPath ?? null;
     }
 
-    const note = model.getNoteSync(noteId, teamPath);
+    const scope = teamPath ? model.getTeamByPath(teamPath) : model.getMyNotesEntity();
+    const note = scope ? model.getNoteSync(scope, noteId) : null;
     if (!note) {
       vscode.window.showErrorMessage(`Note "${noteId}" is not loaded. Please refresh the scope first.`);
       return;

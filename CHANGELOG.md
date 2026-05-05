@@ -11,6 +11,13 @@
   - Callers that previously held a `teamPath` string now look up the team entity via `model.getTeamByPath(teamPath)` and pass it directly; personal-scope callers pass `model.getMyNotesEntity()`.
   - Test mocks in `hackmdModel.node.test.js`, `modelCommands.node.test.js`, `uiCommands.node.test.js`, `noteCompletionProvider.node.test.js`, and `providers.node.test.js` were updated to match the new signature (entity type-switch instead of null/string check).
 
+- Continued model API migration to entity-first method signatures and placement/pending internals:
+  - `deleteNote` now accepts a `ModelNote` entity and `deleteFolder` now accepts a `ModelFolder` entity; command handlers resolve entities before dispatching delete operations.
+  - `reconcileNotePlacement` and `reconcileFolderPlacement` now accept scope entities (`ModelMyNotes | ModelTeam`) instead of `teamPath` strings.
+  - `withPendingOperation` now accepts a resolved `ModelEntity | undefined` directly; target-dispatch logic and `withScopePending` were removed.
+  - `refreshScopeImpl` now composes pending-state wrapping inline for Teams/My Notes using entity arguments.
+  - Updated Node tests to match the new delete and pending-operation signatures.
+
 - Fixed visual jitter/jumping of tree nodes during pending (spinner) operations in My Notes and Team Notes views:
   - Root cause: VS Code treats the built-in `'folder'` ThemeIcon specially and uses it to compute sibling indentation/alignment. Switching from `'folder'` to `'sync~spin'` (spinner) and back caused all sibling nodes to reposition.
   - Fix: replaced `'folder'` with `'symbol-folder'` in `MyNotesProvider` and `TeamNotesProvider`. The icon is visually identical but is not subject to VS Code's special alignment treatment.

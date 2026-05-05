@@ -235,7 +235,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
         input.permalink = merged.permalink ?? undefined;
       }
 
-      await model.updateNoteProperties(noteId, input, teamPath);
+      await model.updateNote(this._currentNote, input);
 
       this.reset();
       return true;

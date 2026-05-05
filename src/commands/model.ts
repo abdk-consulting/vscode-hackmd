@@ -580,7 +580,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     if (!model) {
       return;
     }
-    await model.refreshScope({ teamPath: null });
+    await model.refresh(model.getMyNotesEntity());
     return true;
   });
 
@@ -589,7 +589,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     if (!model) {
       return;
     }
-    return model.refreshTeams();
+    return model.refresh(model.getTeamsEntity());
   });
 
   register('hackmd.model.refreshRecentNotes', async () => {
@@ -597,7 +597,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     if (!model) {
       return;
     }
-    return model.refreshHistory();
+    return model.refresh(model.getRecentNotesEntity());
   });
 
   register('hackmd.model.refreshScope', async (args?: { teamPath?: string | null; team?: { path?: string }; path?: string } | any) => {
@@ -621,7 +621,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       teamPath = selectedScope;
     }
 
-    await model.refreshScope({ teamPath });
+    const scopeEntity = teamPath
+      ? (model.getTeamByPath(teamPath) ?? { type: 'team' as const, id: '', path: teamPath, name: teamPath, rootFolders: [], rootNotes: [] })
+      : model.getMyNotesEntity();
+    await model.refresh(scopeEntity);
     return true;
   });
 
@@ -646,7 +649,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       teamPath = selectedScope;
     }
 
-    await model.refreshScope({ teamPath });
+    const scopeEntity2 = teamPath
+      ? (model.getTeamByPath(teamPath) ?? { type: 'team' as const, id: '', path: teamPath, name: teamPath, rootFolders: [], rootNotes: [] })
+      : model.getMyNotesEntity();
+    await model.refresh(scopeEntity2);
     return true;
   });
 
@@ -676,9 +682,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       parentFolderId = parentFolderId ?? undefined;
     }
 
+    const scopeEntity: ModelMyNotes | ModelTeam = teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity();
     const container: ModelMyNotes | ModelTeam | ModelFolder = parentFolderId
-      ? (model.getFolderById(parentFolderId, teamPath ?? null) ?? (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
-      : (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+      ? (model.getFolderSync(scopeEntity, parentFolderId) ?? scopeEntity)
+      : scopeEntity;
 
     const created = await model.createNote(container, {});
     await vscode.commands.executeCommand('hackmd.ui.reveal', { type: 'note', note: created });
@@ -717,9 +724,10 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
+    const scopeEntity: ModelMyNotes | ModelTeam = teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity();
     const container: ModelMyNotes | ModelTeam | ModelFolder = parentFolderId
-      ? (model.getFolderById(parentFolderId, teamPath ?? null) ?? (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
-      : (teamPath ? model.getTeamByPath(teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+      ? (model.getFolderSync(scopeEntity, parentFolderId) ?? scopeEntity)
+      : scopeEntity;
 
     const created = await model.createFolder(container, { name });
     await vscode.commands.executeCommand('hackmd.ui.reveal', {
@@ -781,7 +789,7 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
         return;
       }
 
-      return model.renameFolder(folderId, newName, teamPath);
+      return model.updateFolder(folderFromNode, { name: newName });
     }
 
     if (targetNode !== undefined) {
@@ -808,7 +816,13 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
         return;
       }
 
-      return model.renameFolder(selected.folderId!, newName, selected.teamPath ?? null);
+      const folderScopeEntity = selected.teamPath ? model.getTeamByPath(selected.teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity();
+      const folderEntity = model.getFolderSync(folderScopeEntity, selected.folderId!);
+      if (!folderEntity) {
+        return;
+      }
+
+      return model.updateFolder(folderEntity, { name: newName });
     }
 
     return undefined;
@@ -875,20 +889,22 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     await Promise.all(actionableItems.map(async (item) => {
-      if (item.kind === 'note') {
-        return model.moveNote({
-          noteId: item.id,
-          sourceTeamPath: item.teamPath,
-          targetTeamPath: resolvedTarget!.teamPath,
-          targetParentFolderId: resolvedTarget!.folderId,
-        });
+      const itemScopeIndex = scopeIndexes.get(item.teamPath)!;
+      const targetScopeIndex = scopeIndexes.get(resolvedTarget!.teamPath)!;
+      const destFolder = resolvedTarget!.folderId ? targetScopeIndex.folderById.get(resolvedTarget!.folderId) : undefined;
+      if (!destFolder) {
+        return;
       }
 
-      return model.moveFolder({
-        folderId: item.id,
-        teamPath: item.teamPath,
-        targetParentFolderId: resolvedTarget!.folderId,
-      });
+      if (item.kind === 'note') {
+        const noteEntity = itemScopeIndex.noteById.get(item.id);
+        if (!noteEntity) { return; }
+        return model.moveNote(noteEntity, destFolder);
+      }
+
+      const folderEntity = itemScopeIndex.folderById.get(item.id);
+      if (!folderEntity) { return; }
+      return model.moveFolder(folderEntity, destFolder);
     }));
 
     return true;
@@ -914,10 +930,11 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     try {
-      const content = await model.getNoteContent(note.id, note.teamPath ?? null);
+      const content = await model.getNoteContent(note);
+      const noteScopeEntity: ModelMyNotes | ModelTeam = note.teamPath ? model.getTeamByPath(note.teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity();
       const container: ModelMyNotes | ModelTeam | ModelFolder = note.parentFolderId
-        ? (model.getFolderById(note.parentFolderId, note.teamPath ?? null) ?? (note.teamPath ? model.getTeamByPath(note.teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity()))
-        : (note.teamPath ? model.getTeamByPath(note.teamPath) ?? model.getMyNotesEntity() : model.getMyNotesEntity());
+        ? (model.getFolderSync(noteScopeEntity, note.parentFolderId) ?? noteScopeEntity)
+        : noteScopeEntity;
       return model.createNote(container, {
         title: note.title || note.shortId || 'Untitled',
         content: content ?? '',
@@ -970,8 +987,16 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     if (confirm !== 'Delete') { return; }
 
     await Promise.all([
-      ...notes.map((note) => model.deleteNote(note.id, note.teamPath ?? null)),
-      ...folders.map((folder) => model.deleteFolder(folder.id, folder.teamPath ?? null)),
+      ...notes.map((n) => {
+        const scopeEntity = n.teamPath ? (model.getTeamByPath(n.teamPath) ?? model.getMyNotesEntity()) : model.getMyNotesEntity();
+        const noteEntity = model.getNoteSync(scopeEntity, n.id);
+        return noteEntity ? model.deleteNote(noteEntity) : undefined;
+      }),
+      ...folders.map((f) => {
+        const scopeEntity = f.teamPath ? (model.getTeamByPath(f.teamPath) ?? model.getMyNotesEntity()) : model.getMyNotesEntity();
+        const folderEntity = model.getFolderSync(scopeEntity, f.id);
+        return folderEntity ? model.deleteFolder(folderEntity) : undefined;
+      }),
     ]);
     return true;
   });

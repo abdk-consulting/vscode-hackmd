@@ -27,6 +27,10 @@
   - `onDidChangeEntity` is now emitted only for true updates to existing entities, preventing consumers from receiving update events for first-time inserts.
   - Updated model workflow test usage to reflect current API (`updateNote` in place of removed `renameNote`).
 
+- Fixed markdown preview CSP noise and blocked-source-map warnings for bundled preview scripts:
+  - Added webpack output post-processing to strip `sourceMappingURL` footer comments from emitted `.js` assets.
+  - Applied stripping to both extension and preview webpack outputs so bundled third-party chunks (including DOMPurify/mermaid chunks) no longer trigger blocked `.map` fetches in VS Code webviews.
+
 - Continued entity-first command and drag-and-drop cleanup:
   - `hackmd.model.rename` now follows a minimal entity-first flow: accepts an optional `ModelNote | ModelFolder`, falls back to a picker listing known notes/folders when omitted, prompts for the new name/title, and updates via `updateNote` / `updateFolder` only.
   - Removed `renameNote` from the model API; rename paths now use `updateNote` directly.

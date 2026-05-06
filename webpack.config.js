@@ -10,6 +10,37 @@ const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const webpack = require('webpack');
 
+class StripSourceMappingUrlCommentsPlugin {
+  apply(compiler) {
+    compiler.hooks.thisCompilation.tap('StripSourceMappingUrlCommentsPlugin', (compilation) => {
+      compilation.hooks.processAssets.tap(
+        {
+          name: 'StripSourceMappingUrlCommentsPlugin',
+          stage: webpack.Compilation.PROCESS_ASSETS_STAGE_REPORT,
+        },
+        (assets) => {
+          for (const assetName of Object.keys(assets)) {
+            if (!assetName.endsWith('.js')) {
+              continue;
+            }
+
+            const source = compilation.getAsset(assetName)?.source;
+            if (!source) {
+              continue;
+            }
+
+            const content = source.source().toString();
+            const stripped = content.replace(/^\s*\/\/[#@]\s*sourceMappingURL=.*$/gm, '');
+            if (stripped !== content) {
+              compilation.updateAsset(assetName, new webpack.sources.RawSource(stripped));
+            }
+          }
+        }
+      );
+    });
+  }
+}
+
 /**@type {import('webpack').Configuration}*/
 const extensionConfig = {
   target: 'node',
@@ -54,6 +85,7 @@ const extensionConfig = {
         configFile: path.resolve(__dirname, 'tsconfig.json'),
       },
     }),
+    new StripSourceMappingUrlCommentsPlugin(),
   ],
   performance: {
     hints: false,
@@ -157,6 +189,7 @@ const pageConfig = {
       filename: '[name].css',
       chunkFilename: '[id].css',
     }),
+    new StripSourceMappingUrlCommentsPlugin(),
   ],
 };
 

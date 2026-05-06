@@ -6,6 +6,14 @@
 
 ### Changed
 
+- Completed entity-first identifier cleanup for notes and folders outside model/API:
+  - Removed non-model/API `noteId`/`folderId` transport in command and provider flows; callers now pass `ModelNote` / `ModelFolder` entities directly.
+  - Updated export target shapes and export execution to carry note/folder entities instead of ID-based payloads.
+  - Updated move command validation and execution to use entity identity and model parent-container APIs instead of folder/note ID comparisons.
+  - Updated delete and duplicate command paths to operate directly on resolved entities.
+  - Removed tree-item metadata fields that exposed `noteId` / `folderId` in provider UI node objects.
+  - Refined note properties view state tracking to use current note object identity instead of a separate note-id cache field.
+
 - Continued entity-first command and drag-and-drop cleanup:
   - `hackmd.model.rename` now follows a minimal entity-first flow: accepts an optional `ModelNote | ModelFolder`, falls back to a picker listing known notes/folders when omitted, prompts for the new name/title, and updates via `updateNote` / `updateFolder` only.
   - Removed `renameNote` from the model API; rename paths now use `updateNote` directly.

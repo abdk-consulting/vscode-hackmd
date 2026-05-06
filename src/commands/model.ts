@@ -60,16 +60,15 @@ function getSelectedTreeNodesFallback(): any[] {
 /** Check if a folder is a descendant of an ancestor folder by traversing the parent chain. */
 function isFolderDescendantOf(
   model: ReturnType<typeof getHackmdModel>,
-  folderId: string,
-  ancestorFolderId: string,
-  scopeEntity: ModelMyNotes | ModelTeam
+  folder: ModelFolder,
+  ancestorFolder: ModelFolder
 ): boolean {
-  let current = model.getFolderSync(scopeEntity, folderId);
-  while (current && current.parentId) {
-    if (current.parentId === ancestorFolderId) {
+  let currentParent = model.getImmediateParentContainer(folder);
+  while (currentParent.type === 'folder') {
+    if (currentParent === ancestorFolder) {
       return true;
     }
-    current = model.getFolderSync(scopeEntity, current.parentId);
+    currentParent = model.getImmediateParentContainer(currentParent);
   }
   return false;
 }
@@ -214,12 +213,11 @@ async function pickMoveTargetFolder(
   }
 
   // Collect folder targets with their entities
-  type TargetOption = { id: string | null; label: string; description: string; entity: ModelFolder | null };
-  const folderTargets: TargetOption[] = [{ id: null, label: 'Root', description: 'No parent folder', entity: null }]
+  type TargetOption = { label: string; description: string; entity: ModelFolder | null };
+  const folderTargets: TargetOption[] = [{ label: 'Root', description: 'No parent folder', entity: null }]
     .concat(collectFolders(snapshot.rootFolders).map((folder) => ({
-      id: folder.id,
       label: folder.name,
-      description: folder.path || folder.id,
+      description: folder.path || folder.name,
       entity: folder,
     })));
 
@@ -232,15 +230,12 @@ async function pickMoveTargetFolder(
         return true;
       }
       // Can't move folder into itself
-      if (target.id === itemAsAny.id) {
+      if (target.entity === itemAsAny) {
         return false;
       }
       // Can't move folder into its own descendant
-      if (target.id) {
-        const isDescendant = isFolderDescendantOf(model, target.id, itemAsAny.id, scopeEntity);
-        if (isDescendant) {
-          return false;
-        }
+      if (target.entity && isFolderDescendantOf(model, target.entity, itemAsAny)) {
+        return false;
       }
       return true;
     });
@@ -248,8 +243,9 @@ async function pickMoveTargetFolder(
     // Target must differ from current parent for at least one item
     const differsForAtLeastOne = itemsToMove.some((item) => {
       const itemAsAny = item as any;
-      const currentParent = itemAsAny.parentFolderId ?? itemAsAny.parentId ?? null;
-      return currentParent !== target.id;
+      const currentParent = model.getImmediateParentContainer(itemAsAny);
+      const targetContainer = target.entity ?? scopeEntity;
+      return currentParent !== targetContainer;
     });
 
     return validForAll && differsForAtLeastOne;
@@ -260,8 +256,9 @@ async function pickMoveTargetFolder(
     return undefined;
   }
 
-  const picked = await vscode.window.showQuickPick(
-    validTargets.map((target) => ({ label: target.label, description: target.description, id: target.id })),
+  type MoveTargetQuickPickItem = vscode.QuickPickItem & { target: TargetOption };
+  const picked = await vscode.window.showQuickPick<MoveTargetQuickPickItem>(
+    validTargets.map((target) => ({ label: target.label, description: target.description, target })),
     {
       placeHolder: 'Choose destination folder',
       ignoreFocusOut: true,
@@ -272,8 +269,7 @@ async function pickMoveTargetFolder(
     return undefined;
   }
 
-  const selectedTarget = validTargets.find((t) => t.id === picked.id);
-  return selectedTarget?.entity ?? undefined;
+  return picked.target.entity ?? undefined;
 }
 
 export function registerModelCommands(context: vscode.ExtensionContext): void {
@@ -464,29 +460,28 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     // Step 10: Remove duplicates from candidates
-    const seen = new Set<string>();
+    const seen = new Set<ModelNote | ModelFolder>();
     const dedupedCandidates: (ModelNote | ModelFolder)[] = [];
     for (const candidate of candidates) {
-      const c = candidate as any;
-      const key = `${c.type}:${c.id}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      if (!seen.has(candidate)) {
+        seen.add(candidate);
         dedupedCandidates.push(candidate);
       }
     }
 
     // Step 11: Remove candidates that are descendants of other candidates
-    const candidateIds = new Set(dedupedCandidates.map((c) => (c as any).id));
+    const candidateSet = new Set(dedupedCandidates);
     const itemsToMove = dedupedCandidates.filter((candidate) => {
       const c = candidate as any;
       if (c.type === 'note') {
         return true; // notes have no descendants
       }
-      // For folders, check if its parent is another move candidate
-      if (!c.parentId) {
+      // For folders, check if parent container is another move candidate folder.
+      const parent = model.getImmediateParentContainer(c);
+      if (parent.type !== 'folder') {
         return true;
       }
-      return !candidateIds.has(c.parentId);
+      return !candidateSet.has(parent);
     });
 
     // Step 8: If target is undefined, show picker to select destination
@@ -504,14 +499,14 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     // Step 9: Validate target entity against conditions a, b, c
     const targetAsAny = dest as any;
     // a) Target is not equal to any move candidate
-    if (candidateIds.has(targetAsAny.id)) {
+    if (candidateSet.has(dest as ModelNote | ModelFolder)) {
       throw new Error('Target entity cannot be one of the items being moved.');
     }
     // b) Target is not a descendant of any move candidate
     if (targetAsAny.type === 'folder') {
       for (const candidate of itemsToMove) {
         const candAsAny = candidate as any;
-        if (candAsAny.type === 'folder' && isFolderDescendantOf(model, targetAsAny.id, candAsAny.id, scopeEntity)) {
+        if (candAsAny.type === 'folder' && isFolderDescendantOf(model, targetAsAny, candAsAny)) {
           throw new Error('Target cannot be a descendant of items being moved.');
         }
       }
@@ -523,11 +518,11 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     // Step 12: Remove immediate children of the target
-    const targetId = (dest as any).id ?? null;
+    const targetContainer = dest;
     const actionableItems = itemsToMove.filter((item) => {
       const i = item as any;
-      const currentParent = i.parentFolderId ?? i.parentId ?? null;
-      return currentParent !== targetId;
+      const currentParent = model.getImmediateParentContainer(i);
+      return currentParent !== targetContainer;
     });
 
     // Step 13: If set of move candidates is now empty, silently do nothing
@@ -539,13 +534,9 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     await Promise.all(actionableItems.map(async (item) => {
       const i = item as any;
       if (i.type === 'note') {
-        const noteEntity = model.getNoteSync(scopeEntity, i.id);
-        if (!noteEntity) { return; }
-        return model.moveNote(noteEntity, dest);
+        return model.moveNote(i, dest);
       } else if (i.type === 'folder') {
-        const folderEntity = model.getFolderSync(scopeEntity, i.id);
-        if (!folderEntity) { return; }
-        return model.moveFolder(folderEntity, dest);
+        return model.moveFolder(i, dest);
       }
     }));
 
@@ -573,10 +564,11 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
 
     try {
       const content = await model.getNoteContent(note);
-      const noteScopeEntity: ModelMyNotes | ModelTeam = model.getScopeEntityForItem(note);
-      const container: ModelMyNotes | ModelTeam | ModelFolder = note.parentFolderId
-        ? (model.getFolderSync(noteScopeEntity, note.parentFolderId) ?? noteScopeEntity)
-        : noteScopeEntity;
+      const parentContainer = model.getImmediateParentContainer(note);
+      const container: ModelMyNotes | ModelTeam | ModelFolder =
+        parentContainer.type === 'folder' || parentContainer.type === 'team' || parentContainer.type === 'my-notes'
+          ? parentContainer
+          : model.getScopeEntityForItem(note);
       return model.createNote(container, {
         title: note.title || note.shortId || 'Untitled',
         content: content ?? '',
@@ -629,16 +621,8 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     if (confirm !== 'Delete') { return; }
 
     await Promise.all([
-      ...notes.map((n) => {
-        const scopeEntity = model.getScopeEntityForItem(n);
-        const noteEntity = model.getNoteSync(scopeEntity, n.id);
-        return noteEntity ? model.deleteNote(noteEntity) : undefined;
-      }),
-      ...folders.map((f) => {
-        const scopeEntity = model.getScopeEntityForItem(f);
-        const folderEntity = model.getFolderSync(scopeEntity, f.id);
-        return folderEntity ? model.deleteFolder(folderEntity) : undefined;
-      }),
+      ...notes.map((n) => model.deleteNote(n)),
+      ...folders.map((f) => model.deleteFolder(f)),
     ]);
     return true;
   });

@@ -131,30 +131,26 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       return;
     }
 
-    this.fireNoteRefresh(note.id);
+    this.fireNoteRefresh(note);
   }
 
-  private fireNoteRefresh(noteId: string): void {
-    if (!this.model) {
-      return;
-    }
-    const note = this.model.getHistoryNotes().find((entry) => entry.id === noteId);
-    this._onDidChangeTreeData.fire(note || undefined);
+  private fireNoteRefresh(note: ModelNote): void {
+    this._onDidChangeTreeData.fire(note);
   }
 
-  removeNoteFromCache(noteId: string): void {
+  removeNoteFromCache(note: ModelNote): void {
     // No-op: cache invalidation is driven by model events
   }
 
-  updateNoteInCache(noteId: string, updatedNote: any, emitEvent = true): void {
+  updateNoteInCache(note: ModelNote, updatedNote: any, emitEvent = true): void {
     // No-op: cache invalidation is driven by model events
   }
 
-  findNoteInCache(noteId: string): ModelNote | undefined {
+  findNoteInCache(note: ModelNote): ModelNote | undefined {
     if (!this.model) {
       return undefined;
     }
-    return this.model.getHistoryNotes().find((n) => n.id === noteId);
+    return this.model.getHistoryNotes().find((n) => n === note);
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
@@ -213,7 +209,6 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = undefined;
     }
 
-    (item as any).noteId = note.id;
     item.contextValue = isPending ? 'file-pending' : 'file';
     item.iconPath = isPending ? ICON_SPINNER : ICON_FILE;
 

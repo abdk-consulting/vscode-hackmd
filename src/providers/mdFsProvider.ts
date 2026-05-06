@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { getHackmdModel } from '../model';
+import { getHackmdModel, ModelFolder, ModelNote } from '../model';
 
 export class File implements vscode.FileStat {
   type: vscode.FileType;
@@ -156,73 +156,13 @@ interface FolderPath {
 }
 
 export function generateResourceUri(
-  label: string,
-  noteId: string,
-  teamPath?: string | null,
-  folderPaths?: FolderPath[]
+  note: ModelNote
 ) {
-  const sanitizedTitle = (label || 'Untitled').replace(/[\\/:*?"<>|#]/g, '-');
-
-  // Build folder path from folderPaths array
-  let folderPath = '';
-  if (folderPaths && folderPaths.length > 0) {
-    folderPath = folderPaths.map(f => f.name.replace(/[\\/:*?"<>|#]/g, '-')).join('/');
-  }
-
-  // Create hierarchical path for breadcrumbs:
-  // Personal notes: My Notes/{folders}/{title}
-  // Team notes: Teams/{teamPath}/{folders}/{title}
-  const folderPrefix = folderPath ? `/${folderPath}` : '';
-  let path: string;
-  if (teamPath) {
-    path = `/Teams/${teamPath}${folderPrefix}/${sanitizedTitle}`;
-  } else {
-    path = `/My Notes${folderPrefix}/${sanitizedTitle}`;
-  }
-
-  // Keep resource identity in query params for both notes and folders.
-  const params = new URLSearchParams();
-  params.set('noteId', noteId);
-  if (teamPath) {
-    params.set('teamPath', teamPath);
-  }
-
-  return vscode.Uri.from({
-    scheme: 'hackmd',
-    path,
-    query: params.toString(),
-    fragment: '',
-  });
+  return getModel().toUri(note);
 }
 
 export function generateFolderResourceUri(
-  label: string,
-  folderId: string,
-  teamPath?: string | null,
-  folderPaths?: FolderPath[]
+  folder: ModelFolder
 ) {
-  const sanitizedTitle = (label || 'Folder').replace(/[\\/:*?"<>|#]/g, '-');
-
-  let folderPath = '';
-  if (folderPaths && folderPaths.length > 0) {
-    folderPath = folderPaths.map((f) => f.name.replace(/[\\/:*?"<>|#]/g, '-')).join('/');
-  }
-
-  const folderPrefix = folderPath ? `/${folderPath}` : '';
-  const path = teamPath
-    ? `/Teams/${teamPath}${folderPrefix}/${sanitizedTitle}`
-    : `/My Notes${folderPrefix}/${sanitizedTitle}`;
-
-  const params = new URLSearchParams();
-  params.set('folderId', folderId);
-  if (teamPath) {
-    params.set('teamPath', teamPath);
-  }
-
-  return vscode.Uri.from({
-    scheme: 'hackmd',
-    path,
-    query: params.toString(),
-    fragment: '',
-  });
+  return getModel().toUri(folder);
 }

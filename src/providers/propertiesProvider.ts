@@ -15,7 +15,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
   private _view?: vscode.WebviewView;
   private _currentNote?: ModelNote;
-  private _currentNoteId?: string;
   private _pendingChanges: Partial<NoteProperties> = {};
   private _isSaving = false;
 
@@ -63,8 +62,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   }
 
   public async openNote(note: ModelNote): Promise<boolean> {
-    const noteId = note.id;
-    if (this._currentNoteId && this._currentNoteId !== noteId && this.hasPendingChanges()) {
+    if (this._currentNote && this._currentNote !== note && this.hasPendingChanges()) {
       const selection = await vscode.window.showWarningMessage(
         'You have unsaved property changes. What would you like to do?',
         { modal: true },
@@ -85,7 +83,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     }
 
     this._currentNote = note;
-    this._currentNoteId = noteId;
     this._pendingChanges = {};
     this._isSaving = false;
     this._fullRenderWebview();
@@ -117,8 +114,8 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     return false;
   }
 
-  public updateCurrentNote(noteId: string, updatedNote: ModelNote): void {
-    if (this._currentNoteId === noteId && this._currentNote) {
+  public updateCurrentNote(currentNote: ModelNote, updatedNote: ModelNote): void {
+    if (this._currentNote === currentNote) {
       this._currentNote = updatedNote;
       this._fullRenderWebview();
     }
@@ -130,7 +127,6 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
 
   private reset() {
     this._currentNote = undefined;
-    this._currentNoteId = undefined;
     this._pendingChanges = {};
     this._isSaving = false;
     this._fullRenderWebview();
@@ -192,7 +188,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   }
 
   public async saveCurrentProperties(): Promise<boolean> {
-    if (!this._currentNote || !this._currentNoteId || this._isSaving) {
+    if (!this._currentNote || this._isSaving) {
       return false;
     }
 
@@ -309,11 +305,23 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
     return true;
   }
 
+  private isCurrentNoteInTeamScope(): boolean {
+    if (!this._currentNote) {
+      return false;
+    }
+    try {
+      return getHackmdModel().getScopeEntityForItem(this._currentNote).type === 'team';
+    } catch {
+      return false;
+    }
+  }
+
   private _fullRenderWebview() {
     if (this._view) {
       this._view.webview.postMessage({
         type: 'update',
         note: this._currentNote,
+        isTeamScope: this.isCurrentNoteInTeamScope(),
         pendingChanges: this._pendingChanges,
         canSave: this._canSave(),
         isSaving: this._isSaving,
@@ -511,6 +519,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
   <script>
     const vscode = acquireVsCodeApi();
     let currentNote = null;
+    let isTeamScope = false;
     let pendingChanges = {};
     let canSave = false;
     let isSaving = false;
@@ -522,6 +531,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
       switch (message.type) {
         case 'update':
           currentNote = message.note;
+          isTeamScope = !!message.isTeamScope;
           pendingChanges = message.pendingChanges || {};
           canSave = !!message.canSave;
           isSaving = !!message.isSaving;
@@ -678,7 +688,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           <div class="permission-row">
             <label for="readPermission">Read</label>
             <select id="readPermission" \${isSaving ? 'disabled' : ''}>
-              <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>\${currentNote.teamPath ? 'Owners' : 'Only me'}</option>
+              <option value="owner" \${readPermValue === 'owner' ? 'selected' : ''}>\${isTeamScope ? 'Owners' : 'Only me'}</option>
               <option value="signed_in" \${readPermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
               <option value="guest" \${readPermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
             </select>
@@ -687,7 +697,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
           <div class="permission-row">
             <label for="writePermission">Write</label>
             <select id="writePermission" \${isSaving ? 'disabled' : ''}>
-              <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>\${currentNote.teamPath ? 'Owners' : 'Only me'}</option>
+              <option value="owner" \${writePermValue === 'owner' ? 'selected' : ''}>\${isTeamScope ? 'Owners' : 'Only me'}</option>
               <option value="signed_in" \${writePermValue === 'signed_in' ? 'selected' : ''}>Signed-in users</option>
               <option value="guest" \${writePermValue === 'guest' ? 'selected' : ''}>Anyone with link</option>
             </select>

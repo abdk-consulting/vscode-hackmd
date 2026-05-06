@@ -471,7 +471,7 @@ test('MyNotesProvider note tree items bind single-click open with preserveFocus'
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode, preserveFocus: true }]);
+  assert.deepEqual(item.command.arguments, [noteNode, { preserveFocus: true }]);
 });
 
 test('MyNotesProvider emits pending-state changes without marking tree dirty', async () => {
@@ -787,7 +787,7 @@ test('TeamNotesProvider note tree items bind single-click open with preserveFocu
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode, preserveFocus: true }]);
+  assert.deepEqual(item.command.arguments, [noteNode, { preserveFocus: true }]);
 });
 
 test('TeamNotesProvider emits pending-state changes without marking tree dirty for container transitions', async () => {
@@ -959,7 +959,7 @@ test('HistoryProvider note tree items bind single-click open with preserveFocus'
   const item = provider.getTreeItem(noteNode);
 
   assert.equal(item.command.command, 'hackmd.ui.edit');
-  assert.deepEqual(item.command.arguments, [{ type: 'note', note: noteNode, preserveFocus: true }]);
+  assert.deepEqual(item.command.arguments, [noteNode, { preserveFocus: true }]);
 });
 
 test('HistoryProvider emits pending-state changes around refresh lifecycle', async () => {

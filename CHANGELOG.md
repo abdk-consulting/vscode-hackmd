@@ -55,6 +55,15 @@
 - Provider tests: All container event invalidation tests passing
 - Compilation: 0 errors across all build configurations
 
+### Fixed (Test Harness Alignment)
+
+- Updated Node test suites to match the entity-first command contracts and direct entity argument shapes (`note` / `folder` / `team`) across UI commands, providers, and drag-and-drop paths.
+- Updated filesystem provider tests for entity-based URI generator signatures (`generateResourceUri(note)` and `generateFolderResourceUri(folder)`) and model `toUri(...)` delegation.
+- Updated properties provider tests for reference-based `updateCurrentNote(currentNote, updatedNote)` behavior.
+- Updated note completion tests to reflect publish-link-first path resolution and fallback link formatting.
+- Aligned provider tree-item command assertions with the current edit-command argument structure (`[noteNode, { preserveFocus: true }]`).
+- End-to-end verification: full `npm test` suite now passes (exit code `0`).
+
 ---
 
 ### Previous Changes

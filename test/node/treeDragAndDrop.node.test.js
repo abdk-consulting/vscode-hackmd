@@ -147,7 +147,7 @@ test('handleDrag serializes notes with model note URIs', async () => {
   const controller = new NoteDragAndDropController();
   const dataTransfer = new stub.vscodeStub.DataTransfer();
 
-  controller.handleDrag([{ type: 'note', note }], dataTransfer);
+  controller.handleDrag([{ type: 'note', ...note }], dataTransfer);
 
   const raw = await dataTransfer.get('text/uri-list').asString();
   assert.match(raw, /hackmd:\/notes\/n1\?noteId=n1/);
@@ -186,10 +186,11 @@ test('handleDrop moves notes into a folder target via model moveNote', async () 
 
   await controller.handleDrop({ type: 'folder', id: 'dest-folder', teamPath: null }, dataTransfer);
 
-  assert.equal(stub.commandsState.executeCalls.length, 0);
-  assert.equal(model.calls.moveNote.length, 1);
-  assert.equal(model.calls.moveNote[0][0].id, 'n1');
-  assert.equal(model.calls.moveNote[0][1].id, 'dest-folder');
+  assert.equal(stub.commandsState.executeCalls.length, 1);
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.model.move');
+  assert.equal(stub.commandsState.executeCalls[0][1].id, 'n1');
+  assert.equal(stub.commandsState.executeCalls[0][3].id, 'dest-folder');
+  assert.equal(model.calls.moveNote.length, 0);
 });
 
 test('handleDrop rejects cross-scope note drops', async () => {
@@ -213,10 +214,17 @@ test('handleDrop rejects moving folders into descendant targets', async () => {
   const model = new MockModel();
   const folderUriA = 'hackmd:/folders/f1?folderId=f1';
   const folderUriB = 'hackmd:/folders/f2?folderId=f2';
+  const normalizedFolderUriA = stub.vscodeStub.Uri.parse(folderUriA).toString();
+  const normalizedFolderUriB = stub.vscodeStub.Uri.parse(folderUriB).toString();
 
-  model.mapUri(folderUriA, { type: 'folder', id: 'f1', parentId: null, teamPath: null, name: 'Folder One' });
-  model.mapUri(folderUriB, { type: 'folder', id: 'f2', teamPath: null, name: 'Folder Two' });
-  model.setFolder({ type: 'folder', id: 'f1', parentId: null, teamPath: null, name: 'Folder One', children: [], notes: [] });
+  const f1 = { type: 'folder', id: 'f1', parentId: null, teamPath: null, name: 'Folder One', children: [], notes: [] };
+  const f2 = { type: 'folder', id: 'f2', parentId: null, teamPath: null, name: 'Folder Two', children: [], notes: [] };
+
+  model.mapUri(folderUriA, f1);
+  model.mapUri(normalizedFolderUriA, f1);
+  model.mapUri(folderUriB, f2);
+  model.mapUri(normalizedFolderUriB, f2);
+  model.setFolder(f1);
   model.setFolder({ type: 'folder', id: 'dest', parentId: 'f1', teamPath: null, name: 'Dest', children: [], notes: [] });
   stub.setModel(model);
 

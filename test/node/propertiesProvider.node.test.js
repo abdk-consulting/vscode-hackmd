@@ -367,7 +367,7 @@ test('updateCurrentNote: matching id updates note and re-renders', async () => {
   wv.messages.length = 0;
 
   const updatedNote = makeNote({ title: 'Updated Title' });
-  provider.updateCurrentNote('n1', updatedNote);
+  provider.updateCurrentNote(note, updatedNote);
 
   const updateMsg = wv.messages.find((m) => m.type === 'update');
   assert.ok(updateMsg);
@@ -380,8 +380,9 @@ test('updateCurrentNote: non-matching id is ignored', async () => {
 
   wv.messages.length = 0;
 
-  const otherNote = makeNote({ id: 'other' });
-  provider.updateCurrentNote('other', otherNote);
+  const otherCurrentRef = makeNote({ id: 'other' });
+  const otherNote = makeNote({ id: 'other', title: 'Other Title' });
+  provider.updateCurrentNote(otherCurrentRef, otherNote);
 
   assert.equal(wv.messages.length, 0, 'no messages should be posted for a non-matching id');
 });

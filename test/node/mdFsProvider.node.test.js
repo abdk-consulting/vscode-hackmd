@@ -85,6 +85,29 @@ class MockModel {
     }
     return { ...note, ...input };
   }
+
+  toUri(entity) {
+    if (entity?.type === 'folder') {
+      const path = entity.teamPath
+        ? `/Teams/${entity.teamPath}/${(entity.name || 'Folder').replace(/[\\/:*?"<>|#]/g, '-')}`
+        : `/My Notes/${(entity.name || 'Folder').replace(/[\\/:*?"<>|#]/g, '-')}`;
+      const query = entity.teamPath
+        ? `folderId=${entity.id}&teamPath=${entity.teamPath}`
+        : `folderId=${entity.id}`;
+      return stub.makeUri('hackmd', path, query);
+    }
+
+    const folderPrefix = (entity.folderPaths || [])
+      .map((folder) => (folder.name || '').replace(/[\\/:*?"<>|#]/g, '-'))
+      .join('/');
+    const safeTitle = (entity.title || 'Untitled').replace(/[\\/:*?"<>|#]/g, '-');
+    const basePath = entity.teamPath ? `/Teams/${entity.teamPath}` : '/My Notes';
+    const path = folderPrefix ? `${basePath}/${folderPrefix}/${safeTitle}` : `${basePath}/${safeTitle}`;
+    const query = entity.teamPath
+      ? `noteId=${entity.id}&teamPath=${entity.teamPath}`
+      : `noteId=${entity.id}`;
+    return stub.makeUri('hackmd', path, query);
+  }
 }
 
 function callCount(model, method) {
@@ -125,21 +148,33 @@ test('Directory constructor initializes entries map', () => {
 });
 
 test('generateResourceUri builds personal note URI with sanitized title', () => {
-  const uri = generateResourceUri('N:ote/#1', 'n1', null);
+  const model = new MockModel();
+  stub.setModel(model);
+  const uri = generateResourceUri({ type: 'note', id: 'n1', title: 'N:ote/#1', teamPath: null });
   assert.equal(uri.scheme, 'hackmd');
   assert.equal(uri.path, '/My Notes/N-ote--1');
   assert.ok(uri.query.includes('noteId=n1'));
 });
 
 test('generateResourceUri builds team note URI with folder path', () => {
-  const uri = generateResourceUri('Roadmap', 'n1', 'acme', [{ id: 'f1', name: 'Sprint/1', clientId: 'c1' }]);
+  const model = new MockModel();
+  stub.setModel(model);
+  const uri = generateResourceUri({
+    type: 'note',
+    id: 'n1',
+    title: 'Roadmap',
+    teamPath: 'acme',
+    folderPaths: [{ id: 'f1', name: 'Sprint/1', clientId: 'c1' }],
+  });
   assert.equal(uri.path, '/Teams/acme/Sprint-1/Roadmap');
   assert.ok(uri.query.includes('noteId=n1'));
   assert.ok(uri.query.includes('teamPath=acme'));
 });
 
 test('generateFolderResourceUri includes folderId and teamPath in query', () => {
-  const uri = generateFolderResourceUri('Folder', 'f1', 'acme');
+  const model = new MockModel();
+  stub.setModel(model);
+  const uri = generateFolderResourceUri({ type: 'folder', id: 'f1', name: 'Folder', teamPath: 'acme' });
   assert.equal(uri.path, '/Teams/acme/Folder');
   assert.ok(uri.query.includes('folderId=f1'));
   assert.ok(uri.query.includes('teamPath=acme'));

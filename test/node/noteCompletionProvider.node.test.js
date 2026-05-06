@@ -312,7 +312,14 @@ test('filtering: uses query starting from character after the open bracket', () 
 test('noteLinkPath: team note with permalink → /@team/permalink', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'T', teamPath: 'myteam', userPath: null, permalink: 'my-perm' })]),
+    makeSnapshot([makeNote({
+      id: 'id1',
+      title: 'T',
+      teamPath: 'myteam',
+      userPath: null,
+      permalink: 'my-perm',
+      publishLink: 'https://hackmd.io/@myteam/my-perm',
+    })]),
   );
 
   const items = complete('[', 1, model);
@@ -322,7 +329,14 @@ test('noteLinkPath: team note with permalink → /@team/permalink', () => {
 test('noteLinkPath: team note without permalink uses id → /@team/id', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'T', teamPath: 'myteam', userPath: null, permalink: null })]),
+    makeSnapshot([makeNote({
+      id: 'id1',
+      title: 'T',
+      teamPath: 'myteam',
+      userPath: null,
+      permalink: null,
+      publishLink: 'https://hackmd.io/@myteam/id1',
+    })]),
   );
 
   const items = complete('[', 1, model);
@@ -332,7 +346,14 @@ test('noteLinkPath: team note without permalink uses id → /@team/id', () => {
 test('noteLinkPath: personal note with userPath and permalink → /@user/permalink', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'T', teamPath: null, userPath: 'alice', permalink: 'alice-perm' })]),
+    makeSnapshot([makeNote({
+      id: 'id1',
+      title: 'T',
+      teamPath: null,
+      userPath: 'alice',
+      permalink: 'alice-perm',
+      publishLink: 'https://hackmd.io/@alice/alice-perm',
+    })]),
   );
 
   const items = complete('[', 1, model);
@@ -342,7 +363,14 @@ test('noteLinkPath: personal note with userPath and permalink → /@user/permali
 test('noteLinkPath: personal note with userPath, no permalink → /@user/id', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'T', teamPath: null, userPath: 'alice', permalink: null })]),
+    makeSnapshot([makeNote({
+      id: 'id1',
+      title: 'T',
+      teamPath: null,
+      userPath: 'alice',
+      permalink: null,
+      publishLink: 'https://hackmd.io/@alice/id1',
+    })]),
   );
 
   const items = complete('[', 1, model);
@@ -352,7 +380,14 @@ test('noteLinkPath: personal note with userPath, no permalink → /@user/id', ()
 test('noteLinkPath: note with no scope → /id', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'T', teamPath: null, userPath: null, permalink: null })]),
+    makeSnapshot([makeNote({
+      id: 'id1',
+      title: 'T',
+      teamPath: null,
+      userPath: null,
+      permalink: null,
+      publishLink: 'https://hackmd.io/id1',
+    })]),
   );
 
   const items = complete('[', 1, model);
@@ -362,7 +397,14 @@ test('noteLinkPath: note with no scope → /id', () => {
 test('noteLinkPath: note with no scope but permalink → /permalink', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'T', teamPath: null, userPath: null, permalink: 'slug' })]),
+    makeSnapshot([makeNote({
+      id: 'id1',
+      title: 'T',
+      teamPath: null,
+      userPath: null,
+      permalink: 'slug',
+      publishLink: 'https://hackmd.io/slug',
+    })]),
   );
 
   const items = complete('[', 1, model);
@@ -376,21 +418,21 @@ test('noteLinkPath: note with no scope but permalink → /permalink', () => {
 test('item.insertText is [Title](linkPath)', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'My Note', userPath: 'u', permalink: 'p' })]),
+    makeSnapshot([makeNote({ id: 'id1', title: 'My Note', userPath: 'u', permalink: 'p', publishLink: null })]),
   );
 
   const items = complete('[', 1, model);
-  assert.equal(items[0].insertText, '[My Note](/@u/p)');
+  assert.equal(items[0].insertText, '[My Note](/u/p)');
 });
 
 test('item.detail equals the link path', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'N', userPath: 'u', permalink: 'p' })]),
+    makeSnapshot([makeNote({ id: 'id1', title: 'N', userPath: 'u', permalink: 'p', publishLink: null })]),
   );
 
   const items = complete('[', 1, model);
-  assert.equal(items[0].detail, '/@u/p');
+  assert.equal(items[0].detail, '/u/p');
 });
 
 test('item.sortText is title.toLowerCase()', () => {
@@ -436,11 +478,11 @@ test('item.documentation omits permalink line when note has none', () => {
 test('item.documentation always includes the link text', () => {
   const model = new MockModel();
   model.setPersonal(
-    makeSnapshot([makeNote({ id: 'id1', title: 'N', userPath: 'u', permalink: null })]),
+    makeSnapshot([makeNote({ id: 'id1', title: 'N', userPath: 'u', permalink: null, publishLink: null })]),
   );
 
   const items = complete('[', 1, model);
-  assert.ok(items[0].documentation.value.includes('[N](/@u/id1)'));
+  assert.ok(items[0].documentation.value.includes('[N](/u/id1)'));
 });
 
 // ===========================================================================

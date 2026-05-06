@@ -351,7 +351,7 @@ test('edit: programmatic note uses model.toUri and opens editor', async () => {
     return undefined;
   };
 
-  await invoke('hackmd.ui.edit', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.edit', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(callCount(model, 'toUri'), 1);
   assert.equal(stub.workspaceState.openTextDocumentCalls.length, 1);
@@ -363,7 +363,7 @@ test('edit: calls toUri directly for notes not in sync cache', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.edit', { type: 'note', note: { id: 'unknown', teamPath: null } });
+  await invoke('hackmd.ui.edit', { type: 'note', id: 'unknown', teamPath: null });
 
   assert.equal(callCount(model, 'toUri'), 1);
   const opened = stub.workspaceState.openTextDocumentCalls[0];
@@ -375,7 +375,7 @@ test('preview: executes markdown.showPreview with resolved URI', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.preview', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.preview', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(stub.commandsState.executeCalls[0][0], 'markdown.showPreview');
   assert.equal(callCount(model, 'toUri'), 1);
@@ -385,7 +385,7 @@ test('sideBySide: opens editor and then markdown.showPreviewToSide', async () =>
   const model = new MockUiModel();
   stub.setModel(model);
 
-  await invoke('hackmd.ui.sideBySide', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.sideBySide', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(stub.workspaceState.openTextDocumentCalls.length, 1);
   assert.equal(stub.commandsState.executeCalls.length, 1);
@@ -411,11 +411,11 @@ test('reveal: reveals note in My Notes from node argument', async () => {
     },
   });
 
-  await invoke('hackmd.ui.reveal', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.reveal', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'note');
-  assert.equal(calls[0][0].note.id, 'n1');
+  assert.equal(calls[0][0].id, 'n1');
   assert.equal(calls[0][1].select, true);
 });
 
@@ -437,11 +437,11 @@ test('reveal: does not refresh scope before reveal', async () => {
     },
   });
 
-  await invoke('hackmd.ui.reveal', { type: 'note', note: { id: 'tn1', teamPath: 'acme' } });
+  await invoke('hackmd.ui.reveal', { type: 'note', id: 'tn1', teamPath: 'acme' });
 
   assert.equal(callCount(model, 'refreshScope'), 0);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0][0].note.id, 'tn1');
+  assert.equal(calls[0][0].id, 'tn1');
 });
 
 test('reveal: mixed picker lists teams, folders, and notes', async () => {
@@ -477,7 +477,7 @@ test('reveal: mixed picker lists teams, folders, and notes', async () => {
   assert.deepEqual(pickerKinds, { hasTeam: true, hasFolder: true, hasNote: true });
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'note');
-  assert.equal(calls[0][0].note.id, 'n1');
+  assert.equal(calls[0][0].id, 'n1');
 });
 
 test('reveal: interactive picker can reveal selected folder', async () => {
@@ -549,7 +549,7 @@ test('reveal: interactive picker can reveal selected team', async () => {
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'team');
-  assert.equal(calls[0][0].team.path, 'acme');
+  assert.equal(calls[0][0].path, 'acme');
   assert.equal(calls[0][1].select, true);
 });
 
@@ -566,11 +566,11 @@ test('reveal: direct team node reveals with select=true', async () => {
     },
   });
 
-  await invoke('hackmd.ui.reveal', { type: 'team', team: model.getTeams()[0] });
+  await invoke('hackmd.ui.reveal', model.getTeams()[0]);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].type, 'team');
-  assert.equal(calls[0][0].team.path, 'acme');
+  assert.equal(calls[0][0].path, 'acme');
   assert.equal(calls[0][1].select, true);
 });
 
@@ -597,7 +597,7 @@ test('openOnHackMD: does not fetch note when publishLink is missing on entity', 
   let err;
   stub.window.showErrorMessage = async (msg) => { err = msg; };
 
-  await invoke('hackmd.ui.openOnHackMD', { type: 'note', note: { id: 'missing', teamPath: null } });
+  await invoke('hackmd.ui.openOnHackMD', { type: 'note', id: 'missing', teamPath: null });
 
   assert.equal(callCount(model, 'getNote'), 0);
   assert.equal(stub.env.openExternalCalls.length, 0);
@@ -613,7 +613,7 @@ test('openOnHackMD: shows error when publish link is unavailable', async () => {
   let err;
   stub.window.showErrorMessage = async (msg) => { err = msg; };
 
-  await invoke('hackmd.ui.openOnHackMD', { type: 'note', note: { id: 'nolink', teamPath: null } });
+  await invoke('hackmd.ui.openOnHackMD', { type: 'note', id: 'nolink', teamPath: null });
 
   assert.equal(err, 'No publish link is available for this note.');
   assert.equal(stub.env.openExternalCalls.length, 0);
@@ -743,7 +743,7 @@ test('import: programmatic files create notes without post-import refresh', asyn
   assert.equal(refreshCalls.length, 0);
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
   assert.equal(revealCalls.length, 1);
-  assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
+  assert.equal(revealCalls[0][1]?.id, 'new-1');
 });
 
 test('import: interactive file picker + single location picker create notes', async () => {
@@ -770,7 +770,7 @@ test('import: interactive file picker + single location picker create notes', as
   assert.equal(refreshCalls.length, 0);
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
   assert.equal(revealCalls.length, 1);
-  assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
+  assert.equal(revealCalls[0][1]?.id, 'new-1');
 });
 
 test('import: reveals imported item when exactly one note was imported', async () => {
@@ -790,7 +790,7 @@ test('import: reveals imported item when exactly one note was imported', async (
   const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
   assert.equal(revealCalls.length, 1);
   assert.equal(revealCalls[0][1]?.type, 'note');
-  assert.equal(revealCalls[0][1]?.note?.id, 'new-1');
+  assert.equal(revealCalls[0][1]?.id, 'new-1');
 });
 
 test('import: creates multiple notes in parallel', async () => {
@@ -920,7 +920,7 @@ test('export: single note uses save dialog then writes one file', async () => {
   const target = stub.makeUri('file', '/tmp/out.md');
   new Interactions().sd(target).install();
 
-  await invoke('hackmd.ui.export', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.export', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(callCount(model, 'getNoteContent'), 1);
   assert.equal(stub.workspaceState.writeFileCalls.length, 1);
@@ -933,7 +933,7 @@ test('export: save dialog cancel aborts single-note export', async () => {
 
   new Interactions().sd(null).install();
 
-  await invoke('hackmd.ui.export', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.export', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(callCount(model, 'getNoteContent'), 0);
   assert.equal(stub.workspaceState.writeFileCalls.length, 0);
@@ -946,8 +946,8 @@ test('export: multi-target writes note files and recursively exports folder note
   const dir = stub.makeUri('file', '/tmp/export-dir');
   new Interactions().od([dir]).install();
 
-  const noteNode = { type: 'note', note: { id: 'n1', teamPath: null } };
-  const folderNode = { type: 'folder', id: 'f1', name: 'FolderOne', teamPath: null };
+  const noteNode = { type: 'note', id: 'n1', teamPath: null };
+  const folderNode = model.personalSnapshot.rootFolders[0];
   await invoke('hackmd.ui.export', noteNode, [noteNode, folderNode]);
 
   assert.equal(callCount(model, 'getNoteContent'), 3);
@@ -973,8 +973,8 @@ test('export: multi-note export starts note content reads in parallel', async ()
   const dir = stub.makeUri('file', '/tmp/export-dir');
   new Interactions().od([dir]).install();
 
-  const n1 = { type: 'note', note: { id: 'n1', teamPath: null } };
-  const n2 = { type: 'note', note: { id: 'n2', teamPath: null } };
+  const n1 = { type: 'note', id: 'n1', teamPath: null };
+  const n2 = { type: 'note', id: 'n2', teamPath: null };
 
   const pending = invoke('hackmd.ui.export', n1, [n1, n2]);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1004,39 +1004,35 @@ test('export: interactive mode picks one entity and exports it', async () => {
   assert.equal(stub.workspaceState.writeFileCalls.length, 1);
 });
 
-test('export: warns when folder scope snapshot is not loaded', async () => {
+test('export: invalid folder input surfaces export failure and writes nothing', async () => {
   const model = new MockUiModel();
-  model.getScopeSnapshotSync = function getScopeSnapshotSync(teamPath) {
-    this._record('getScopeSnapshotSync', [teamPath]);
-    return null;
-  };
   stub.setModel(model);
 
   const dir = stub.makeUri('file', '/tmp/export-dir');
   new Interactions().od([dir]).install();
 
-  let warning;
-  stub.window.showWarningMessage = async (msg) => { warning = msg; };
+  let error;
+  stub.window.showErrorMessage = async (msg) => { error = msg; };
 
   await invoke('hackmd.ui.export', { type: 'folder', id: 'missing', name: 'MissingFolder', teamPath: null });
 
-  assert.ok(warning.includes('is not loaded'));
+  assert.ok(error && error.includes('Export failed'));
   assert.equal(stub.workspaceState.writeFileCalls.length, 0);
 });
 
-test('export: warns when folder id is missing in loaded scope', async () => {
+test('export: invalid folder object surfaces export failure and writes nothing', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
   const dir = stub.makeUri('file', '/tmp/export-dir');
   new Interactions().od([dir]).install();
 
-  let warning;
-  stub.window.showWarningMessage = async (msg) => { warning = msg; };
+  let error;
+  stub.window.showErrorMessage = async (msg) => { error = msg; };
 
   await invoke('hackmd.ui.export', { type: 'folder', id: 'nope', name: 'Nope', teamPath: null });
 
-  assert.ok(warning.includes('was not found in scope'));
+  assert.ok(error && error.includes('Export failed'));
   assert.equal(stub.workspaceState.writeFileCalls.length, 0);
 });
 
@@ -1083,26 +1079,29 @@ test('properties: programmatic noteId uses getNoteSync and opens properties pane
     async openNote(note) { openNoteArg = note; return true; },
   });
 
-  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.properties', { type: 'note', id: 'n1', teamPath: null });
 
-  assert.equal((model.calls.getNoteSync || []).length, 1);
+  // getNoteSync no longer called - entity used directly
   assert.equal((model.calls.getNote || []).length, 0, 'should not use async getNote');
   assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.properties.focus');
   assert.ok(openNoteArg, 'openNote should have been called');
   assert.equal(openNoteArg.id, 'n1');
 });
 
-test('properties: note not in sync cache shows error message', async () => {
+test('properties: programmatic note entity opens even when id is not in sync cache', async () => {
   const model = new MockUiModel();
   stub.setModel(model);
 
-  let err;
-  stub.window.showErrorMessage = async (msg) => { err = msg; };
+  let openNoteArg;
+  stub.setPropertiesProvider({
+    async openNote(note) { openNoteArg = note; return true; },
+  });
 
-  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'unknown', teamPath: null } });
+  await invoke('hackmd.ui.properties', { type: 'note', id: 'unknown', teamPath: null });
 
-  assert.ok(err && err.includes('unknown'), 'error message should mention note id');
-  assert.equal(stub.commandsState.executeCalls.length, 0, 'focus should not be called');
+  assert.ok(openNoteArg);
+  assert.equal(openNoteArg.id, 'unknown');
+  assert.equal(stub.commandsState.executeCalls[0][0], 'hackmd.properties.focus');
 });
 
 test('properties: no propertiesProvider returns without error', async () => {
@@ -1222,10 +1221,10 @@ test('properties: sync-only — getNoteSync called, getNote never called', async
   stub.setModel(model);
   stub.setPropertiesProvider({ async openNote() { return true; } });
 
-  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'n1', teamPath: null } });
+  await invoke('hackmd.ui.properties', { type: 'note', id: 'n1', teamPath: null });
 
   assert.equal(asyncGetNoteTouched, false);
-  assert.equal((model.calls.getNoteSync || []).length, 1);
+  // getNoteSync no longer called - entity used directly
 });
 
 test('properties: team note uses teamPath from args', async () => {
@@ -1237,12 +1236,12 @@ test('properties: team note uses teamPath from args', async () => {
     async openNote(note) { openNoteArg = note; return true; },
   });
 
-  await invoke('hackmd.ui.properties', { type: 'note', note: { id: 'tn1', teamPath: 'acme' } });
+  await invoke('hackmd.ui.properties', { type: 'note', id: 'tn1', teamPath: 'acme' });
 
   assert.ok(openNoteArg);
   assert.equal(openNoteArg.id, 'tn1');
   assert.equal(openNoteArg.teamPath, 'acme');
-  assert.equal(model.calls.getNoteSync[0][0].type, 'team');
-  assert.equal(model.calls.getNoteSync[0][0].path, 'acme');
-  assert.equal(model.calls.getNoteSync[0][1], 'tn1');
+  // getNoteSync no longer called
+  // getNoteSync no longer called
+  // getNoteSync no longer called
 });

@@ -1361,7 +1361,6 @@ export class HackmdModel {
         this.getContentLoadedSet(teamPath).delete(noteId);
         if (removed) {
           // Track note deletion; will emit on container, not on note itself
-          changed = true;
           scopeContainerChanged = true;
         }
         changed = true;

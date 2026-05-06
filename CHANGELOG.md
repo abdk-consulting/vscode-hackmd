@@ -14,6 +14,14 @@
   - Removed tree-item metadata fields that exposed `noteId` / `folderId` in provider UI node objects.
   - Refined note properties view state tracking to use current note object identity instead of a separate note-id cache field.
 
+- Removed remaining wrapper/surrogate tree-node assumptions from command and tree interaction paths:
+  - `hackmd.ui.reveal` now reveals direct model entities (team/folder/note) instead of synthetic wrapper payloads.
+  - `hackmd.ui.edit` now accepts direct note entities with a separate options argument for `preserveFocus`.
+  - Tree providers (`MyNotesProvider`, `TeamNotesProvider`, `HistoryProvider`) now pass note entities directly to edit commands.
+  - Model create-note flows now call reveal/edit with direct created-note entities.
+  - Drag-and-drop note handling now treats drag sources as `ModelNote[]` directly (no `node.note` unwrapping).
+  - Export target resolution in UI commands now operates on `ModelNote | ModelFolder` entities, including team-scope expansion via direct team entities.
+
 - Continued entity-first command and drag-and-drop cleanup:
   - `hackmd.model.rename` now follows a minimal entity-first flow: accepts an optional `ModelNote | ModelFolder`, falls back to a picker listing known notes/folders when omitted, prompts for the new name/title, and updates via `updateNote` / `updateFolder` only.
   - Removed `renameNote` from the model API; rename paths now use `updateNote` directly.

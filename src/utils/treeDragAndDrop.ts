@@ -184,7 +184,7 @@ export class NoteDragAndDropController implements vscode.TreeDragAndDropControll
       return;
     }
 
-    const notes = source.map((node) => node.note as ModelNote);
+    const notes = source as ModelNote[];
     if (!areEntitiesInSameScope(model, notes)) {
       return;
     }

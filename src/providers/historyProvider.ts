@@ -203,7 +203,7 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
       item.command = {
         command: 'hackmd.ui.edit',
         title: 'Open Note',
-        arguments: [{ type: 'note', note, preserveFocus: true }],
+        arguments: [note, { preserveFocus: true }],
       };
     } else {
       item.command = undefined;

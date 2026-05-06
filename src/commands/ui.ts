@@ -109,11 +109,25 @@ async function exportFolderRecursive(
 // Tree node helpers (mirrored from model.ts — no shared module to avoid coupling)
 // ---------------------------------------------------------------------------
 
-function extractNote(node: any): any | undefined {
-  if (!node) { return undefined; }
-  if (node.type === 'note' && node.note) { return node.note; }
-  if (node.id && node.type !== 'folder' && node.type !== 'team' && node.team === undefined) { return node; }
-  return undefined;
+function asNoteEntity(node: any): ModelNote | undefined {
+  if (!node) {
+    return undefined;
+  }
+  return node.type === 'note' && !!node.id ? (node as ModelNote) : undefined;
+}
+
+function asFolderEntity(node: any): ModelFolder | undefined {
+  if (!node) {
+    return undefined;
+  }
+  return node.type === 'folder' && !!node.id ? (node as ModelFolder) : undefined;
+}
+
+function asTeamEntity(node: any): ModelTeam | undefined {
+  if (!node) {
+    return undefined;
+  }
+  return node.type === 'team' && !!node.id ? (node as ModelTeam) : undefined;
 }
 
 function getSelectedTreeNodeFallback(): any | undefined {
@@ -124,19 +138,6 @@ function getSelectedTreeNodeFallback(): any | undefined {
 function getSelectedTreeNodesFallback(): any[] {
   const selection = extensionApi.getActiveTreeSelection?.() || [];
   return [...selection];
-}
-
-function toFolderTreeNode(folder: ModelFolder): any {
-  return {
-    type: 'folder',
-    source: 'model',
-    id: folder.id,
-    name: folder.name,
-    parentId: folder.parentId,
-    clientId: folder.clientId || '',
-    children: folder.children,
-    notes: folder.notes,
-  };
 }
 
 type RevealEntity = ModelTeam | ModelFolder | ModelNote;
@@ -385,7 +386,7 @@ async function revealLoadedTarget(model: ReturnType<typeof getHackmdModel>, enti
       return;
     }
 
-    await treeView.reveal({ type: 'team', source: 'model', team: entity }, { select: true, focus: false });
+    await treeView.reveal(entity, { select: true, focus: false });
     return;
   }
 
@@ -396,7 +397,7 @@ async function revealLoadedTarget(model: ReturnType<typeof getHackmdModel>, enti
       return;
     }
 
-    await treeView.reveal(toFolderTreeNode(entity), { select: true, focus: false });
+    await treeView.reveal(entity, { select: true, focus: false });
     return;
   }
 
@@ -406,7 +407,7 @@ async function revealLoadedTarget(model: ReturnType<typeof getHackmdModel>, enti
     return;
   }
 
-  await treeView.reveal({ type: 'note', source: 'model', note: entity }, { select: true, focus: false });
+  await treeView.reveal(entity, { select: true, focus: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -441,14 +442,14 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
   // ── hackmd.ui.edit ───────────────────────────────────────────────────────
   // Opens the note in a text editor (column 1, non-preview tab).
   // Arg: tree note node or undefined (interactive picker when absent).
-  register('hackmd.ui.edit', async (node?: any) => {
+  register('hackmd.ui.edit', async (node?: any, options?: { preserveFocus?: boolean }) => {
     const model = getModel();
     if (!model) {
       return;
     }
 
     const targetNode = node ?? getSelectedTreeNodeFallback();
-    const noteFromNode = extractNote(targetNode);
+    const noteFromNode = asNoteEntity(targetNode);
     if (targetNode !== undefined && !noteFromNode) {
       return;
     }
@@ -457,7 +458,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const preserveFocus = !!node?.preserveFocus;
+    const preserveFocus = !!options?.preserveFocus;
     await openEditor(model.toUri(note), preserveFocus);
   });
 
@@ -471,7 +472,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     }
 
     const targetNode = node ?? getSelectedTreeNodeFallback();
-    const noteFromNode = extractNote(targetNode);
+    const noteFromNode = asNoteEntity(targetNode);
     if (targetNode !== undefined && !noteFromNode) {
       return;
     }
@@ -493,7 +494,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     }
 
     const targetNode = node ?? getSelectedTreeNodeFallback();
-    const noteFromNode = extractNote(targetNode);
+    const noteFromNode = asNoteEntity(targetNode);
     if (targetNode !== undefined && !noteFromNode) {
       return;
     }
@@ -514,13 +515,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const nodeEntity: RevealEntity | undefined = node?.team?.path
-      ? (node.team as ModelTeam)
-      : node?.type === 'team' && typeof node.path === 'string'
-        ? (node as ModelTeam)
-        : node?.type === 'folder' && node?.id
-          ? (node as ModelFolder)
-          : (extractNote(node) as ModelNote | undefined);
+    const nodeEntity: RevealEntity | undefined =
+      asTeamEntity(node) || asFolderEntity(node) || asNoteEntity(node);
 
     const entity = nodeEntity ?? await pickRevealEntity(model);
     if (!entity) {
@@ -541,13 +537,8 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const nodeEntity: RevealEntity | undefined = node?.team?.path
-      ? (node.team as ModelTeam)
-      : node?.type === 'team' && typeof node.path === 'string'
-        ? (node as ModelTeam)
-        : node?.type === 'folder' && node?.id
-          ? (node as ModelFolder)
-          : (extractNote(node) as ModelNote | undefined);
+    const nodeEntity: RevealEntity | undefined =
+      asTeamEntity(node) || asFolderEntity(node) || asNoteEntity(node);
 
     const entity = nodeEntity ?? await pickOpenEntity(model);
     if (!entity) {
@@ -632,10 +623,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     );
 
     if (createdNotes.length > 0) {
-      await vscode.commands.executeCommand('hackmd.ui.reveal', {
-        type: 'note',
-        note: createdNotes[0],
-      });
+      await vscode.commands.executeCommand('hackmd.ui.reveal', createdNotes[0]);
     }
 
     vscode.window.showInformationMessage(
@@ -658,7 +646,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     }
 
     // Resolve targets from node / selectedNodes, or fall back to interactive picker.
-    let targets: ExportTarget[] | undefined;
+    let targets: Array<ModelNote | ModelFolder> | undefined;
     const fallbackSelection = (!node && (!selectedNodes || selectedNodes.length === 0))
       ? getSelectedTreeNodesFallback()
       : [];
@@ -666,28 +654,28 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
     if (node || (selectedNodes && selectedNodes.length > 0) || fallbackSelection.length > 0) {
       const effectiveNodes = selectedNodes?.length ? selectedNodes : node ? [node] : fallbackSelection;
-      const noteTargets: ExportNoteTarget[] = [];
-      const folderTargets: ExportFolderTarget[] = [];
+      const noteTargets: ModelNote[] = [];
+      const folderTargets: ModelFolder[] = [];
 
       for (const n of effectiveNodes) {
         // Team node: export all root notes + folders for that team
-        if (n?.team?.path || (n?.type === 'team' && typeof n.path === 'string')) {
-          const teamEntity = (n.team ?? n) as ModelTeam;
+        const teamEntity = asTeamEntity(n);
+        if (teamEntity) {
           const snapshot = await model.getScopeSnapshot(teamEntity) as any;
           const rootNotes: any[] = snapshot?.rootNotes ?? [];
           const rootFolders: any[] = snapshot?.rootFolders ?? [];
-          for (const rn of rootNotes) { noteTargets.push({ type: 'note', note: rn }); }
-          for (const rf of rootFolders) { folderTargets.push({ type: 'folder', folder: rf }); }
+          for (const rn of rootNotes) { noteTargets.push(rn); }
+          for (const rf of rootFolders) { folderTargets.push(rf); }
           continue;
         }
-        const note = extractNote(n);
+        const note = asNoteEntity(n);
         if (note) {
-          noteTargets.push({ type: 'note', note });
+          noteTargets.push(note);
           continue;
         }
-        const folder = n?.type === 'folder' ? n : undefined;
+        const folder = asFolderEntity(n);
         if (folder) {
-          folderTargets.push({ type: 'folder', folder });
+          folderTargets.push(folder);
         }
       }
 
@@ -705,17 +693,14 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         return;
       }
       if (picked.kind === 'note') {
-        targets = [{ type: 'note', note: picked.note }];
+        targets = [picked.note];
       } else {
-        targets = [{
-          type: 'folder',
-          folder: picked.folder,
-        }];
+        targets = [picked.folder];
       }
     }
 
-    const noteTargets = targets.filter((t): t is ExportNoteTarget => t.type === 'note');
-    const folderTargets = targets.filter((t): t is ExportFolderTarget => t.type === 'folder');
+    const noteTargets = targets.filter((t): t is ModelNote => t.type === 'note');
+    const folderTargets = targets.filter((t): t is ModelFolder => t.type === 'folder');
     const defaultDirectory = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
 
     let targetFileUri: vscode.Uri | undefined;
@@ -725,7 +710,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
       // Single note → ask where to save the .md file.
       // Use sync cache so no async call happens before the dialog.
       const nt = noteTargets[0];
-      const baseName = sanitizePathSegment(nt.note.title || nt.note.shortId || 'Untitled') + '.md';
+      const baseName = sanitizePathSegment(nt.title || nt.shortId || 'Untitled') + '.md';
       targetFileUri = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(defaultDirectory, baseName)),
         filters: { Markdown: ['md'] },
@@ -749,16 +734,16 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     try {
       if (targetFileUri) {
         const nt = noteTargets[0];
-        const content = await model.getNoteContent(nt.note);
+        const content = await model.getNoteContent(nt);
         await vscode.workspace.fs.writeFile(targetFileUri, Buffer.from(content ?? '', 'utf8'));
       } else if (exportDirUri) {
         const usedNames = await getUsedNamesForDirectory(exportDirUri);
 
         const noteJobs = noteTargets.map((nt) => {
-          const baseName = nt.note.title || nt.note.shortId || 'Untitled';
+          const baseName = nt.title || nt.shortId || 'Untitled';
           const fileName = getUniqueMarkdownFileName(baseName, usedNames);
           return (async () => {
-            const content = await model.getNoteContent(nt.note);
+            const content = await model.getNoteContent(nt);
             await vscode.workspace.fs.writeFile(
               vscode.Uri.joinPath(exportDirUri, fileName),
               Buffer.from(content ?? '', 'utf8')
@@ -768,7 +753,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
 
         const folderJobs: Promise<number>[] = [];
         for (const ft of folderTargets) {
-          folderJobs.push(exportFolderRecursive(model, ft.folder, exportDirUri));
+          folderJobs.push(exportFolderRecursive(model, ft, exportDirUri));
         }
 
         await Promise.all([...noteJobs, ...folderJobs]);
@@ -790,7 +775,7 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
     }
 
     const targetNode = node ?? getSelectedTreeNodeFallback();
-    const noteFromNode = extractNote(targetNode);
+    const noteFromNode = asNoteEntity(targetNode);
     if (targetNode !== undefined && !noteFromNode) {
       return;
     }

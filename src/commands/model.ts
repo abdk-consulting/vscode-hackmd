@@ -31,20 +31,20 @@ function getModel(): ReturnType<typeof getHackmdModel> | undefined {
 // Tree node helpers
 // ---------------------------------------------------------------------------
 
-/** Extract the raw note object from a tree node `{ type: 'note', note: {...} }` or a bare note. */
-function extractNote(node: any): any | undefined {
-  if (!node) { return undefined; }
-  if (node.type === 'note' && node.note) { return node.note; }
-  // Bare note: has id but is not a folder or team node
-  if (node.id && node.type !== 'folder' && node.type !== 'team' && node.team === undefined) { return node; }
-  return undefined;
+/** Extract a note entity from a tree selection node. */
+function extractNote(node: any): ModelNote | undefined {
+  if (!node) {
+    return undefined;
+  }
+  return node.type === 'note' && !!node.id ? (node as ModelNote) : undefined;
 }
 
-/** Extract the folder object from a tree folder node `{ type: 'folder', id, ... }`. */
-function extractFolder(node: any): any | undefined {
-  if (!node) { return undefined; }
-  if (node.type === 'folder' && node.id) { return node; }
-  return undefined;
+/** Extract a folder entity from a tree selection node. */
+function extractFolder(node: any): ModelFolder | undefined {
+  if (!node) {
+    return undefined;
+  }
+  return node.type === 'folder' && !!node.id ? (node as ModelFolder) : undefined;
 }
 
 function getSelectedTreeNodeFallback(): any | undefined {
@@ -342,8 +342,8 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
     }
 
     const created = await model.createNote(container, {});
-    await vscode.commands.executeCommand('hackmd.ui.reveal', { type: 'note', note: created });
-    await vscode.commands.executeCommand('hackmd.ui.edit', { type: 'note', note: created });
+    await vscode.commands.executeCommand('hackmd.ui.reveal', created);
+    await vscode.commands.executeCommand('hackmd.ui.edit', created);
     return created;
   });
 

@@ -213,11 +213,11 @@ async function pickMoveTargetFolder(
   }
 
   // Collect folder targets with their entities
-  type TargetOption = { label: string; description: string; entity: ModelFolder | null };
+  type TargetOption = { label: string; description?: string; entity: ModelFolder | null };
   const folderTargets: TargetOption[] = [{ label: 'Root', description: 'No parent folder', entity: null }]
     .concat(collectFolders(snapshot.rootFolders).map((folder) => ({
       label: folder.name,
-      description: folder.path || folder.name,
+      description: folder.path && folder.path !== folder.name ? folder.path : undefined,
       entity: folder,
     })));
 
@@ -269,7 +269,7 @@ async function pickMoveTargetFolder(
     return undefined;
   }
 
-  return picked.target.entity ?? undefined;
+  return picked.target.entity;
 }
 
 export function registerModelCommands(context: vscode.ExtensionContext): void {
@@ -530,15 +530,23 @@ export function registerModelCommands(context: vscode.ExtensionContext): void {
       return;
     }
 
-    // Step 14: Execute moves in parallel
+    // Step 14: Execute moves in parallel and remember whichever finishes first.
+    let firstCompletedMove: ModelNote | ModelFolder | undefined;
     await Promise.all(actionableItems.map(async (item) => {
       const i = item as any;
-      if (i.type === 'note') {
-        return model.moveNote(i, dest);
-      } else if (i.type === 'folder') {
-        return model.moveFolder(i, dest);
+      const moved = i.type === 'note'
+        ? await model.moveNote(i, dest)
+        : await model.moveFolder(i, dest);
+      if (!firstCompletedMove) {
+        firstCompletedMove = moved;
       }
     }));
+
+    // Step 15: Delegate reveal to select one moved item at its new location.
+    const revealTarget = firstCompletedMove;
+    if (revealTarget) {
+      await vscode.commands.executeCommand('hackmd.ui.reveal', revealTarget);
+    }
 
     return true;
   };

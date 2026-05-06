@@ -87,6 +87,12 @@ export class TeamNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
 
         const entity = event.entity;
+        // If Teams container changed, invalidate whole tree
+        if (entity.type === 'teams') {
+          this._onDidChangeTreeData.fire(undefined);
+          return;
+        }
+
         if (entity.type === 'team') {
           this.handleEntityUpsert(entity);
         } else if (entity.type === 'folder' && this.isTeamScopedEntity(entity)) {

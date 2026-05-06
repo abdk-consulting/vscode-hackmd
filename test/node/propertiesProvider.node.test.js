@@ -476,6 +476,24 @@ test('saveCurrentProperties: includes permalink in input when it is pending', as
   assert.equal(calledInput.permalink, 'valid-link');
 });
 
+test('saveCurrentProperties: explicit null permalink is not coerced to unchanged', async () => {
+  const note = makeNote({ permalink: 'existing-link' });
+  const { provider, wv } = await setup(note);
+
+  provider.isValidPermalink = () => true;
+  wv.sendMessage({ type: 'propertyChanged', property: 'permalink', value: null });
+
+  const model = new MockModel();
+  stub.setModel(model);
+
+  const result = await provider.saveCurrentProperties();
+
+  assert.equal(result, true);
+  const [, calledInput] = lastCall(model, 'updateNote');
+  assert.ok('permalink' in calledInput, 'permalink should stay in input when explicitly set to null');
+  assert.equal(calledInput.permalink, null);
+});
+
 test('saveCurrentProperties: error 403 shows permission error', async () => {
   const note = makeNote();
   const { provider, wv } = await setup(note);

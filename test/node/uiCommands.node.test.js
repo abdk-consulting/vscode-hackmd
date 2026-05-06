@@ -827,6 +827,46 @@ test('import: creates multiple notes in parallel', async () => {
   await pending;
 });
 
+test('import: reveals the first completed create operation', async () => {
+  const model = new MockUiModel();
+  stub.setModel(model);
+
+  const resolvers = [];
+  model.createNote = async (container, props) => {
+    model._record('createNote', [container, props]);
+    const id = `new-${resolvers.length + 1}`;
+    const note = {
+      type: 'note',
+      id,
+      title: props?.title ?? null,
+      teamPath: container.type === 'my-notes' ? null : container.path ?? null,
+    };
+    return new Promise((resolve) => {
+      resolvers.push({ id, resolve: () => resolve(note) });
+    });
+  };
+
+  const f1 = stub.makeUri('file', '/tmp/first-complete-a.md');
+  const f2 = stub.makeUri('file', '/tmp/first-complete-b.md');
+  stub.workspaceState.fileBytesByUri.set(f1.toString(), Buffer.from('# one', 'utf8'));
+  stub.workspaceState.fileBytesByUri.set(f2.toString(), Buffer.from('# two', 'utf8'));
+
+  new Interactions().od([f1, f2]).install();
+
+  const pending = invoke('hackmd.ui.import', model.getMyNotesEntity());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Complete second create first; reveal should target its created note.
+  resolvers.find((entry) => entry.id === 'new-2').resolve();
+  resolvers.find((entry) => entry.id === 'new-1').resolve();
+  await pending;
+
+  const revealCalls = stub.commandsState.executeCalls.filter((call) => call[0] === 'hackmd.ui.reveal');
+  assert.equal(revealCalls.length, 1);
+  assert.equal(revealCalls[0][1]?.type, 'note');
+  assert.equal(revealCalls[0][1]?.note?.id ?? revealCalls[0][1]?.id, 'new-2');
+});
+
 test('import: open-dialog cancellation exits without creating notes', async () => {
   const model = new MockUiModel();
   stub.setModel(model);

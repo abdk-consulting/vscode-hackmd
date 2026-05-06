@@ -221,7 +221,7 @@ export class NotePropertiesProvider implements vscode.WebviewViewProvider {
         writePermission: merged.writePermission,
       };
       if ('permalink' in this._pendingChanges) {
-        input.permalink = merged.permalink ?? undefined;
+        input.permalink = merged.permalink;
       }
 
       await model.updateNote(this._currentNote, input);

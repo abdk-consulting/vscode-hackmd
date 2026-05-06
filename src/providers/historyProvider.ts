@@ -51,22 +51,58 @@ export class HistoryProvider implements vscode.TreeDataProvider<TreeNode> {
         }
 
         const entity = event.entity;
-        if (entity.type === 'note') {
-          this.handleNoteUpsert(entity);
+
+        // If RecentNotes container changed, invalidate whole tree
+        if (entity.type === 'recent-notes') {
+          this._onDidChangeTreeData.fire(undefined);
+          return;
         }
+
+        // Ignore non-note entities
+        if (entity.type !== 'note') {
+          return;
+        }
+
+        // Check if this note is a child of RecentNotes container
+        const historyNotes = this.model!.getHistoryNotes();
+        if (!historyNotes.includes(entity)) {
+          // Note is not in history - ignore
+          return;
+        }
+
+        this.handleNoteUpsert(entity);
       });
       this.model.onDidChangePending((event) => {
         const entity = event.entity;
 
-        if (entity.type === 'model-root' || entity.type === 'recent-notes') {
+        // If RecentNotes container pending status changed, escalate to extension
+        if (entity.type === 'recent-notes') {
           this.historyPendingOperation = event.pending;
           this._onDidChangePendingState.fire(event.pending);
           return;
         }
 
-        if (entity.type === 'note') {
-          this._onDidChangeTreeData.fire(entity);
+        // If model-root pending, also escalate
+        if (entity.type === 'model-root') {
+          this.historyPendingOperation = event.pending;
+          this._onDidChangePendingState.fire(event.pending);
+          return;
         }
+
+        // Ignore non-note entities
+        if (entity.type !== 'note') {
+          return;
+        }
+
+        // Check if this note is a child of RecentNotes container
+        const historyNotes = this.model!.getHistoryNotes();
+        if (!historyNotes.includes(entity)) {
+          // Note is not in history - ignore
+          return;
+        }
+
+        // Invalidate the note in the tree
+        this._onDidChangeTreeData.fire(entity);
       });
     } catch {
       this.model = null;

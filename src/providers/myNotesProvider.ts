@@ -80,6 +80,11 @@ export class MyNotesProvider implements vscode.TreeDataProvider<TreeNode> {
         }
 
         const entity = event.entity;
+        // If MyNotes container changed, invalidate whole tree
+        if (entity.type === 'my-notes') {
+          this._onDidChangeTreeData.fire(undefined);
+          return;
+        }
         if (entity.type === 'note' && this.isMyNotesScopedEntity(entity)) {
           this.handleEntityUpsert(entity);
         } else if (entity.type === 'folder' && this.isMyNotesScopedEntity(entity)) {

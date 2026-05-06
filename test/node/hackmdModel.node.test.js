@@ -740,6 +740,38 @@ test('createNote under personal parent sets pending on parent folder and updates
   d.dispose();
 });
 
+test('deleteFolder recursively removes descendant folders and notes from model', async () => {
+  const { model } = createModelAndApi();
+
+  await model.refresh(model.getMyNotesEntity());
+
+  const rootFolder = await model.createFolder(model.getMyNotesEntity(), { name: 'Root To Delete' });
+  const childFolder = await model.createFolder(rootFolder, { name: 'Child To Delete' });
+  const grandchildFolder = await model.createFolder(childFolder, { name: 'Grandchild To Delete' });
+  const nestedNote = await model.createNote(grandchildFolder, { title: 'Nested To Delete' });
+
+  // Ensure nested entities exist before deletion.
+  assert.ok(model.getFolderSync(model.getMyNotesEntity(), rootFolder.id));
+  assert.ok(model.getFolderSync(model.getMyNotesEntity(), childFolder.id));
+  assert.ok(model.getFolderSync(model.getMyNotesEntity(), grandchildFolder.id));
+  assert.ok(model.getNoteSync(model.getMyNotesEntity(), nestedNote.id));
+
+  await model.deleteFolder(rootFolder);
+
+  // Deleted subtree should be removed from maps.
+  assert.ok(model.getFolderSync(model.getMyNotesEntity(), rootFolder.id) == null);
+  assert.ok(model.getFolderSync(model.getMyNotesEntity(), childFolder.id) == null);
+  assert.ok(model.getFolderSync(model.getMyNotesEntity(), grandchildFolder.id) == null);
+  assert.ok(model.getNoteSync(model.getMyNotesEntity(), nestedNote.id) == null);
+
+  // Descendants should not be promoted to personal roots.
+  const snapshot = model.getScopeSnapshotSync(model.getMyNotesEntity());
+  assert.ok(snapshot);
+  assert.ok(!snapshot.rootFolders.some((folder) => folder.id === childFolder.id));
+  assert.ok(!snapshot.rootFolders.some((folder) => folder.id === grandchildFolder.id));
+  assert.ok(!snapshot.rootNotes.some((note) => note.id === nestedNote.id));
+});
+
 test('createNote refreshes unloaded scope in parallel with create call', async () => {
   const { api, model } = createModelAndApi();
   const delayMs = 120;
@@ -814,6 +846,73 @@ test('updateNote with content marks content as loaded and preserves note identit
   assert.equal(model.getNoteSync(model.getMyNotesEntity(), 'pn2')?.content, '# partial response content');
 });
 
+test('updateNote with undefined content leaves cached content state unchanged', async () => {
+  const { model } = createModelAndApi();
+
+  await model.refresh(model.getMyNotesEntity());
+
+  const note = model.getNoteSync(model.getMyNotesEntity(), 'pn2');
+  assert.equal(model.getNoteContentSync(note), null);
+
+  const updated = await model.updateNote(note, { title: 'Retitled', content: undefined });
+
+  assert.equal(updated.title, 'Retitled');
+  assert.equal(model.getNoteContentSync(updated), null);
+  assert.equal(model.getNoteSync(model.getMyNotesEntity(), 'pn2')?.content, undefined);
+});
+
+test('updateNote with null content overwrites cached content and marks it loaded', async () => {
+  const { model } = createModelAndApi();
+
+  await model.refresh(model.getMyNotesEntity());
+
+  const updated = await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn2'), { content: null });
+
+  assert.equal(updated.content, null);
+  assert.equal(model.getNoteSync(model.getMyNotesEntity(), 'pn2')?.content, null);
+  assert.equal(model.getNoteContentSync(updated), '');
+});
+
+test('updateNote with null title does not fall back to the existing title', async () => {
+  const { model } = createModelAndApi();
+
+  await model.refresh(model.getMyNotesEntity());
+
+  const updated = await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), { title: null });
+
+  assert.equal(updated.title, null);
+  assert.equal(model.getNoteSync(model.getMyNotesEntity(), 'pn1')?.title, null);
+});
+
+test('updateNote applies input on top of existing team note when PATCH response is stale', async () => {
+  const { api, model } = createModelAndApi();
+
+  await model.refresh(model.getTeamsEntity());
+  const team = model.getTeams().find((candidate) => candidate.path === 'foo-team');
+  await model.refresh(team);
+
+  const originalUpdateTeamNote = api.updateTeamNote.bind(api);
+  api.updateTeamNote = async (teamPath, noteId, payload) => {
+    await originalUpdateTeamNote(teamPath, noteId, payload);
+    return response({
+      id: noteId,
+      title: 'stale response title',
+      content: 'stale response content',
+    });
+  };
+
+  const updated = await model.updateNote(model.getNoteSync(team, 'tn2'), {
+    title: 'Fresh Team Title',
+    content: '# fresh team content',
+  });
+
+  assert.equal(updated.id, 'tn2');
+  assert.equal(updated.title, 'Fresh Team Title');
+  assert.equal(updated.content, '# fresh team content');
+  assert.equal(model.getNoteSync(team, 'tn2')?.title, 'Fresh Team Title');
+  assert.equal(model.getNoteSync(team, 'tn2')?.content, '# fresh team content');
+});
+
 test('updateNote preserves existing fields when partial response has undefined fields', async () => {
   const { api, model } = createModelAndApi();
 
@@ -842,7 +941,7 @@ test('updateNote preserves existing fields when partial response has undefined f
   assert.equal(updated.writePermission, 'owner');
 });
 
-test('updateNote applies explicit null/empty values from partial response', async () => {
+test('updateNote ignores explicit null/empty values from PATCH response and keeps input-driven state', async () => {
   const { api, model } = createModelAndApi();
 
   await model.refresh(model.getMyNotesEntity());
@@ -862,8 +961,8 @@ test('updateNote applies explicit null/empty values from partial response', asyn
   const updated = await model.updateNote(model.getNoteSync(model.getMyNotesEntity(), 'pn1'), { title: 'ignored-by-response' });
 
   assert.equal(updated.id, 'pn1');
-  assert.equal(updated.title, '');
-  assert.equal(updated.permalink, null);
+  assert.equal(updated.title, 'ignored-by-response');
+  assert.equal(updated.permalink, before?.permalink);
   assert.equal(updated.writePermission, before?.writePermission);
 });
 

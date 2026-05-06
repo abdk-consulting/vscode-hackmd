@@ -650,7 +650,10 @@ export class HackmdModel {
                 next.push(modelNote);
               }
             });
-            reconcileArrayAsSetPreserveOrder(this.historyNotes, next);
+            if (reconcileArrayAsSetPreserveOrder(this.historyNotes, next)) {
+              // History notes array changed - emit on container
+              this.emitEntityChanged(this.recentNotesEntity);
+            }
           }
         ).finally(() => { this.refreshHistoryPromise = null; });
         return this.refreshHistoryPromise;
@@ -755,11 +758,16 @@ export class HackmdModel {
 
       if (entity.parentFolderId !== effectiveParentFolderId) {
         entity.parentFolderId = effectiveParentFolderId;
-        this.emitEntityChanged(entity);
       }
 
-      if (scopeEntity && this.reconcileNotePlacement(scopeEntity, entity)) {
-        this.emitEntityChanged(entity);
+      if (scopeEntity) {
+        const changedFolders = this.reconcileNotePlacement(scopeEntity, entity);
+        if (changedFolders.size === 0 && !entity.parentFolderId) {
+          // Note was created at root level; emit on scope container
+          this.emitEntityChanged(scopeEntity);
+        } else {
+          this.emitDeduplicatedFolderChanges(scopeEntity, changedFolders);
+        }
       }
       return entity;
     };
@@ -814,11 +822,16 @@ export class HackmdModel {
 
       if (entity.parentId !== effectiveParentFolderId) {
         entity.parentId = effectiveParentFolderId;
-        this.emitEntityChanged(entity);
       }
 
-      if (scopeEntity && this.reconcileFolderPlacement(scopeEntity, entity)) {
-        this.emitEntityChanged(entity);
+      if (scopeEntity) {
+        const changedFolders = this.reconcileFolderPlacement(scopeEntity, entity);
+        if (changedFolders.size === 0 && !entity.parentId) {
+          // Folder was created at root level; emit on scope container
+          this.emitEntityChanged(scopeEntity);
+        } else {
+          this.emitDeduplicatedFolderChanges(scopeEntity, changedFolders);
+        }
       }
       return entity;
     };
@@ -837,13 +850,13 @@ export class HackmdModel {
   async updateNote(note: ModelNote, input: UpdateNoteInput): Promise<ModelNote> {
     const noteId = note.id;
     const scope = note.teamPath || null;
-    const markContentLoaded = Object.prototype.hasOwnProperty.call(input, 'content');
+    const markContentLoaded = input.content !== undefined;
     return this.withPendingOperation(note, async () => {
-      const updated = scope
+      await (scope
         ? await recordUsage(this.api.updateTeamNote(scope, noteId, input as any, { unwrapData: false }))
-        : await recordUsage(this.api.updateNote(noteId, input as any, { unwrapData: false }));
+        : await recordUsage(this.api.updateNote(noteId, input as any, { unwrapData: false })));
 
-      const hydratedNote = this.hydrateUpdatedNotePayload(this.scopeEntityForCleanup(scope), noteId, updated);
+      const hydratedNote = this.hydrateUpdatedNotePayload(this.scopeEntityForCleanup(scope), noteId, input as Partial<Note>);
       const entity = this.upsertNote(scope, hydratedNote, markContentLoaded);
       this.applyPredictedNotePlacement(this.scopeEntityForCleanup(scope), entity);
       return entity;
@@ -966,15 +979,13 @@ export class HackmdModel {
   }
 
   private applyPredictedNotePlacement(scope: ModelMyNotes | ModelTeam, note: ModelNote): void {
-    if (this.reconcileNotePlacement(scope, note)) {
-      this.emitEntityChanged(note);
-    }
+    const changedFolders = this.reconcileNotePlacement(scope, note);
+    this.emitDeduplicatedFolderChanges(scope, changedFolders);
   }
 
   private applyPredictedFolderPlacement(scope: ModelMyNotes | ModelTeam, folder: ModelFolder): void {
-    if (this.reconcileFolderPlacement(scope, folder)) {
-      this.emitEntityChanged(folder);
-    }
+    const changedFolders = this.reconcileFolderPlacement(scope, folder);
+    this.emitDeduplicatedFolderChanges(scope, changedFolders);
   }
 
   private applyPredictedNoteDelete(scope: ModelMyNotes | ModelTeam, noteId: string): void {
@@ -985,6 +996,9 @@ export class HackmdModel {
       return;
     }
 
+    const wasRootLevel = !existing.parentFolderId;
+    let parentFolder: ModelFolder | undefined;
+
     noteMap.delete(noteId);
     this.getContentLoadedSet(teamPath).delete(noteId);
 
@@ -992,6 +1006,9 @@ export class HackmdModel {
       const nextNotes = folder.notes.filter((candidate) => candidate.id !== noteId);
       if (nextNotes.length !== folder.notes.length) {
         replaceArrayContents(folder.notes, nextNotes);
+        if (!parentFolder && folder.id === existing.parentFolderId) {
+          parentFolder = folder;
+        }
       }
     }
 
@@ -1005,12 +1022,26 @@ export class HackmdModel {
       }
     }
 
+    let historyChanged = false;
     const nextHistory = this.historyNotes.filter((candidate) => candidate.id !== noteId || (candidate.teamPath || null) !== teamPath);
     if (nextHistory.length !== this.historyNotes.length) {
       replaceArrayContents(this.historyNotes, nextHistory);
+      historyChanged = true;
     }
 
-    this.emitEntityChanged(existing);
+    // Emit on the appropriate containers
+    if (historyChanged) {
+      // History array changed - emit on RecentNotes container
+      this.emitEntityChanged(this.recentNotesEntity);
+    }
+
+    if (wasRootLevel) {
+      // Root-level note deletion - emit on scope container
+      this.emitEntityChanged(scope);
+    } else if (parentFolder) {
+      // Nested note deletion - emit on parent folder
+      this.emitEntityChanged(parentFolder);
+    }
   }
 
   private applyPredictedFolderDelete(scope: ModelMyNotes | ModelTeam, folderId: string): void {
@@ -1021,34 +1052,56 @@ export class HackmdModel {
       return;
     }
 
-    const promotedParentId = folder.parentId || null;
+    const wasRootLevel = !folder.parentId;
+    let parentFolder: ModelFolder | undefined;
 
-    // Promote child folders to deleted folder's parent to preserve hierarchy continuity.
-    for (const candidate of folderMap.values()) {
-      if (candidate.id === folderId) {
-        continue;
-      }
-      if ((candidate.parentId || null) === folderId) {
-        candidate.parentId = promotedParentId;
-        this.applyPredictedFolderPlacement(scope, candidate);
+    // Collect the full folder subtree that backend deletes: target folder + descendants.
+    const deletedFolderIds = new Set<string>([folderId]);
+    let foundMoreFolders = true;
+    while (foundMoreFolders) {
+      foundMoreFolders = false;
+      for (const candidate of folderMap.values()) {
+        if (deletedFolderIds.has(candidate.id)) {
+          continue;
+        }
+        if (candidate.parentId && deletedFolderIds.has(candidate.parentId)) {
+          deletedFolderIds.add(candidate.id);
+          foundMoreFolders = true;
+        }
       }
     }
 
-    // Promote direct notes to deleted folder's parent/root.
-    for (const note of folder.notes) {
-      if ((note.parentFolderId || null) !== promotedParentId) {
-        note.parentFolderId = promotedParentId;
-        this.emitEntityChanged(note);
+    const noteMap = this.getNoteScopeMap(teamPath);
+    const contentLoaded = this.getContentLoadedSet(teamPath);
+    const deletedNoteIds = new Set<string>();
+
+    // Remove all notes that belong to any deleted folder in the subtree.
+    for (const note of noteMap.values()) {
+      if (note.parentFolderId && deletedFolderIds.has(note.parentFolderId)) {
+        deletedNoteIds.add(note.id);
       }
-      this.applyPredictedNotePlacement(scope, note);
+    }
+    for (const noteId of deletedNoteIds) {
+      noteMap.delete(noteId);
+      contentLoaded.delete(noteId);
     }
 
-    folderMap.delete(folderId);
+    // Remove all folders in the subtree from the folder map.
+    for (const deletedId of deletedFolderIds) {
+      folderMap.delete(deletedId);
+    }
 
     for (const candidate of folderMap.values()) {
-      const nextChildren = candidate.children.filter((child) => child.id !== folderId);
+      const nextChildren = candidate.children.filter((child) => !deletedFolderIds.has(child.id));
       if (nextChildren.length !== candidate.children.length) {
         replaceArrayContents(candidate.children, nextChildren);
+        if (!parentFolder && candidate.id === folder.parentId) {
+          parentFolder = candidate;
+        }
+      }
+      const nextNotes = candidate.notes.filter((note) => !deletedNoteIds.has(note.id));
+      if (nextNotes.length !== candidate.notes.length) {
+        replaceArrayContents(candidate.notes, nextNotes);
       }
     }
 
@@ -1056,13 +1109,44 @@ export class HackmdModel {
       ? scope.rootFolders
       : this.personalRootFolders;
     if (roots) {
-      const nextRoots = roots.filter((candidate) => candidate.id !== folderId);
+      const nextRoots = roots.filter((candidate) => !deletedFolderIds.has(candidate.id));
       if (nextRoots.length !== roots.length) {
         replaceArrayContents(roots, nextRoots);
       }
     }
 
-    this.emitEntityChanged(folder);
+    const rootNotes = scope.type === 'team'
+      ? scope.rootNotes
+      : this.personalRootNotes;
+    if (rootNotes) {
+      const nextRootNotes = rootNotes.filter((note) => !deletedNoteIds.has(note.id));
+      if (nextRootNotes.length !== rootNotes.length) {
+        replaceArrayContents(rootNotes, nextRootNotes);
+      }
+    }
+
+    // Keep RecentNotes consistent when deleted subtree contains notes.
+    if (deletedNoteIds.size > 0) {
+      const nextHistory = this.historyNotes.filter((note) => {
+        if (!deletedNoteIds.has(note.id)) {
+          return true;
+        }
+        return (note.teamPath || null) !== teamPath;
+      });
+      if (nextHistory.length !== this.historyNotes.length) {
+        replaceArrayContents(this.historyNotes, nextHistory);
+        this.emitEntityChanged(this.recentNotesEntity);
+      }
+    }
+
+    // Emit on the appropriate container
+    if (wasRootLevel) {
+      // Root-level folder deletion - emit on scope container
+      this.emitEntityChanged(scope);
+    } else if (parentFolder) {
+      // Nested folder deletion - emit on parent folder
+      this.emitEntityChanged(parentFolder);
+    }
   }
 
   private hydrateUpdatedNotePayload(scope: ModelMyNotes | ModelTeam, noteId: string, updated: Partial<Note> | null | undefined): Note {
@@ -1099,6 +1183,7 @@ export class HackmdModel {
     const incomingById = new Map<string, Team>();
     const existingTeamIds = new Set(this.teams.keys());
     let changed = false;
+    let teamsContainerChanged = false;
 
     for (const team of teams) {
       incomingById.set(team.id, team);
@@ -1115,6 +1200,7 @@ export class HackmdModel {
         this.teams.set(team.id, modelTeam);
         this.adoptOrphanScopeData(modelTeam);
         changed = true;
+        teamsContainerChanged = true;  // Track that teams container changed
       } else {
         const oldPath = modelTeam.path;
         const teamMetaChanged = modelTeam.path !== team.path || modelTeam.name !== team.name;
@@ -1126,6 +1212,7 @@ export class HackmdModel {
           this.orphanScopesByPath.delete(oldPath);
         }
         if (teamMetaChanged) {
+          // Emit on the team when its metadata changes
           this.emitEntityChanged(modelTeam);
           changed = true;
         }
@@ -1144,9 +1231,15 @@ export class HackmdModel {
         this.loadedScopes.delete(existing);
         this.contentLoadedByScope.delete(existing);
         this.orphanScopesByPath.delete(existing.path);
-        this.emitEntityChanged(existing);
+        // Don't emit on the deleted team; will emit on Teams container
         changed = true;
+        teamsContainerChanged = true;  // Track that teams container changed
       }
+    }
+
+    // If teams were added or removed, emit on the Teams container (not on individual teams)
+    if (teamsContainerChanged) {
+      this.emitEntityChanged(this.teamsEntity);
     }
 
     const desiredOrder = teams
@@ -1164,6 +1257,8 @@ export class HackmdModel {
     const folderMap = this.getFolderScopeMap(teamPath);
     const noteMap = this.getNoteScopeMap(teamPath);
     let changed = false;
+    let scopeContainerChanged = false;
+    const changedFolders = new Set<ModelFolder>();
 
     const folderMetaById = new Map<string, any>();
     for (const note of notes) {
@@ -1208,7 +1303,8 @@ export class HackmdModel {
         const removed = folderMap.get(folderId);
         folderMap.delete(folderId);
         if (removed) {
-          this.emitEntityChanged(removed);
+          // Track folder deletion; will emit on container, not on folder itself
+          changedFolders.add(removed);
         }
         changed = true;
       }
@@ -1245,7 +1341,7 @@ export class HackmdModel {
       const nextParentFolderId = parentFolder?.id || resolveParentFolderId(note);
       if (note.parentFolderId !== nextParentFolderId) {
         note.parentFolderId = nextParentFolderId;
-        this.emitEntityChanged(note);
+        // Don't emit here; will emit on container after deduplication
         changed = true;
       }
 
@@ -1264,7 +1360,9 @@ export class HackmdModel {
         noteMap.delete(noteId);
         this.getContentLoadedSet(teamPath).delete(noteId);
         if (removed) {
-          this.emitEntityChanged(removed);
+          // Track note deletion; will emit on container, not on note itself
+          changed = true;
+          scopeContainerChanged = true;
         }
         changed = true;
       }
@@ -1273,31 +1371,49 @@ export class HackmdModel {
     for (const folder of folderMap.values()) {
       if (reconcileArrayAsSetPreserveOrder(folder.children, nextChildrenByFolder.get(folder.id) || HackmdModel.EMPTY_FOLDERS)) {
         changed = true;
+        changedFolders.add(folder);
       }
       if (reconcileArrayAsSetPreserveOrder(folder.notes, nextNotesByFolder.get(folder.id) || HackmdModel.EMPTY_NOTES)) {
         changed = true;
+        changedFolders.add(folder);
       }
     }
 
     if (scope.type === 'team') {
       if (reconcileArrayAsSetPreserveOrder(scope.rootFolders, rootFolders)) {
         changed = true;
+        scopeContainerChanged = true;
       }
       if (reconcileArrayAsSetPreserveOrder(scope.rootNotes, rootNotes)) {
         changed = true;
+        scopeContainerChanged = true;
       }
     } else {
       if (reconcileArrayAsSetPreserveOrder(this.personalRootFolders, rootFolders)) {
         changed = true;
+        scopeContainerChanged = true;
       }
       if (reconcileArrayAsSetPreserveOrder(this.personalRootNotes, rootNotes)) {
         changed = true;
+        scopeContainerChanged = true;
       }
     }
 
     if (!this.loadedScopes.has(scope)) {
       this.loadedScopes.add(scope);
       changed = true;
+    }
+
+    // Emit events with hierarchical deduplication
+    if (scopeContainerChanged) {
+      // If root-level arrays changed, emit on the scope container (MyNotes or Team)
+      this.emitEntityChanged(scope);
+    } else if (changedFolders.size > 0) {
+      // Otherwise, emit on deduplicated folders
+      const deduplicatedFolders = this.deduplicateFoldersByAncestry(changedFolders, folderMap);
+      for (const folder of deduplicatedFolders) {
+        this.emitEntityChanged(folder);
+      }
     }
 
     return changed;
@@ -1362,9 +1478,89 @@ export class HackmdModel {
     return entity;
   }
 
-  private reconcileFolderPlacement(scope: ModelMyNotes | ModelTeam, folder: ModelFolder): boolean {
+  private deduplicateFoldersByAncestry(folderSet: Set<ModelFolder>, folderMap: Map<string, ModelFolder>): Set<ModelFolder> {
+    const result = new Set<ModelFolder>();
+    for (const folder of folderSet) {
+      let hasAncestorInSet = false;
+      let current: ModelFolder | undefined = folder;
+      while (current && current.parentId) {
+        const parent = folderMap.get(current.parentId);
+        if (parent && folderSet.has(parent)) {
+          hasAncestorInSet = true;
+          break;
+        }
+        current = parent;
+      }
+      if (!hasAncestorInSet) {
+        result.add(folder);
+      }
+    }
+    return result;
+  }
+
+  private emitDeduplicatedFolderChanges(scope: ModelMyNotes | ModelTeam, changedFolders: Set<ModelFolder>): void {
+    if (changedFolders.size === 0) {
+      return;
+    }
+    const teamPath = scope.type === 'team' ? scope.path : null;
+    const folderMap = this.getFolderScopeMap(teamPath);
+    const deduplicatedFolders = this.deduplicateFoldersByAncestry(changedFolders, folderMap);
+
+    // Check if any of the changed folders are root folders
+    const hasRootFolders = Array.from(deduplicatedFolders).some(folder => !folder.parentId);
+
+    if (hasRootFolders) {
+      // If root-level folders changed, report on the scope container (MyNotes or Team)
+      this.emitEntityChanged(scope);
+    } else {
+      // Otherwise, report on the deduplicated folders
+      for (const folder of deduplicatedFolders) {
+        this.emitEntityChanged(folder);
+      }
+    }
+  }
+
+  private deduplicateChangedContainers(
+    teamsChanged: boolean,
+    scopeChanged: boolean,
+    changedFolders: Set<ModelFolder>,
+    scope: ModelMyNotes | ModelTeam | null
+  ): ModelEntity[] {
+    // Build hierarchical deduplication: Teams > Team/MyNotes > Folder
+    // If a higher-level container changed, don't report lower-level changes
+    const entitiesToReport: ModelEntity[] = [];
+
+    if (teamsChanged) {
+      // If Teams container changed, report only on it (don't report individual teams)
+      entitiesToReport.push(this.teamsEntity);
+      return entitiesToReport;
+    }
+
+    if (scopeChanged) {
+      // If MyNotes or Team changed, report only on the scope (don't report individual folders)
+      if (scope) {
+        entitiesToReport.push(scope);
+      }
+      return entitiesToReport;
+    }
+
+    // Deduplicate folders by ancestry and report on non-ancestor folders
+    if (changedFolders.size > 0) {
+      const teamPath = scope && scope.type === 'team' ? scope.path : null;
+      const folderMap = this.getFolderScopeMap(teamPath);
+      const deduplicatedFolders = this.deduplicateFoldersByAncestry(changedFolders, folderMap);
+      for (const folder of deduplicatedFolders) {
+        entitiesToReport.push(folder);
+      }
+    }
+
+    return entitiesToReport;
+  }
+
+  private reconcileFolderPlacement(scope: ModelMyNotes | ModelTeam, folder: ModelFolder): Set<ModelFolder> {
+    const changedFolders = new Set<ModelFolder>();
     if (!this.loadedScopes.has(scope)) {
-      return false;
+      return changedFolders;
     }
 
     const teamPath = scope.type === 'team' ? scope.path : null;
@@ -1380,6 +1576,7 @@ export class HackmdModel {
       const nextChildren = candidate.children.filter((child) => child !== folder);
       if (nextChildren.length !== candidate.children.length) {
         replaceArrayContents(candidate.children, nextChildren);
+        changedFolders.add(candidate);
         changed = true;
       }
     }
@@ -1394,6 +1591,7 @@ export class HackmdModel {
     if (parent) {
       if (parent.children.indexOf(folder) === -1) {
         parent.children.push(folder);
+        changedFolders.add(parent);
         changed = true;
       }
     } else if (roots.indexOf(folder) === -1) {
@@ -1401,7 +1599,7 @@ export class HackmdModel {
       changed = true;
     }
 
-    return changed;
+    return changedFolders;
   }
 
   private upsertNote(teamPath: string | null, note: Note, markContentLoaded = false): ModelNote {
@@ -1521,9 +1719,10 @@ export class HackmdModel {
     return entity;
   }
 
-  private reconcileNotePlacement(scope: ModelMyNotes | ModelTeam, note: ModelNote): boolean {
+  private reconcileNotePlacement(scope: ModelMyNotes | ModelTeam, note: ModelNote): Set<ModelFolder> {
+    const changedFolders = new Set<ModelFolder>();
     if (!this.loadedScopes.has(scope)) {
-      return false;
+      return changedFolders;
     }
 
     const teamPath = scope.type === 'team' ? scope.path : null;
@@ -1536,6 +1735,7 @@ export class HackmdModel {
       const nextNotes = folder.notes.filter((candidate) => candidate !== note);
       if (nextNotes.length !== folder.notes.length) {
         replaceArrayContents(folder.notes, nextNotes);
+        changedFolders.add(folder);
         changed = true;
       }
     }
@@ -1550,6 +1750,7 @@ export class HackmdModel {
     if (parent) {
       if (parent.notes.indexOf(note) === -1) {
         parent.notes.push(note);
+        changedFolders.add(parent);
         changed = true;
       }
     } else if (roots.indexOf(note) === -1) {
@@ -1557,7 +1758,7 @@ export class HackmdModel {
       changed = true;
     }
 
-    return changed;
+    return changedFolders;
   }
 
   private upsertHistoryNote(note: Note): ModelNote {
@@ -1584,7 +1785,7 @@ export class HackmdModel {
         createdAt: note.createdAt,
         lastChangedAt: note.lastChangedAt,
       };
-      this.emitEntityChanged(entity);
+      // Don't emit here - the caller will emit on recentNotesEntity
       return entity;
     }
 
@@ -1656,7 +1857,8 @@ export class HackmdModel {
     }
 
     if (changed) {
-      this.emitEntityChanged(existing);
+      // Note properties changed - emit on recentNotesEntity container
+      this.emitEntityChanged(this.recentNotesEntity);
     }
     return existing;
   }

@@ -941,6 +941,90 @@ test('move — multi-item move starts model calls in parallel', async () => {
   await pending;
 });
 
+test('move — reveals the first move operation that completes', async () => {
+  const model = setupModel();
+  const executeCalls = [];
+  const resolvers = [];
+
+  // Ensure a second team folder exists as a valid target within same scope.
+  model._acmeSnapshot.rootFolders.push({
+    id: 'tf2',
+    type: 'folder',
+    name: 'Target',
+    path: '/Target',
+    teamPath: 'acme',
+    notes: [],
+    children: [],
+  });
+
+  stub.vscodeStub.commands.executeCommand = async (...args) => {
+    executeCalls.push(args);
+    return undefined;
+  };
+
+  model.moveNote = async (note, destination) => {
+    model._record('moveNote', [note, destination]);
+    const moved = { type: 'note', id: note.id, teamPath: note.teamPath ?? null };
+    return new Promise((resolve) => {
+      resolvers.push({ id: note.id, resolve: () => resolve(moved) });
+    });
+  };
+
+  const n1 = { type: 'note', id: 'tn1', teamPath: 'acme', parentFolderId: 'tf1' };
+  const n2 = { type: 'note', id: 'tn2', teamPath: 'acme', parentFolderId: 'tf1' };
+
+  const pending = invoke('hackmd.model.move', n1, [n1, n2], { type: 'folder', id: 'tf2', teamPath: 'acme' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Complete tn2 first; reveal should target tn2.
+  resolvers.find((entry) => entry.id === 'tn2').resolve();
+  resolvers.find((entry) => entry.id === 'tn1').resolve();
+  await pending;
+
+  const revealCalls = executeCalls.filter((args) => args[0] === 'hackmd.ui.reveal');
+  assert.equal(revealCalls.length, 1);
+  assert.equal(revealCalls[0][1]?.type, 'note');
+  assert.equal(revealCalls[0][1]?.id, 'tn2');
+
+  stub.vscodeStub.commands.executeCommand = async () => undefined;
+});
+
+test('move — selecting Root in destination picker moves to scope root (not cancel)', async () => {
+  const model = setupModel();
+  new Interactions().qp('Root').install();
+
+  await invoke('hackmd.model.move', { type: 'note', id: 'tn1', teamPath: 'acme', parentFolderId: 'tf1' });
+
+  assert.equal(model.calls.moveNote.length, 1);
+  assert.equal(model.calls.moveNote[0][0].id, 'tn1');
+  assert.equal(model.calls.moveNote[0][1].type, 'team');
+  assert.equal(model.calls.moveNote[0][1].path, 'acme');
+});
+
+test('move picker — omits duplicate description when folder path equals folder name', async () => {
+  const model = setupModel();
+  model._acmeSnapshot.rootFolders.push({
+    id: 'tf2',
+    type: 'folder',
+    name: 'Bar',
+    path: 'Bar',
+    teamPath: 'acme',
+    notes: [],
+    children: [],
+  });
+
+  let barOption;
+  stub.window.showQuickPick = async (items) => {
+    barOption = items.find((it) => it.label === 'Bar');
+    return barOption;
+  };
+
+  await invoke('hackmd.model.move', { type: 'note', id: 'tn1', teamPath: 'acme', parentFolderId: 'tf1' });
+
+  assert.ok(barOption);
+  assert.equal(barOption.description, undefined);
+});
+
 // ─────────────────────────────────────────────────────────────
 // delete
 // ─────────────────────────────────────────────────────────────

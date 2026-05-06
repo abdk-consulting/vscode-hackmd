@@ -146,15 +146,6 @@ export function getProvider() {
   return provider;
 }
 
-interface FolderPath {
-  id: string;
-  name: string;
-  parentId?: string;
-  icon?: string;
-  color?: string;
-  clientId: string;
-}
-
 export function generateResourceUri(
   note: ModelNote
 ) {

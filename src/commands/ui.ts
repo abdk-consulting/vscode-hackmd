@@ -619,15 +619,28 @@ export function registerUiCommands(context: vscode.ExtensionContext): void {
         title: `Importing ${files.length} note${files.length === 1 ? '' : 's'}…`,
         cancellable: false,
       },
-      async () => Promise.all(files.map((file) => model.createNote(container, { title: file.title, content: file.content })))
+      async () => {
+        let firstCompletedCreate: ModelNote | undefined;
+        const created = await Promise.all(files.map(async (file) => {
+          const note = await model.createNote(container, { title: file.title, content: file.content });
+          if (!firstCompletedCreate) {
+            firstCompletedCreate = note;
+          }
+          return note;
+        }));
+        return {
+          created,
+          firstCompletedCreate,
+        };
+      }
     );
 
-    if (createdNotes.length > 0) {
-      await vscode.commands.executeCommand('hackmd.ui.reveal', createdNotes[0]);
+    if (createdNotes.firstCompletedCreate) {
+      await vscode.commands.executeCommand('hackmd.ui.reveal', createdNotes.firstCompletedCreate);
     }
 
     vscode.window.showInformationMessage(
-      `Imported ${createdNotes.length} note${createdNotes.length === 1 ? '' : 's'} successfully.`
+      `Imported ${createdNotes.created.length} note${createdNotes.created.length === 1 ? '' : 's'} successfully.`
     );
   });
 

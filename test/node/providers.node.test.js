@@ -658,6 +658,32 @@ test('MyNotesProvider folder upsert emits parent refresh only when root sorting 
   assert.equal(treeEvents[0], undefined);
 });
 
+test('MyNotesProvider invalidates whole tree when my-notes container entity changes', async () => {
+  const model = createMockModel();
+  const snapshot = {
+    scope: null,
+    rootFolders: [],
+    rootNotes: [
+      { id: 'n1', title: 'Root Note', teamPath: null, pendingOperation: false },
+    ],
+  };
+
+  model.__state.snapshots.set(null, snapshot);
+  indexSnapshot(snapshot, null, model.__state);
+
+  setMockModel(model);
+  const provider = new MyNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  model.__emitEntity({ entity: { type: 'my-notes' } });
+
+  assert.equal(treeEvents.length, 1);
+  assert.equal(treeEvents[0], undefined);
+});
+
 test('TeamNotesProvider sorts teams and children deterministically with folders before notes', async () => {
   const model = createMockModel();
   const teamA = { id: 't2', path: 'scope-b', name: 'Alpha', type: 'team', rootFolders: [], rootNotes: [] };
@@ -872,6 +898,26 @@ test('TeamNotesProvider refreshes folder node on team folder pending events', as
   assert.equal(treeEvents[0].id, 'f1');
 });
 
+test('TeamNotesProvider invalidates whole tree when teams container entity changes', async () => {
+  const model = createMockModel();
+  const team = { id: 't1', path: 'scope-a', name: 'Team A', type: 'team', rootFolders: [], rootNotes: [] };
+  model.__state.teams = [team];
+  model.__state.teamById.set(team.id, team);
+  model.__state.teamByPath.set(team.path, team);
+
+  setMockModel(model);
+  const provider = new TeamNotesProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  model.__emitEntity({ entity: { type: 'teams' } });
+
+  assert.equal(treeEvents.length, 1);
+  assert.equal(treeEvents[0], undefined);
+});
+
 test('HistoryProvider sorts by lastChangedAt desc then id and refreshes targeted note when order is unchanged', async () => {
   const model = createMockModel();
   model.__state.historyNotes = [
@@ -947,4 +993,23 @@ test('HistoryProvider emits pending-state changes around refresh lifecycle', asy
   await loadPromise;
   assert.deepEqual(pendingEvents, [true, false]);
   assert.equal(provider.isPendingOperation(), false);
+});
+
+test('HistoryProvider invalidates whole tree when recent-notes container entity changes', async () => {
+  const model = createMockModel();
+  model.__state.historyNotes = [
+    { id: 'n1', title: 'Recent Note', teamPath: null, pendingOperation: false, lastChangedAt: '2024-01-01T00:00:00.000Z' },
+  ];
+
+  setMockModel(model);
+  const provider = new HistoryProvider('/tmp');
+  await provider.getChildren();
+
+  const treeEvents = [];
+  provider.onDidChangeTreeData((e) => treeEvents.push(e));
+
+  model.__emitEntity({ entity: { type: 'recent-notes' } });
+
+  assert.equal(treeEvents.length, 1);
+  assert.equal(treeEvents[0], undefined);
 });

@@ -6,6 +6,59 @@
 
 ### Changed
 
+- **Model State Reconciliation**: Fixed `updateNote()`, `updateFolder()`, `moveNote()`, and `moveFolder()` to use input-driven hydration instead of unreliable API PATCH responses. Implements contract: `undefined` property leaves cached state unchanged; any other value (including `null`, empty string) overwrites with that value.
+
+- **Event Emission Architecture**: Refactored event emission to follow hierarchical container pattern: root-level changes report on scope container (MyNotes/Team/RecentNotes), nested changes report on parent folders. Added ancestor-based deduplication (`deduplicateFoldersByAncestry()`) to prevent redundant events when both ancestor and descendant containers change.
+
+- **Folder Delete Prediction**: Implemented recursive subtree deletion for predicted folder deletions to match backend API behavior. Previously promoted descendants to root; now removes entire subtree from model.
+
+- **RecentNotes Container Handling**: Updated `upsertHistoryNote()` and refresh handlers to emit change events on RecentNotes container (not individual history notes). Container receives event when any history note is added, removed, or updated.
+
+- **Tree Provider Event Handlers**: Enhanced HistoryProvider, MyNotesProvider, and TeamNotesProvider to validate entity membership in expected containers before processing. Added explicit container entity event handlers to invalidate entire tree when container changes (my-notes, teams, recent-notes).
+
+- **Move Command UI Reveal**: Move operations now delegate to `hackmd.ui.reveal` after successful completion. Reveals first item that completes (not first input item) when moving multiple items. Fixed destination picker to omit duplicate folder names and properly handle Root selection as move-to-scope-root (returns `null`, not `undefined`).
+
+- **Import Command UI Reveal**: Import operations now delegate to `hackmd.ui.reveal` after successful completion. Reveals first created note that completes rather than first file in input order.
+
+### Fixed
+
+- `updateNote()` presence check now correctly uses `input.content !== undefined` instead of `hasOwnProperty.call()`, fixing contract semantics for explicit `null`/`undefined` distinction.
+
+- Move destination picker no longer displays duplicate text (e.g., "Bar Bar") when folder path equals folder name.
+
+- Root selection in move destination picker now returns `null` (move to scope root) instead of `undefined` (cancel).
+
+- Properties provider no longer coerces explicit `null` permalink values to `undefined`, preserving overwrite intent.
+
+- API type signatures updated to allow `string | null` for content field, supporting explicit null values from API.
+
+### Added
+
+- **Deduplication Helper** `deduplicateFoldersByAncestry()`: Walks parent chain for each folder in changed set, returns set of non-ancestor folders to prevent redundant events.
+
+- **Emission Helper** `emitDeduplicatedFolderChanges()`: Centralizes deduplication logic before event emission, ensures only non-ancestor containers receive events.
+
+- **Regression Tests**: 
+  - "deleteFolder recursively removes descendant folders and notes from model"
+  - "move — reveals the first move operation that completes"
+  - "move — selecting Root in destination picker moves to scope root (not cancel)"
+  - "move picker — omits duplicate description when folder path equals folder name"
+  - "import: reveals the first completed create operation"
+  - "MyNotesProvider invalidates whole tree when my-notes container entity changes"
+  - "TeamNotesProvider invalidates whole tree when teams container entity changes"
+  - "HistoryProvider invalidates whole tree when recent-notes container entity changes"
+
+### Test Results
+
+- Model tests: 37/37 passing (including all edge cases for update contract, reconciliation, deduplication)
+- Command tests: All targeted move and import reveal tests passing
+- Provider tests: All container event invalidation tests passing
+- Compilation: 0 errors across all build configurations
+
+---
+
+### Previous Changes
+
 - Completed entity-first identifier cleanup for notes and folders outside model/API:
   - Removed non-model/API `noteId`/`folderId` transport in command and provider flows; callers now pass `ModelNote` / `ModelFolder` entities directly.
   - Updated export target shapes and export execution to carry note/folder entities instead of ID-based payloads.

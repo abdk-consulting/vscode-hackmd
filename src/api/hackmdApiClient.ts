@@ -5,7 +5,7 @@ export type NotePublishType = 'view' | 'edit' | 'slide' | 'book';
 export interface Note {
   id: string;
   title: string;
-  content?: string;
+  content?: string | null;
   publishLink?: string;
   publishType?: NotePublishType;
   permalink?: string | null;

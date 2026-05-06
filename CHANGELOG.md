@@ -22,6 +22,11 @@
   - Drag-and-drop note handling now treats drag sources as `ModelNote[]` directly (no `node.note` unwrapping).
   - Export target resolution in UI commands now operates on `ModelNote | ModelFolder` entities, including team-scope expansion via direct team entities.
 
+- Tightened model upsert event semantics for inserted entities:
+  - Team, folder, and note upserts no longer emit `onDidChangeEntity` when the operation inserts a previously unseen entity.
+  - `onDidChangeEntity` is now emitted only for true updates to existing entities, preventing consumers from receiving update events for first-time inserts.
+  - Updated model workflow test usage to reflect current API (`updateNote` in place of removed `renameNote`).
+
 - Continued entity-first command and drag-and-drop cleanup:
   - `hackmd.model.rename` now follows a minimal entity-first flow: accepts an optional `ModelNote | ModelFolder`, falls back to a picker listing known notes/folders when omitted, prompts for the new name/title, and updates via `updateNote` / `updateFolder` only.
   - Removed `renameNote` from the model API; rename paths now use `updateNote` directly.

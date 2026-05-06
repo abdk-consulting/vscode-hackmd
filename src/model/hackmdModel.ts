@@ -1114,7 +1114,6 @@ export class HackmdModel {
         };
         this.teams.set(team.id, modelTeam);
         this.adoptOrphanScopeData(modelTeam);
-        this.emitEntityChanged(modelTeam);
         changed = true;
       } else {
         const oldPath = modelTeam.path;
@@ -1321,7 +1320,6 @@ export class HackmdModel {
         notes: [],
       };
       map.set(entity.id, entity);
-      this.emitEntityChanged(entity);
     } else {
       let changed = false;
 
@@ -1433,7 +1431,6 @@ export class HackmdModel {
         lastChangedAt: note.lastChangedAt,
       };
       map.set(entity.id, entity);
-      this.emitEntityChanged(entity);
     } else {
       let changed = false;
 

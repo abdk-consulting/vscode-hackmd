@@ -626,7 +626,7 @@ test('create, update, move, and delete note workflow', async () => {
   const created = await model.createNote(model.getMyNotesEntity(), { title: 'New Note', content: '# hello' });
   assert.ok(created.id);
 
-  const renamed = await model.renameNote(created.id, 'Renamed Note');
+  const renamed = await model.updateNote(created, { title: 'Renamed Note' });
   assert.equal(renamed.title, 'Renamed Note');
 
   const moved = await model.moveNote(created, model.getFolderSync(model.getMyNotesEntity(), 'pf1'));
